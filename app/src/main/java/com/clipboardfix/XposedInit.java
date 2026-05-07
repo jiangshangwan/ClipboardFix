@@ -52,7 +52,7 @@ public class XposedInit implements IXposedHookLoadPackage {
         XposedBridge.log(TAG + " ===== Module loaded =====");
         XposedBridge.log(TAG + " ClassLoader: " + lpparam.classLoader.getClass().getName());
 
-        hookCallingUid();
+        // hookCallingUid(); // 会导致 getNameForUid(1000) 返回 android.uid.system，不在白名单中
         hookPackageManager();
         hookAttachInfo();
         hookSecurityException();
