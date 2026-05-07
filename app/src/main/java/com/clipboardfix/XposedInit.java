@@ -20,24 +20,24 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * LSPosed Module: ClipboardFix for HyperOS 3.0
  * Target: com.miui.phrase
  *
- * v4.7.7 ? InputProvider ?? PackageManager.getNameForUid() ????????
- * ??????(? Wetype)?????????,??????
- * ??????????,? com.sohu.inputmethod.sogou.xiaomi?
+ * v4.7.7 的 InputProvider 通过 PackageManager.getNameForUid() 验证调用者包名。
+ * 第三方输入法（如 Wetype）的包名不在白名单中，被拒绝访问。
+ * 白名单包括系统输入法，如 com.sohu.inputmethod.sogou.xiaomi。
  *
- * ??:
- *  1. getNameForUid hook: ???????(com.sohu.inputmethod.sogou.xiaomi)
- *  2. getPackagesForUid hook: ?????????
- *  3. attachInfo hook: ?? obfuscated ? InputProvider,hook ? query ??
- *  4. query hook: ?? SecurityException ????,?????
- *  5. SecurityException constructor hook: ????
+ * 策略：
+ *  1. getNameForUid hook: 返回白名单包名（com.sohu.inputmethod.sogou.xiaomi）
+ *  2. getPackagesForUid hook: 返回白名单包名数组
+ *  3. attachInfo hook: 找到 obfuscated 的 InputProvider，hook 其 query 方法
+ *  4. query hook: 如果 SecurityException 仍被抛出，捕获并清空
+ *  5. SecurityException constructor hook: 备选方案
  */
 public class XposedInit implements IXposedHookLoadPackage {
 
     private static final String TAG = "[ClipboardFix]";
     private static final String TARGET_PACKAGE = "com.miui.phrase";
     private static final int SYSTEM_UID = 1000;
-    // ?????:??????,SOGOU ??? (com.sohu.inputmethod.sogou.xiaomi)
-    // ??? provider ?????,????????
+    // 白名单包名：通过日志验证，SOGOU 输入法 (com.sohu.inputmethod.sogou.xiaomi)
+    // 调用时 provider 返回了数据，说明它在白名单中
     private static final String[] ALLOWED_PACKAGES = {
             "com.sohu.inputmethod.sogou.xiaomi",
             "com.xiaomi.type"
@@ -59,8 +59,8 @@ public class XposedInit implements IXposedHookLoadPackage {
     }
 
     // ====== Hook 1: Binder.getCallingUid spoof ======
-    // ??:? hook ???????????(?????)
-    // ???????,???????
+    // 注意：此 hook 在某些设备上可能不生效（如日志所示）
+    // 不影响核心策略，只是额外的保障
     private void hookCallingUid() {
         try {
             XposedHelpers.findAndHookMethod(Binder.class, "getCallingUid", new XC_MethodHook() {
@@ -80,7 +80,7 @@ public class XposedInit implements IXposedHookLoadPackage {
     }
 
     // ====== Hook 2: PackageManager.getNameForUid / getPackagesForUid ======
-    // ????:? provider ???????????????????
+    // 核心策略：让 provider 验证调用者时认为是白名单中的系统输入法
     private void hookPackageManager() {
         boolean nameHooked = hookNameForUidOn(PackageManager.class);
         boolean pkgHooked = hookPkgsForUidOn(PackageManager.class);
@@ -107,9 +107,9 @@ public class XposedInit implements IXposedHookLoadPackage {
                         protected void afterHookedMethod(MethodHookParam param) {
                             int uid = (int) param.args[0];
                             String result = (String) param.getResult();
-                            // ?????????? UID ?? spoof
+                            // 只对非系统、非白名单 UID 进行 spoof
                             if (uid > SYSTEM_UID && uid < 100000) {
-                                // ????????????
+                                // 检查是否已经是白名单包名
                                 boolean isAllowed = false;
                                 if (result != null) {
                                     for (String pkg : ALLOWED_PACKAGES) {
@@ -179,7 +179,7 @@ public class XposedInit implements IXposedHookLoadPackage {
         }
     }
 
-    // ====== Hook 3: ContentProvider.attachInfo ? find concrete query ======
+    // ====== Hook 3: ContentProvider.attachInfo → find concrete query ======
     private void hookAttachInfo() {
         try {
             XposedHelpers.findAndHookMethod(

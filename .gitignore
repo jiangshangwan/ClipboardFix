@@ -8,7 +8,7 @@ local.properties
 *.ap_
 *.dex
 *.class
-.gradle/
-local.properties
 *.keystore
 *.jks
+.gradle/
+local.properties

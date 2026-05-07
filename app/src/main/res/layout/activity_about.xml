@@ -16,7 +16,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="??"
+            android:text="📋"
             android:textSize="48sp"
             android:layout_marginTop="16dp"
             android:layout_marginBottom="16dp" />
@@ -25,7 +25,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="??OS?????"
+            android:text="澎湃OS剪贴板补全"
             android:textColor="#FFFFFFFF"
             android:textSize="22sp"
             android:textStyle="bold"
@@ -59,7 +59,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="????"
+                android:text="模块说明"
                 android:textColor="#FF88CCFF"
                 android:textSize="15sp"
                 android:textStyle="bold"
@@ -68,7 +68,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="?? HyperOS 3.0 ??????????????????"
+                android:text="修复 HyperOS 3.0 第三方输入法无法使用系统剪贴板的问题"
                 android:textColor="#CCFFFFFF"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.4" />
@@ -86,13 +86,13 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="???"
+                android:text="开发者"
                 android:textColor="#FF88CCFF"
                 android:textSize="15sp"
                 android:textStyle="bold"
                 android:layout_marginBottom="8dp" />
 
-            <!-- ?? -->
+            <!-- 酷安 -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -102,7 +102,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="??:"
+                    android:text="酷安："
                     android:textColor="#CCFFFFFF"
                     android:textSize="14sp" />
 
@@ -110,13 +110,13 @@
                     android:id="@+id/tvCoolapk"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="???"
+                    android:text="江上晚"
                     android:textColor="#FF66AAFF"
                     android:textSize="14sp"
                     android:background="?android:attr/selectableItemBackground" />
             </LinearLayout>
 
-            <!-- ?? -->
+            <!-- 微博 -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -125,7 +125,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="??:"
+                    android:text="微博："
                     android:textColor="#CCFFFFFF"
                     android:textSize="14sp" />
 
@@ -133,7 +133,7 @@
                     android:id="@+id/tvWeibo"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="???????"
+                    android:text="李十六的日记本"
                     android:textColor="#FF66AAFF"
                     android:textSize="14sp"
                     android:background="?android:attr/selectableItemBackground" />
@@ -152,7 +152,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="??"
+                android:text="关于"
                 android:textColor="#FF88CCFF"
                 android:textSize="15sp"
                 android:textStyle="bold"
@@ -161,7 +161,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="????,???????????,????????????????????,????????????,???????????????AI????"
+                android:text="各位大佬，这是我第一次自己写模块，模块有问题可以通过酷安或者微博私信告诉我，能不能改成功我就不知道了，因为这个模块能写成功有一半都是AI的功劳。"
                 android:textColor="#CCFFFFFF"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.4"
@@ -175,7 +175,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="GitHub:"
+                    android:text="GitHub："
                     android:textColor="#88FFFFFF"
                     android:textSize="13sp" />
 
@@ -203,7 +203,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="? ????"
+                android:text="☕ 打赏支持"
                 android:textColor="#FF88CCFF"
                 android:textSize="15sp"
                 android:textStyle="bold"
@@ -212,7 +212,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="????????????"
+                android:text="您的支持就是我的最大动力"
                 android:textColor="#CCFFFFFF"
                 android:textSize="14sp"
                 android:layout_marginBottom="16dp" />
@@ -228,7 +228,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="???? ? ???????????????"
+                android:text="点击图片 → 保存并打开微信「扫一扫→相册」"
                 android:textColor="#88FFFFFF"
                 android:textSize="12sp" />
         </LinearLayout>
@@ -238,7 +238,7 @@
             android:id="@+id/btnHideIcon"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="??????"
+            android:text="隐藏桌面图标"
             android:textColor="#FFFFFFFF"
             android:textSize="15sp"
             android:background="@drawable/btn_hide_bg"
@@ -249,7 +249,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="by ???"
+            android:text="by 江上晚"
             android:textColor="#44FFFFFF"
             android:textSize="12sp"
             android:layout_marginBottom="16dp" />
