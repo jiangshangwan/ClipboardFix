@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">??OS?????</string>
+    <string name="settings_class">com.clipboardfix.AboutActivity</string>
+</resources>
