@@ -38,6 +38,15 @@
             android:text="v1.0"
             android:textColor="#88FFFFFF"
             android:textSize="14sp"
+            android:layout_marginBottom="8dp" />
+
+        <!-- Hint -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="隐藏桌面图标请下滑到最下方点击隐藏桌面图标"
+            android:textColor="#66FFFFFF"
+            android:textSize="12sp"
             android:layout_marginBottom="24dp" />
 
         <!-- Divider -->
