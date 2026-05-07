@@ -68,7 +68,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="修复 HyperOS 3.0 第三方输入法无法使用系统剪贴板的问题"
+                android:text="修复HyperOS 3.0常用语和剪贴板V4.7.7在第三方输入法下无法读取系统剪贴板历史记录问题。&#10;&#10;目前本人就只测试了微信输入法，其他输入法暂时没有测试，是否生效请执行测试，如有问题请通过微博、酷安私信反馈。&#10;&#10;安装后请在LSPosed内勾选剪贴板和常用语作用域，完成后请重启手机！！！重启手机！！！重启手机！！！"
                 android:textColor="#CCFFFFFF"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.4" />
@@ -120,7 +120,8 @@
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:layout_marginBottom="4dp">
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -134,6 +135,29 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="李十六的日记本"
+                    android:textColor="#FF66AAFF"
+                    android:textSize="14sp"
+                    android:background="?android:attr/selectableItemBackground" />
+            </LinearLayout>
+
+            <!-- GitHub -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="GitHub："
+                    android:textColor="#CCFFFFFF"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/tvGithub"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="jiangshangwan/ClipboardFix"
                     android:textColor="#FF66AAFF"
                     android:textSize="14sp"
                     android:background="?android:attr/selectableItemBackground" />
@@ -161,33 +185,10 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="各位大佬，这是我第一次自己写模块，模块有问题可以通过酷安或者微博私信告诉我，能不能改成功我就不知道了，因为这个模块能写成功有一半都是AI的功劳。"
+                android:text="这是本人第一是写LSPosed模块，不足之处还请见谅，模块本身就几百KB，应该没有什么BUG，如您有更好的建议或者发现对其他第三方输入法不生效请通过&#10;微博、酷安进行反馈，反馈时请提供您使用的输入法包名，反馈后可能没办法及时修复。"
                 android:textColor="#CCFFFFFF"
                 android:textSize="14sp"
-                android:lineSpacingMultiplier="1.4"
-                android:layout_marginBottom="12dp" />
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="GitHub："
-                    android:textColor="#88FFFFFF"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/tvGithub"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="jiangshangwan/ClipboardFix"
-                    android:textColor="#FF66AAFF"
-                    android:textSize="13sp"
-                    android:background="?android:attr/selectableItemBackground" />
-            </LinearLayout>
+                android:lineSpacingMultiplier="1.4" />
         </LinearLayout>
 
         <!-- Donate Card -->
