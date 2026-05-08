@@ -1,12 +1,19 @@
 package com.clipboardfix;
 
 import android.content.ContentProvider;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
 import android.database.Cursor;
+import android.database.MatrixCursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Binder;
+import android.util.Base64;
 
+import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
@@ -44,13 +51,16 @@ public class XposedInit implements IXposedHookLoadPackage {
     private static final String KEY_CLIP_LIST = "clipboard_cipher_list";
     private static final String KEY_CLIP_LIST_TEMP = "clipboard_cipher_list_temp";
 
+    // Provider class names to track for global hooks
+    private final java.util.Set<String> phraseProviderClasses = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
         if (!TARGET_PACKAGE.equals(lpparam.packageName)) {
             return;
         }
 
-        XposedBridge.log(TAG + " ===== Module loaded v1.2 =====");
+        XposedBridge.log(TAG + " ===== Module loaded v1.3 =====");
 
         hookPackageManager();
         hookAttachInfo();
@@ -184,6 +194,7 @@ public class XposedInit implements IXposedHookLoadPackage {
 
     private void hookConcreteQueryMethod(Class<?> providerClass) {
         try {
+            boolean foundQuery = false;
             for (Method m : providerClass.getDeclaredMethods()) {
                 Class<?>[] params = m.getParameterTypes();
                 if (params.length == 5
@@ -204,14 +215,257 @@ public class XposedInit implements IXposedHookLoadPackage {
                                     XposedBridge.log(TAG + " query CAUGHT SecurityException");
                                     param.setThrowable(null);
                                 }
+                                return;
+                            }
+                            // Diagnostic: log query result info
+                            Cursor cursor = (Cursor) param.getResult();
+                            if (cursor != null) {
+                                String[] cols = cursor.getColumnNames();
+                                XposedBridge.log(TAG + " query RESULT: " + cursor.getCount()
+                                        + " rows, cols=" + java.util.Arrays.toString(cols));
+                                // Check if phrase_content column exists
+                                int phraseContentIdx = -1;
+                                for (int i = 0; i < cols.length; i++) {
+                                    if ("phrase_content".equals(cols[i])) {
+                                        phraseContentIdx = i;
+                                        break;
+                                    }
+                                }
+                                // Log first row and collect data for conversion
+                                boolean needsConversion = false;
+                                java.util.List<Object[]> allRows = new java.util.ArrayList<>();
+                                if (cursor.moveToFirst()) {
+                                    do {
+                                        Object[] row = new Object[cols.length];
+                                        for (String col : cols) {
+                                            int idx = cursor.getColumnIndex(col);
+                                            if (idx >= 0) {
+                                                String val = cursor.getString(idx);
+                                                row[idx] = val;
+                                                // Check if this is an image entry
+                                                if (idx == phraseContentIdx && val != null
+                                                        && val.contains("\"thumbImage\":\"")) {
+                                                    needsConversion = true;
+                                                }
+                                                // Log first row only
+                                                if (cursor.getPosition() == 0 && val != null && val.length() > 500) {
+                                                    val = val.substring(0, 500) + "...";
+                                                    XposedBridge.log(TAG + "   " + col + "=" + val);
+                                                }
+                                            }
+                                        }
+                                        allRows.add(row);
+                                    } while (cursor.moveToNext());
+                                }
+                                // Convert thumbImage from WebP to PNG if needed
+                                if (needsConversion && phraseContentIdx >= 0) {
+                                    XposedBridge.log(TAG + " converting thumbImage WebP->PNG for " + allRows.size() + " rows");
+                                    MatrixCursor newCursor = new MatrixCursor(cols);
+                                    for (Object[] row : allRows) {
+                                        Object[] newRow = row.clone();
+                                        String content = (String) row[phraseContentIdx];
+                                        if (content != null && content.contains("\"thumbImage\":\"")) {
+                                            newRow[phraseContentIdx] = convertThumbImageWebPToPng(content);
+                                        }
+                                        newCursor.addRow(newRow);
+                                    }
+                                    param.setResult(newCursor);
+                                    XposedBridge.log(TAG + " conversion done, replaced cursor");
+                                }
                             }
                         }
                     });
-                    return;
+                    foundQuery = true;
+                    break;
                 }
             }
+            if (!foundQuery) {
+                XposedBridge.log(TAG + " WARN: no query method found on " + providerClass.getName());
+            }
+            // Log all declared methods for debugging
+            StringBuilder methods = new StringBuilder();
+            for (Method m : providerClass.getDeclaredMethods()) {
+                methods.append(m.getName()).append("(").append(m.getParameterCount()).append(") ");
+            }
+            XposedBridge.log(TAG + " Provider methods: " + methods.toString());
+            // Register provider class and hook global methods
+            phraseProviderClasses.add(providerClass.getName());
+            hookGlobalContentProviderFile();
         } catch (Throwable t) {
             XposedBridge.log(TAG + " FAIL: hookConcreteQueryMethod - " + t.getMessage());
+        }
+    }
+
+    /**
+     * Convert thumbImage from base64 WebP to base64 PNG.
+     * System input methods (小米搜狗/小米智能) can render WebP, but third-party
+     * input methods (微信键盘 etc.) cannot. Converting to PNG fixes image display.
+     */
+    private String convertThumbImageWebPToPng(String json) {
+        try {
+            // Find thumbImage value
+            String marker = "\"thumbImage\":\"";
+            int thumbStart = json.indexOf(marker);
+            if (thumbStart == -1) return json;
+            thumbStart += marker.length();
+            int thumbEnd = json.indexOf("\"", thumbStart);
+            if (thumbEnd == -1) return json;
+
+            String base64Data = json.substring(thumbStart, thumbEnd);
+
+            // Decode base64
+            byte[] imageBytes = Base64.decode(base64Data, Base64.DEFAULT);
+
+            // Check if it's WebP (starts with RIFF)
+            if (imageBytes.length < 12
+                    || imageBytes[0] != 'R' || imageBytes[1] != 'I'
+                    || imageBytes[2] != 'F' || imageBytes[3] != 'F') {
+                // Not WebP, skip conversion
+                XposedBridge.log(TAG + " thumbImage is not WebP, skipping conversion");
+                return json;
+            }
+
+            // Decode WebP to Bitmap
+            Bitmap bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+            if (bitmap == null) {
+                XposedBridge.log(TAG + " WARN: failed to decode WebP bitmap");
+                return json;
+            }
+
+            // Encode as PNG
+            ByteArrayOutputStream pngOut = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, pngOut);
+            byte[] pngBytes = pngOut.toByteArray();
+
+            // Base64 encode PNG (no wrapping)
+            String base64Png = Base64.encodeToString(pngBytes, Base64.NO_WRAP);
+
+            bitmap.recycle();
+
+            // Replace in JSON: keep the original prefix (up to and including the opening quote)
+            String prefix = json.substring(0, thumbStart);
+            String suffix = json.substring(thumbEnd);
+
+            XposedBridge.log(TAG + " thumbImage WebP->PNG: " + imageBytes.length + " bytes -> " + pngBytes.length + " bytes");
+            return prefix + base64Png + suffix;
+        } catch (Exception e) {
+            XposedBridge.log(TAG + " convertThumbImageWebPToPng error: " + e.getMessage());
+            return json;
+        }
+    }
+
+    /**
+     * Global hook on ContentProvider.attachInfo to discover and hook providers by authority.
+     * Hooks openFile on providers whose authority matches phrase/clipboard patterns.
+     */
+    private boolean globalFileHooked = false;
+    private final java.util.Set<String> hookedProviderClasses = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
+    private void hookGlobalContentProviderFile() {
+        if (globalFileHooked) return;
+        globalFileHooked = true;
+
+        XposedHelpers.findAndHookMethod(ContentProvider.class, "attachInfo",
+                Context.class, ProviderInfo.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        ProviderInfo info = (ProviderInfo) param.args[1];
+                        if (info == null || info.authority == null) return;
+                        String auth = info.authority;
+                        // Hook phrase provider AND continuity clipboard provider
+                        if (auth.contains("phrase") || auth.contains("clipboard") || auth.contains("continuity")) {
+                            Class<?> providerClass = param.thisObject.getClass();
+                            if (!hookedProviderClasses.add(providerClass.getName())) return;
+                            XposedBridge.log(TAG + " hooking provider: " + providerClass.getName()
+                                    + " authority=" + auth);
+                            hookProviderOpenFile(providerClass);
+                        }
+                    }
+                });
+        XposedBridge.log(TAG + " OK: global attachInfo hook");
+    }
+
+    /**
+     * Hook openFile on a specific provider class.
+     */
+    private void hookProviderOpenFile(Class<?> providerClass) {
+        // openFile(Uri, String)
+        try {
+            Method m = providerClass.getDeclaredMethod("openFile", Uri.class, String.class);
+            XposedBridge.hookMethod(m, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    Uri uri = (Uri) param.args[0];
+                    if (param.hasThrowable()) {
+                        Throwable t = param.getThrowable();
+                        XposedBridge.log(TAG + " openFile(" + providerClass.getSimpleName() + ") EXCEPTION: "
+                                + t.getClass().getSimpleName() + ": " + t.getMessage() + " uri=" + uri);
+                        String msg = t.getMessage() != null ? t.getMessage() : "";
+                        if ((t instanceof SecurityException || t instanceof IllegalStateException)
+                                && (msg.contains("Invalid caller") || msg.contains("Permission Denied"))) {
+                            param.setThrowable(null);
+                            XposedBridge.log(TAG + " openFile exception suppressed for: " + uri);
+                        }
+                    } else {
+                        XposedBridge.log(TAG + " openFile(" + providerClass.getSimpleName() + ") OK: " + uri);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + " OK: openFile on " + providerClass.getName());
+        } catch (NoSuchMethodException e) {
+            XposedBridge.log(TAG + " " + providerClass.getSimpleName() + " does not override openFile(2arg)");
+        }
+
+        // openFile(Uri, String, CancellationSignal)
+        try {
+            Method m = providerClass.getDeclaredMethod("openFile", Uri.class, String.class,
+                    android.os.CancellationSignal.class);
+            XposedBridge.hookMethod(m, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    Uri uri = (Uri) param.args[0];
+                    if (param.hasThrowable()) {
+                        Throwable t = param.getThrowable();
+                        XposedBridge.log(TAG + " openFile3(" + providerClass.getSimpleName() + ") EXCEPTION: "
+                                + t.getClass().getSimpleName() + ": " + t.getMessage() + " uri=" + uri);
+                        String msg = t.getMessage() != null ? t.getMessage() : "";
+                        if ((t instanceof SecurityException || t instanceof IllegalStateException)
+                                && (msg.contains("Invalid caller") || msg.contains("Permission Denied"))) {
+                            param.setThrowable(null);
+                            XposedBridge.log(TAG + " openFile3 exception suppressed for: " + uri);
+                        }
+                    }
+                }
+            });
+            XposedBridge.log(TAG + " OK: openFile3 on " + providerClass.getName());
+        } catch (NoSuchMethodException e) {
+            XposedBridge.log(TAG + " " + providerClass.getSimpleName() + " does not override openFile(3arg)");
+        }
+
+        // openAssetFile(Uri, String)
+        try {
+            Method m = providerClass.getDeclaredMethod("openAssetFile", Uri.class, String.class);
+            XposedBridge.hookMethod(m, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    Uri uri = (Uri) param.args[0];
+                    if (param.hasThrowable()) {
+                        Throwable t = param.getThrowable();
+                        XposedBridge.log(TAG + " openAssetFile(" + providerClass.getSimpleName() + ") EXCEPTION: "
+                                + t.getClass().getSimpleName() + ": " + t.getMessage() + " uri=" + uri);
+                        String msg = t.getMessage() != null ? t.getMessage() : "";
+                        if ((t instanceof SecurityException || t instanceof IllegalStateException)
+                                && (msg.contains("Invalid caller") || msg.contains("Permission Denied"))) {
+                            param.setThrowable(null);
+                            XposedBridge.log(TAG + " openAssetFile exception suppressed");
+                        }
+                    }
+                }
+            });
+            XposedBridge.log(TAG + " OK: openAssetFile on " + providerClass.getName());
+        } catch (NoSuchMethodException e) {
+            XposedBridge.log(TAG + " " + providerClass.getSimpleName() + " does not override openAssetFile");
         }
     }
 
