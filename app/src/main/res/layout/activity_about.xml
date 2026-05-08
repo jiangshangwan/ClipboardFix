@@ -35,7 +35,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="v1.0"
+            android:text="v1.1"
             android:textColor="#88FFFFFF"
             android:textSize="14sp"
             android:layout_marginBottom="8dp" />
@@ -243,6 +243,18 @@
                 android:textSize="12sp" />
         </LinearLayout>
 
+        <!-- Check Update Button -->
+        <Button
+            android:id="@+id/btnCheckUpdate"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="🔍 检查更新"
+            android:textColor="#FFFFFFFF"
+            android:textSize="15sp"
+            android:background="@drawable/btn_show_bg"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="12dp" />
+
         <!-- Hide / Show Desktop Icon Button -->
         <Button
             android:id="@+id/btnHideIcon"
@@ -263,7 +275,6 @@
             android:textColor="#44FFFFFF"
             android:textSize="12sp"
             android:layout_marginBottom="16dp" />
-        
 
     </LinearLayout>
 </ScrollView>

@@ -54,10 +54,19 @@ public class AboutActivity extends Activity {
         // 点击 GitHub 链接 → 跳转仓库
         findViewById(R.id.tvGithub).setOnClickListener(v -> openUrl("https://github.com/jiangshangwan/ClipboardFix"));
 
+        // 检查更新按钮
+        findViewById(R.id.btnCheckUpdate).setOnClickListener(v -> {
+            UpdateChecker checker = new UpdateChecker(this);
+            checker.checkForUpdates();
+        });
+
         // 隐藏/显示桌面图标按钮
         btnHide = findViewById(R.id.btnHideIcon);
         updateHideButton();
         btnHide.setOnClickListener(v -> toggleLauncherIcon());
+
+        // 静默检查更新（有新版本才弹窗）
+        new UpdateChecker(this).checkSilent();
     }
 
     private boolean isAliasHidden() {
