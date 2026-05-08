@@ -1,4 +1,4 @@
-# ClipboardFix
+# 澎湃OS剪贴板补全（ClipboardFix）
 
 修复 HyperOS 3.0（澎湃OS）第三方输入法无法使用系统剪贴板历史的 LSPosed 模块。
 
