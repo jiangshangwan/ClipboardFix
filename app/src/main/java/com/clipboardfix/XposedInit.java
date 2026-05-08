@@ -1,6 +1,7 @@
 package com.clipboardfix;
 
 import android.content.ContentProvider;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
@@ -20,28 +21,28 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * LSPosed Module: ClipboardFix for HyperOS 3.0
  * Target: com.miui.phrase
  *
- * v4.7.7 的 InputProvider 通过 PackageManager.getNameForUid() 验证调用者包名。
- * 第三方输入法（如 Wetype）的包名不在白名单中，被拒绝访问。
- * 白名单包括系统输入法，如 com.sohu.inputmethod.sogou.xiaomi。
+ * v1.0: getNameForUid/getPackagesForUid hook + SecurityException hook
+ * v1.1: Removed hookCallingUid (caused false positives)
+ * v1.2: Cross-device clipboard merge hook
  *
- * 策略：
- *  1. getNameForUid hook: 返回白名单包名（com.sohu.inputmethod.sogou.xiaomi）
- *  2. getPackagesForUid hook: 返回白名单包名数组
- *  3. attachInfo hook: 找到 obfuscated 的 InputProvider，hook 其 query 方法
- *  4. query hook: 如果 SecurityException 仍被抛出，捕获并清空
- *  5. SecurityException constructor hook: 备选方案
+ * v4.7.7 bug: cross-device synced entries saved to clipboard_cipher_list_temp
+ * but clipboard history panel reads from clipboard_cipher_list (empty).
+ * This module hooks SharedPreferences.getString() to auto-merge temp entries.
  */
 public class XposedInit implements IXposedHookLoadPackage {
 
     private static final String TAG = "[ClipboardFix]";
     private static final String TARGET_PACKAGE = "com.miui.phrase";
     private static final int SYSTEM_UID = 1000;
-    // 白名单包名：通过日志验证，SOGOU 输入法 (com.sohu.inputmethod.sogou.xiaomi)
-    // 调用时 provider 返回了数据，说明它在白名单中
     private static final String[] ALLOWED_PACKAGES = {
             "com.sohu.inputmethod.sogou.xiaomi",
             "com.xiaomi.type"
     };
+
+    // SharedPreferences keys
+    private static final String SP_CLIPBOARD = "sp_name_clip_board";
+    private static final String KEY_CLIP_LIST = "clipboard_cipher_list";
+    private static final String KEY_CLIP_LIST_TEMP = "clipboard_cipher_list_temp";
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -49,49 +50,25 @@ public class XposedInit implements IXposedHookLoadPackage {
             return;
         }
 
-        XposedBridge.log(TAG + " ===== Module loaded =====");
-        XposedBridge.log(TAG + " ClassLoader: " + lpparam.classLoader.getClass().getName());
+        XposedBridge.log(TAG + " ===== Module loaded v1.2 =====");
 
-        // hookCallingUid(); // 会导致 getNameForUid(1000) 返回 android.uid.system，不在白名单中
         hookPackageManager();
         hookAttachInfo();
         hookSecurityException();
+        hookCrossDeviceMerge(lpparam);
     }
 
-    // ====== Hook 1: Binder.getCallingUid spoof ======
-    // 注意：此 hook 在某些设备上可能不生效（如日志所示）
-    // 不影响核心策略，只是额外的保障
-    private void hookCallingUid() {
-        try {
-            XposedHelpers.findAndHookMethod(Binder.class, "getCallingUid", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    int uid = (int) param.getResult();
-                    if (uid > SYSTEM_UID && uid < 100000) {
-                        XposedBridge.log(TAG + " Binder.getCallingUid " + uid + " -> " + SYSTEM_UID);
-                        param.setResult(SYSTEM_UID);
-                    }
-                }
-            });
-            XposedBridge.log(TAG + " OK: Binder.getCallingUid");
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " FAIL: Binder.getCallingUid - " + t.getMessage());
-        }
-    }
-
-    // ====== Hook 2: PackageManager.getNameForUid / getPackagesForUid ======
-    // 核心策略：让 provider 验证调用者时认为是白名单中的系统输入法
+    // ====== Hook 1: PackageManager.getNameForUid / getPackagesForUid ======
     private void hookPackageManager() {
         boolean nameHooked = hookNameForUidOn(PackageManager.class);
         boolean pkgHooked = hookPkgsForUidOn(PackageManager.class);
 
         if (nameHooked && pkgHooked) return;
 
-        // Fallback: find ApplicationPackageManager (concrete subclass with non-abstract methods)
         try {
             Class<?> appPmClass = Class.forName("android.app.ApplicationPackageManager",
                     false, PackageManager.class.getClassLoader());
-            XposedBridge.log(TAG + " Found ApplicationPackageManager: " + appPmClass.getName());
+            XposedBridge.log(TAG + " Found ApplicationPackageManager");
             if (!nameHooked) hookNameForUidOn(appPmClass);
             if (!pkgHooked) hookPkgsForUidOn(appPmClass);
         } catch (ClassNotFoundException e) {
@@ -107,37 +84,25 @@ public class XposedInit implements IXposedHookLoadPackage {
                         protected void afterHookedMethod(MethodHookParam param) {
                             int uid = (int) param.args[0];
                             String result = (String) param.getResult();
-                            // 只对非系统、非白名单 UID 进行 spoof
                             if (uid > SYSTEM_UID && uid < 100000) {
-                                // 检查是否已经是白名单包名
                                 boolean isAllowed = false;
                                 if (result != null) {
                                     for (String pkg : ALLOWED_PACKAGES) {
-                                        if (pkg.equals(result)) {
-                                            isAllowed = true;
-                                            break;
-                                        }
+                                        if (pkg.equals(result)) { isAllowed = true; break; }
                                     }
                                 }
                                 if (!isAllowed) {
                                     param.setResult(ALLOWED_PACKAGES[0]);
                                     XposedBridge.log(TAG + " getNameForUid spoofed: "
                                             + uid + " (" + result + ") -> " + ALLOWED_PACKAGES[0]);
-                                } else {
-                                    XposedBridge.log(TAG + " getNameForUid(" + uid + ") -> "
-                                            + result + " [already allowed]");
                                 }
-                            } else {
-                                XposedBridge.log(TAG + " getNameForUid(" + uid + ") -> "
-                                        + (result != null ? result : "null"));
                             }
                         }
                     });
             XposedBridge.log(TAG + " OK: getNameForUid on " + clazz.getSimpleName());
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " FAIL: getNameForUid on " + clazz.getSimpleName()
-                    + " - " + t.getMessage());
+            XposedBridge.log(TAG + " FAIL: getNameForUid on " + clazz.getSimpleName());
             return false;
         }
     }
@@ -155,17 +120,12 @@ public class XposedInit implements IXposedHookLoadPackage {
                                 if (result != null) {
                                     for (String pkg : result) {
                                         for (String allowed : ALLOWED_PACKAGES) {
-                                            if (allowed.equals(pkg)) {
-                                                isAllowed = true;
-                                                break;
-                                            }
+                                            if (allowed.equals(pkg)) { isAllowed = true; break; }
                                         }
                                     }
                                 }
                                 if (!isAllowed) {
                                     param.setResult(new String[]{ALLOWED_PACKAGES[0]});
-                                    XposedBridge.log(TAG + " getPackagesForUid spoofed: "
-                                            + uid + " -> [" + ALLOWED_PACKAGES[0] + "]");
                                 }
                             }
                         }
@@ -173,13 +133,12 @@ public class XposedInit implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + " OK: getPackagesForUid on " + clazz.getSimpleName());
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " FAIL: getPackagesForUid on " + clazz.getSimpleName()
-                    + " - " + t.getMessage());
+            XposedBridge.log(TAG + " FAIL: getPackagesForUid on " + clazz.getSimpleName());
             return false;
         }
     }
 
-    // ====== Hook 3: ContentProvider.attachInfo → find concrete query ======
+    // ====== Hook 2: ContentProvider.attachInfo -> find InputProvider query ======
     private void hookAttachInfo() {
         try {
             XposedHelpers.findAndHookMethod(
@@ -191,8 +150,6 @@ public class XposedInit implements IXposedHookLoadPackage {
                         protected void afterHookedMethod(MethodHookParam param) {
                             Class<?> clazz = param.thisObject.getClass();
                             if (clazz.equals(ContentProvider.class)) return;
-                            if (!ContentProvider.class.isAssignableFrom(clazz)) return;
-
                             android.content.pm.ProviderInfo info =
                                     (android.content.pm.ProviderInfo) param.args[1];
                             if (info != null && info.authority != null
@@ -220,38 +177,21 @@ public class XposedInit implements IXposedHookLoadPackage {
                         && String[].class.equals(params[3])
                         && String.class.equals(params[4])) {
 
-                    XposedBridge.log(TAG + " Found query method: "
-                            + providerClass.getName() + "." + m.getName()
-                            + "(Uri,String[],String,String[],String)");
-
+                    XposedBridge.log(TAG + " Found query: " + providerClass.getName()
+                            + "." + m.getName());
                     XposedBridge.hookMethod(m, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             if (param.hasThrowable()) {
                                 Throwable t = param.getThrowable();
                                 if (t instanceof SecurityException) {
-                                    XposedBridge.log(TAG + " query CAUGHT: "
-                                            + t.getClass().getSimpleName() + ": " + t.getMessage());
-                                    XposedBridge.log(TAG + " query: clearing exception");
+                                    XposedBridge.log(TAG + " query CAUGHT SecurityException");
                                     param.setThrowable(null);
                                 }
-                            } else {
-                                Cursor result = (Cursor) param.getResult();
-                                XposedBridge.log(TAG + " query returned: "
-                                        + (result != null ? "Cursor(" + result.getCount() + " rows)" : "null"));
                             }
                         }
                     });
-                    XposedBridge.log(TAG + " OK: hooked concrete query on " + providerClass.getName());
                     return;
-                }
-            }
-            XposedBridge.log(TAG + " WARN: no query method found on " + providerClass.getName());
-
-            for (Method m : providerClass.getDeclaredMethods()) {
-                if (!Modifier.isAbstract(m.getModifiers())) {
-                    XposedBridge.log(TAG + "   " + m.getName()
-                            + "(" + Arrays.toString(m.getParameterTypes()) + ")");
                 }
             }
         } catch (Throwable t) {
@@ -259,7 +199,7 @@ public class XposedInit implements IXposedHookLoadPackage {
         }
     }
 
-    // ====== Hook 4: SecurityException constructor (backup) ======
+    // ====== Hook 3: SecurityException constructor ======
     private void hookSecurityException() {
         hookSecExConstructor(String.class);
         hookSecExConstructor(String.class, Throwable.class);
@@ -277,8 +217,7 @@ public class XposedInit implements IXposedHookLoadPackage {
                 protected void beforeHookedMethod(MethodHookParam param) {
                     String msg = param.args.length > 0 && param.args[0] instanceof String
                             ? (String) param.args[0] : "";
-                    if (!msg.contains("Permission Denied") && !msg.contains("Invalid caller")
-                            && !msg.contains("Package validation") && !msg.contains("No package name")) {
+                    if (!msg.contains("Permission Denied") && !msg.contains("Invalid caller")) {
                         return;
                     }
                     StackTraceElement[] st = new Exception().getStackTrace();
@@ -292,11 +231,175 @@ public class XposedInit implements IXposedHookLoadPackage {
                 }
             };
             XposedHelpers.findAndHookConstructor(SecurityException.class, params);
-            XposedBridge.log(TAG + " OK: SecurityException("
-                    + Arrays.toString(paramTypes) + ")");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " FAIL: SecurityException("
-                    + Arrays.toString(paramTypes) + ") - " + t.getMessage());
+            // ignore
+        }
+    }
+
+    // ====== Hook 4: Cross-device clipboard merge (v1.2) ======
+    //
+    // Problem: v4.7.7 saves cross-device synced entries to clipboard_cipher_list_temp
+    // but clipboard history panel only reads clipboard_cipher_list (which is empty).
+    //
+    // Solution: Hook SharedPreferences.getString("clipboard_cipher_list").
+    // When main list is empty ("[]"), check clipboard_cipher_list_temp for cross-device
+    // entries and merge them into the result.
+    //
+    private void hookCrossDeviceMerge(XC_LoadPackage.LoadPackageParam lpparam) {
+        // Try common SharedPreferencesImpl class names
+        String[] classNames = {
+            "android.app.SharedPreferencesImpl",
+            "android.app.ContextImpl$SharedPreferencesImpl",
+        };
+
+        boolean hooked = false;
+        for (String className : classNames) {
+            try {
+                Class<?> spClass = Class.forName(className, false, lpparam.classLoader);
+                hookGetStringOnClass(spClass);
+                hooked = true;
+                XposedBridge.log(TAG + " OK: Cross-device merge on " + className);
+                break;
+            } catch (ClassNotFoundException e) {
+                // try next
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + " WARN: hook on " + className + ": " + t.getMessage());
+            }
+        }
+
+        if (!hooked) {
+            // Fallback: hook ContextImpl.getSharedPreferences to discover impl class
+            try {
+                XposedHelpers.findAndHookMethod(
+                    "android.app.ContextImpl", lpparam.classLoader,
+                    "getSharedPreferences", String.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            String name = (String) param.args[0];
+                            if (SP_CLIPBOARD.equals(name)) {
+                                SharedPreferences sp = (SharedPreferences) param.getResult();
+                                if (sp == null) return;
+                                Class<?> spClass = sp.getClass();
+                                XposedBridge.log(TAG + " Discovered SP impl: " + spClass.getName());
+                                hookGetStringOnClass(spClass);
+                            }
+                        }
+                    });
+                XposedBridge.log(TAG + " OK: getSharedPreferences discovery hook");
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + " FAIL: Cross-device merge - " + t.getMessage());
+            }
+        }
+    }
+
+    private boolean getStringHooked = false;
+
+    private void hookGetStringOnClass(Class<?> spClass) {
+        if (getStringHooked) return;
+
+        try {
+            XposedHelpers.findAndHookMethod(spClass, "getString", String.class, String.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        String key = (String) param.args[0];
+                        if (!KEY_CLIP_LIST.equals(key)) return;
+
+                        String result = (String) param.getResult();
+                        if (result == null) return;
+
+                        try {
+                            SharedPreferences sp = (SharedPreferences) param.thisObject;
+                            String tempData = sp.getString(KEY_CLIP_LIST_TEMP, null);
+                            if (tempData == null || tempData.isEmpty()) return;
+
+                            byte[] tempDecoded = android.util.Base64.decode(
+                                tempData.trim(), android.util.Base64.DEFAULT);
+                            String tempJson = new String(tempDecoded, "UTF-8");
+
+                            if ("[]".equals(tempJson.trim()) || tempJson.trim().isEmpty()) {
+                                return;
+                            }
+
+                            // Parse temp list to find cross-device entries
+                            org.json.JSONArray tempArr = new org.json.JSONArray(tempJson);
+                            if (tempArr.length() == 0) return;
+
+                            // Parse main list
+                            String mainTrimmed = result.trim();
+                            org.json.JSONArray mainArr;
+                            if ("[]".equals(mainTrimmed) || mainTrimmed.isEmpty()) {
+                                mainArr = new org.json.JSONArray();
+                            } else {
+                                byte[] mainDecoded = android.util.Base64.decode(
+                                    mainTrimmed, android.util.Base64.DEFAULT);
+                                mainArr = new org.json.JSONArray(
+                                    new String(mainDecoded, "UTF-8"));
+                            }
+
+                            // Find newest timestamp in main list
+                            long newestMainTime = 0;
+                            for (int i = 0; i < mainArr.length(); i++) {
+                                org.json.JSONObject item = mainArr.getJSONObject(i);
+                                if (item.optLong("time", 0) > newestMainTime) {
+                                    newestMainTime = item.optLong("time", 0);
+                                }
+                            }
+
+                            // Collect new cross-device entries from temp
+                            boolean merged = false;
+                            int addedCount = 0;
+                            for (int i = 0; i < tempArr.length(); i++) {
+                                org.json.JSONObject tempItem = tempArr.getJSONObject(i);
+                                if (tempItem.optBoolean("isAcrossDevices", false)
+                                        && tempItem.optLong("time", 0) > newestMainTime) {
+                                    tempItem.put("isTemp", false);
+                                    mainArr.put(tempItem);
+                                    merged = true;
+                                    addedCount++;
+                                }
+                            }
+
+                            if (!merged) return;
+
+                            // Sort by time descending (newest first)
+                            java.util.List<org.json.JSONObject> sorted = new java.util.ArrayList<>();
+                            for (int i = 0; i < mainArr.length(); i++) {
+                                sorted.add(mainArr.getJSONObject(i));
+                            }
+                            java.util.Collections.sort(sorted, new java.util.Comparator<org.json.JSONObject>() {
+                                @Override
+                                public int compare(org.json.JSONObject a, org.json.JSONObject b) {
+                                    return Long.compare(
+                                        b.optLong("time", 0), a.optLong("time", 0));
+                                }
+                            });
+                            org.json.JSONArray sortedArr = new org.json.JSONArray();
+                            for (org.json.JSONObject obj : sorted) {
+                                sortedArr.put(obj);
+                            }
+
+                            String mergedJson = sortedArr.toString();
+                            String mergedB64 = android.util.Base64.encodeToString(
+                                mergedJson.getBytes("UTF-8"), android.util.Base64.NO_WRAP);
+
+                            SharedPreferences.Editor editor = sp.edit();
+                            editor.putString(KEY_CLIP_LIST, mergedB64);
+                            editor.apply();
+
+                            param.setResult(mergedB64);
+                            XposedBridge.log(TAG + " Merge: " + addedCount
+                                + " cross-device entries appended, total=" + sortedArr.length());
+                        } catch (Exception e) {
+                            XposedBridge.log(TAG + " Merge error: " + e.getMessage());
+                        }
+                    }
+                });
+            getStringHooked = true;
+            XposedBridge.log(TAG + " OK: SharedPreferences.getString hook on " + spClass.getName());
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " FAIL: getString hook - " + t.getMessage());
         }
     }
 }
