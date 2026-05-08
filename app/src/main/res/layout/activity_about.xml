@@ -4,7 +4,7 @@
     android:layout_height="match_parent"
     android:background="#FF1A1A2E"
     android:fillViewport="true">
-    
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -38,32 +38,16 @@
             android:text="v1.1"
             android:textColor="#88FFFFFF"
             android:textSize="14sp"
-            android:layout_marginBottom="8dp" />
-
-        <!-- Hint -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="隐藏桌面图标请下滑到最下方点击隐藏桌面图标"
-            android:textColor="#66FFFFFF"
-            android:textSize="12sp"
             android:layout_marginBottom="24dp" />
 
-        <!-- Divider -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="#33FFFFFF"
-            android:layout_marginBottom="24dp" />
-
-        <!-- Description Card -->
+        <!-- Card: 模块说明 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="@drawable/card_bg"
             android:orientation="vertical"
             android:padding="16dp"
-            android:layout_marginBottom="20dp">
+            android:layout_marginBottom="16dp">
 
             <TextView
                 android:layout_width="wrap_content"
@@ -72,47 +56,83 @@
                 android:textColor="#FF88CCFF"
                 android:textSize="15sp"
                 android:textStyle="bold"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginBottom="10dp" />
 
             <TextView
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="修复HyperOS 3.0常用语和剪贴板V4.7.7在第三方输入法下无法读取系统剪贴板历史记录问题。&#10;&#10;目前本人就只测试了微信输入法，其他输入法暂时没有测试，是否生效请执行测试，如有问题请通过微博、酷安私信反馈。&#10;&#10;安装后请在LSPosed内勾选剪贴板和常用语作用域，完成后请重启手机！！！重启手机！！！重启手机！！！"
+                android:text="修复HyperOS 3.0常用语和剪贴板v4.7.7&#10;第三方输入法无法读取系统剪贴板历史记录的问题。&#10;&#10;目前本人就只测试了微信输入法，其他输入法暂时没有测试。"
                 android:textColor="#CCFFFFFF"
                 android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="支持的输入法"
+                android:textColor="#FF88CCFF"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="• 微信输入法（com.tencent.wetype）&#10;• 搜狗输入法小米版（com.sohu.inputmethod.sogou.xiaomi）&#10;• 其他第三方输入法（理论上均可）"
+                android:textColor="#CCFFFFFF"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="安装后请在LSPosed内勾选作用域「剪贴板和常用语」，完成设置后请重启手机！"
+                android:textColor="#FFCC66"
+                android:textSize="13sp"
+                android:layout_marginTop="12dp"
                 android:lineSpacingMultiplier="1.4" />
         </LinearLayout>
 
-        <!-- Developer Info Card -->
+        <!-- Card: 意见反馈 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="@drawable/card_bg"
             android:orientation="vertical"
             android:padding="16dp"
-            android:layout_marginBottom="20dp">
+            android:layout_marginBottom="16dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="开发者"
+                android:text="意见反馈"
                 android:textColor="#FF88CCFF"
                 android:textSize="15sp"
                 android:textStyle="bold"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginBottom="10dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="如您有更好的建议或发现对其他输入法不生效，&#10;请通过微博、酷安反馈，反馈时请提供您使用的输入法包名。"
+                android:textColor="#CCFFFFFF"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5" />
 
             <!-- 酷安 -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
+                android:layout_marginTop="10dp"
                 android:layout_marginBottom="4dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="酷安："
-                    android:textColor="#CCFFFFFF"
+                    android:textColor="#88FFFFFF"
                     android:textSize="14sp" />
 
                 <TextView
@@ -136,7 +156,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="微博："
-                    android:textColor="#CCFFFFFF"
+                    android:textColor="#88FFFFFF"
                     android:textSize="14sp" />
 
                 <TextView
@@ -159,7 +179,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="GitHub："
-                    android:textColor="#CCFFFFFF"
+                    android:textColor="#88FFFFFF"
                     android:textSize="14sp" />
 
                 <TextView
@@ -173,14 +193,14 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- About Card -->
+        <!-- Card: 关于 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="@drawable/card_bg"
             android:orientation="vertical"
             android:padding="16dp"
-            android:layout_marginBottom="20dp">
+            android:layout_marginBottom="16dp">
 
             <TextView
                 android:layout_width="wrap_content"
@@ -189,25 +209,25 @@
                 android:textColor="#FF88CCFF"
                 android:textSize="15sp"
                 android:textStyle="bold"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginBottom="10dp" />
 
             <TextView
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="这是本人第一是写LSPosed模块，不足之处还请见谅，如您有更好的建议或者发现对其他第三方输入法不生效请通过&#10;微博、酷安进行反馈，反馈时请提供您使用的输入法包名，反馈后可能没办法及时修复。"
+                android:text="这是本人第一次写LSPosed模块，不足之处还请见谅。"
                 android:textColor="#CCFFFFFF"
                 android:textSize="14sp"
-                android:lineSpacingMultiplier="1.4" />
+                android:lineSpacingMultiplier="1.5" />
         </LinearLayout>
 
-        <!-- Donate Card -->
+        <!-- Card: 打赏支持 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="@drawable/card_bg"
             android:orientation="vertical"
             android:padding="16dp"
-            android:layout_marginBottom="20dp"
+            android:layout_marginBottom="16dp"
             android:gravity="center_horizontal">
 
             <TextView
@@ -252,7 +272,7 @@
             android:textColor="#FFFFFFFF"
             android:textSize="15sp"
             android:background="@drawable/btn_show_bg"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="8dp"
             android:layout_marginBottom="12dp" />
 
         <!-- Hide / Show Desktop Icon Button -->
@@ -264,8 +284,7 @@
             android:textColor="#FFFFFFFF"
             android:textSize="15sp"
             android:background="@drawable/btn_hide_bg"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="12dp" />
+            android:layout_marginBottom="16dp" />
 
         <!-- Footer -->
         <TextView
