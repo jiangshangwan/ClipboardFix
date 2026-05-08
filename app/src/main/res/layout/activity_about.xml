@@ -194,7 +194,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="这是本人第一是写LSPosed模块，不足之处还请见谅，模块本身就几百KB，应该没有什么BUG，如您有更好的建议或者发现对其他第三方输入法不生效请通过&#10;微博、酷安进行反馈，反馈时请提供您使用的输入法包名，反馈后可能没办法及时修复。"
+                android:text="这是本人第一是写LSPosed模块，不足之处还请见谅，如您有更好的建议或者发现对其他第三方输入法不生效请通过&#10;微博、酷安进行反馈，反馈时请提供您使用的输入法包名，反馈后可能没办法及时修复。"
                 android:textColor="#CCFFFFFF"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.4" />
