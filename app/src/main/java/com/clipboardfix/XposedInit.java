@@ -23,7 +23,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  *
  * v1.0: getNameForUid/getPackagesForUid hook + SecurityException hook
  * v1.1: Removed hookCallingUid (caused false positives)
- * v1.2: Cross-device clipboard merge hook
+ * v1.2: Cross-device clipboard merge hook (DISABLED in v1.3 - caused ghost entries)
  *
  * v4.7.7 bug: cross-device synced entries saved to clipboard_cipher_list_temp
  * but clipboard history panel reads from clipboard_cipher_list (empty).
@@ -55,7 +55,7 @@ public class XposedInit implements IXposedHookLoadPackage {
         hookPackageManager();
         hookAttachInfo();
         hookSecurityException();
-        hookCrossDeviceMerge(lpparam);
+        // hookCrossDeviceMerge DISABLED v1.3 - Xiaomi native sync works, merge hook caused ghost entries
     }
 
     // ====== Hook 1: PackageManager.getNameForUid / getPackagesForUid ======
