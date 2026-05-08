@@ -193,33 +193,6 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Card: 关于 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/card_bg"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="16dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="关于"
-                android:textColor="#FF88CCFF"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="10dp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="这是本人第一次写LSPosed模块，不足之处还请见谅。"
-                android:textColor="#CCFFFFFF"
-                android:textSize="14sp"
-                android:lineSpacingMultiplier="1.5" />
-        </LinearLayout>
-
         <!-- Card: 打赏支持 -->
         <LinearLayout
             android:layout_width="match_parent"
