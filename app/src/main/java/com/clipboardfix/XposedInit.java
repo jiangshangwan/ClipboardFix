@@ -85,17 +85,14 @@ public class XposedInit implements IXposedHookLoadPackage {
                             int uid = (int) param.args[0];
                             String result = (String) param.getResult();
                             if (uid > SYSTEM_UID && uid < 100000) {
-                                boolean isAllowed = false;
-                                if (result != null) {
-                                    for (String pkg : ALLOWED_PACKAGES) {
-                                        if (pkg.equals(result)) { isAllowed = true; break; }
-                                    }
-                                }
-                                if (!isAllowed) {
-                                    param.setResult(ALLOWED_PACKAGES[0]);
-                                    XposedBridge.log(TAG + " getNameForUid spoofed: "
-                                            + uid + " (" + result + ") -> " + ALLOWED_PACKAGES[0]);
-                                }
+                                // Skip system services — never spoof milink, phrase provider, etc.
+                                if (isSystemService(result)) return;
+                                // Skip whitelisted input methods
+                                if (isWhitelisted(result)) return;
+                                // Spoof all other packages (third-party input methods)
+                                param.setResult(ALLOWED_PACKAGES[0]);
+                                XposedBridge.log(TAG + " getNameForUid spoofed: "
+                                        + uid + " (" + result + ") -> " + ALLOWED_PACKAGES[0]);
                             }
                         }
                     });
@@ -116,16 +113,15 @@ public class XposedInit implements IXposedHookLoadPackage {
                             int uid = (int) param.args[0];
                             String[] result = (String[]) param.getResult();
                             if (uid > SYSTEM_UID && uid < 100000) {
-                                boolean isAllowed = false;
-                                if (result != null) {
-                                    for (String pkg : result) {
-                                        for (String allowed : ALLOWED_PACKAGES) {
-                                            if (allowed.equals(pkg)) { isAllowed = true; break; }
-                                        }
-                                    }
-                                }
-                                if (!isAllowed) {
+                                if (result != null && result.length > 0) {
+                                    // Skip system services
+                                    if (isSystemService(result[0])) return;
+                                    // Skip whitelisted input methods
+                                    if (isWhitelisted(result[0])) return;
+                                    // Spoof all other packages (third-party input methods)
                                     param.setResult(new String[]{ALLOWED_PACKAGES[0]});
+                                    XposedBridge.log(TAG + " getPackagesForUid spoofed: "
+                                            + uid + " (" + result[0] + ") -> " + ALLOWED_PACKAGES[0]);
                                 }
                             }
                         }
@@ -136,6 +132,26 @@ public class XposedInit implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + " FAIL: getPackagesForUid on " + clazz.getSimpleName());
             return false;
         }
+    }
+
+    /** Check if package is a system service that should never be spoofed */
+    private static boolean isSystemService(String pkgName) {
+        return pkgName != null && (
+            pkgName.startsWith("com.miui.") ||
+            pkgName.startsWith("com.xiaomi.") ||
+            pkgName.startsWith("android.") ||
+            pkgName.startsWith("com.android.") ||
+            pkgName.contains("milink")
+        );
+    }
+
+    /** Check if package is a whitelisted system input method */
+    private static boolean isWhitelisted(String pkgName) {
+        if (pkgName == null) return false;
+        for (String allowed : ALLOWED_PACKAGES) {
+            if (allowed.equals(pkgName)) return true;
+        }
+        return false;
     }
 
     // ====== Hook 2: ContentProvider.attachInfo -> find InputProvider query ======
