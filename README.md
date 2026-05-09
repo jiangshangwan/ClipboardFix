@@ -1,4 +1,4 @@
-# 澎湃OS剪贴板补全（ClipboardFix）
+# 澎湃OS剪贴板功能补全（ClipboardFix）
 
 🛠️ 修复 HyperOS 3.0第三方输入法无法使用系统剪贴板历史的问题
 
