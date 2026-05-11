@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
@@ -104,7 +105,7 @@ public class UpdateChecker {
         new AlertDialog.Builder(context)
                 .setTitle("发现新版本 " + release.tagName)
                 .setMessage("当前版本: v" + release.currentVersion
-                        + "\n\n更新内容:\n" + release.body)
+                        + "\n\n更新内容:\n" + stripMarkdown(release.body))
                 .setPositiveButton("立即更新", (d, w) -> downloadAndInstall(release))
                 .setNegativeButton("稍后", null)
                 .setCancelable(true)
@@ -129,27 +130,32 @@ public class UpdateChecker {
                     installApk(apkFile);
                 });
             } catch (Exception e) {
+                android.util.Log.e("ClipboardFix", "downloadAndInstall failed", e);
                 handler.post(() -> {
                     dialog.dismiss();
-                    Toast.makeText(context, "下载失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    Toast.makeText(context, "下载失败: " + e.getClass().getSimpleName() + ": " + e.getMessage(), Toast.LENGTH_LONG).show();
                 });
             }
         }).start();
     }
 
     private void downloadFile(String urlStr, File outputFile, ProgressDialog dialog) throws Exception {
-        URL url = new URL(urlStr);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setInstanceFollowRedirects(true);
+        android.util.Log.d("ClipboardFix", "downloadFile URL: " + urlStr);
+        if (urlStr == null || urlStr.isEmpty()) {
+            throw new Exception("下载链接为空");
+        }
+        // 让 HttpURLConnection 自动跟重定向（GitHub → Azure blob → 最终文件）
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
         conn.setRequestProperty("User-Agent", "ClipboardFix-Updater");
-
-        // 处理重定向（GitHub 可能返回 302）
+        conn.setInstanceFollowRedirects(true);
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(30000);
+        conn.connect();
         int code = conn.getResponseCode();
-        if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP) {
-            String redirectUrl = conn.getHeaderField("Location");
+        android.util.Log.d("ClipboardFix", "HTTP response: " + code);
+        if (code != 200) {
             conn.disconnect();
-            conn = (HttpURLConnection) new URL(redirectUrl).openConnection();
-            conn.setRequestProperty("User-Agent", "ClipboardFix-Updater");
+            throw new Exception("HTTP " + code);
         }
 
         int contentLength = conn.getContentLength();
@@ -175,6 +181,17 @@ public class UpdateChecker {
     }
 
     private void installApk(File apkFile) {
+        // Android 8+ 需要 REQUEST_INSTALL_PACKAGES 权限
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (!context.getPackageManager().canRequestPackageInstalls()) {
+                Toast.makeText(context, "请先开启「安装未知应用」权限", Toast.LENGTH_LONG).show();
+                Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(settings);
+                return;
+            }
+        }
+
         Intent intent = new Intent(Intent.ACTION_VIEW);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
@@ -234,9 +251,20 @@ public class UpdateChecker {
 
         // 从 assets 中找 APK 下载链接
         String assets = extractArray(json, "assets");
+        android.util.Log.d("ClipboardFix", "assets: " + (assets == null ? "null" : assets.length() + " chars"));
         if (assets != null) {
             info.downloadUrl = extractStringFromObjects(assets, "browser_download_url");
         }
+        // Fallback: 如果 API 解析失败，用 tag 构造下载 URL（保留 v 前缀）
+        if (info.downloadUrl == null || info.downloadUrl.isEmpty()) {
+            String tag = info.tagName;
+            if (tag != null && !tag.isEmpty()) {
+                info.downloadUrl = "https://github.com/jiangshangwan/ClipboardFix/releases/download/"
+                        + tag + "/OS3.0." + tag + ".apk";
+                android.util.Log.d("ClipboardFix", "fallback URL: " + info.downloadUrl);
+            }
+        }
+        android.util.Log.d("ClipboardFix", "downloadUrl: " + info.downloadUrl);
         return info;
     }
 
@@ -271,7 +299,27 @@ public class UpdateChecker {
     private String extractString(String json, String key) {
         Pattern p = Pattern.compile("\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
         Matcher m = p.matcher(json);
-        return m.find() ? m.group(1).replace("\\n", "\n").replace("\\\"", "\"") : "";
+        if (!m.find()) return "";
+        String raw = m.group(1);
+        // 处理 JSON 转义
+        raw = raw.replace("\\r\n", "\n").replace("\\n", "\n").replace("\\r", "\r")
+                 .replace("\\t", "\t").replace("\\\"", "\"").replace("\\\\", "\\");
+        // 处理 \\uXXXX Unicode 转义（GitHub JSON 中反引号以 \\u0060 形式存在）
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < raw.length(); i++) {
+            if (i + 5 < raw.length() && raw.charAt(i) == '\\' && raw.charAt(i + 1) == 'u') {
+                try {
+                    int cp = Integer.parseInt(raw.substring(i + 2, i + 6), 16);
+                    sb.append((char) cp);
+                    i += 5;
+                } catch (NumberFormatException e) {
+                    sb.append(raw.charAt(i));
+                }
+            } else {
+                sb.append(raw.charAt(i));
+            }
+        }
+        return sb.toString();
     }
 
     private String extractArray(String json, String key) {
@@ -290,9 +338,28 @@ public class UpdateChecker {
     }
 
     private String extractStringFromObjects(String arrayJson, String key) {
-        Pattern p = Pattern.compile("\\{[^}]*\"" + key + "\"\\s*:\\s*\"([^\"]+)\"[^}]*\\}");
-        Matcher m = p.matcher(arrayJson);
-        return m.find() ? m.group(1) : null;
+        // 用 indexOf 替代正则，更可靠地从 JSON 对象数组中提取值
+        int keyIdx = arrayJson.indexOf("\"" + key + "\"");
+        if (keyIdx == -1) return null;
+        int colonIdx = arrayJson.indexOf(':', keyIdx + key.length() + 2);
+        if (colonIdx == -1) return null;
+        int startQuote = arrayJson.indexOf('"', colonIdx + 1);
+        if (startQuote == -1) return null;
+        int endQuote = arrayJson.indexOf('"', startQuote + 1);
+        if (endQuote == -1) return null;
+        return arrayJson.substring(startQuote + 1, endQuote);
+    }
+
+    /** 剥离 markdown 标记（AlertDialog 不支持渲染 markdown） */
+    private String stripMarkdown(String text) {
+        if (text == null) return "";
+        // 用 replace（纯字符串）而非 replaceAll（正则），避免 \u0060 转义问题
+        text = text.replace("\u0060", "");                // Java 源码反引号
+        text = text.replace("\\u0060", "");               // JSON 字面 \u0060
+        text = text.replace("```", "");                   // ```代码块```
+        text = text.replaceAll("##+\\s*", "");            // ## 标题
+        text = text.replaceAll("\\*\\*(.+?)\\*\\*", "$1"); // **加粗**
+        return text.trim();
     }
 
     /** Release 数据模型 */
