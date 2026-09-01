@@ -5,11 +5,6 @@ import android.view.inputmethod.InputMethodManager;
 import java.lang.reflect.Method;
 
 import dalvik.system.BaseDexClassLoader;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XC_MethodReplacement;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
  * 解锁 MIUI 全面屏优化（第三方输入法底部常用语/剪贴板入口）。
@@ -33,23 +28,22 @@ public final class ImeUnlockHook {
     private ImeUnlockHook() {
     }
 
-    public static void init(XC_LoadPackage.LoadPackageParam lpparam) {
-        String pkg = lpparam.packageName;
+    public static void init(String pkg, ClassLoader cl) {
         boolean isNonCustomize = !contains(MIUI_IME_LIST, pkg);
         log(pkg + " start (customized=" + !isNonCustomize + ")");
 
         if (isNonCustomize) {
-            Class<?> injector = XposedHelpers.findClassIfExists(
-                    "android.inputmethodservice.InputMethodServiceInjector", lpparam.classLoader);
+            Class<?> injector = Reflect.findClassIfExists(
+                    "android.inputmethodservice.InputMethodServiceInjector", cl);
             if (injector == null) {
-                injector = XposedHelpers.findClassIfExists(
+                injector = Reflect.findClassIfExists(
                         "android.inputmethodservice.InputMethodServiceStubImpl",
-                        lpparam.classLoader);
+                        cl);
             }
             if (injector != null) {
                 hookSIsImeSupport(injector);
                 hookIsXiaoAiEnable(injector);
-                setPhraseBgColor(injector, lpparam.classLoader);
+                setPhraseBgColor(injector, cl);
             } else {
                 log("WARN: InputMethodServiceInjector / InputMethodServiceStubImpl not found");
             }
@@ -57,15 +51,15 @@ public final class ImeUnlockHook {
 
         hookDeleteNotSupportIme(
                 "android.inputmethodservice.InputMethodServiceInjector$MiuiSwitchInputMethodListener",
-                lpparam.classLoader);
+                cl);
 
-        hookModuleManagerLoadDex(lpparam, isNonCustomize);
+        hookModuleManagerLoadDex(cl, isNonCustomize);
 
         log(pkg + " done");
     }
 
     private static void log(String msg) {
-        XposedBridge.log(XposedInit.TAG + "[IME] " + msg);
+        XposedInit.log("[IME] " + msg);
     }
 
     private static boolean contains(String[] arr, String value) {
@@ -79,11 +73,11 @@ public final class ImeUnlockHook {
     /** 跳过包名检查，直接开启输入法优化。字段可能是 int 也可能是 boolean，两种都试。 */
     private static void hookSIsImeSupport(Class<?> clazz) {
         try {
-            java.lang.reflect.Field f = XposedHelpers.findField(clazz, "sIsImeSupport");
+            java.lang.reflect.Field f = Reflect.findField(clazz, "sIsImeSupport");
             if (f.getType() == boolean.class) {
-                XposedHelpers.setStaticBooleanField(clazz, "sIsImeSupport", true);
+                Reflect.setStaticField(clazz, "sIsImeSupport", true);
             } else {
-                XposedHelpers.setStaticIntField(clazz, "sIsImeSupport", 1);
+                Reflect.setStaticField(clazz, "sIsImeSupport", 1);
             }
             log("OK: sIsImeSupport on " + clazz.getName());
         } catch (Throwable t) {
@@ -96,7 +90,7 @@ public final class ImeUnlockHook {
         try {
             Method m = clazz.getDeclaredMethod("isXiaoAiEnable");
             m.setAccessible(true);
-            XposedBridge.hookMethod(m, XC_MethodReplacement.returnConstant(false));
+            XposedInit.hook(m, chain -> false);
             log("OK: isXiaoAiEnable on " + clazz.getName());
         } catch (Throwable t) {
             log("FAIL: isXiaoAiEnable on " + clazz.getName() + " - " + t);
@@ -106,7 +100,7 @@ public final class ImeUnlockHook {
     /** 修复切换输入法列表被裁剪的问题。 */
     private static void hookDeleteNotSupportIme(String className, ClassLoader classLoader) {
         try {
-            Class<?> clazz = XposedHelpers.findClassIfExists(className, classLoader);
+            Class<?> clazz = Reflect.findClassIfExists(className, classLoader);
             if (clazz == null) {
                 log("SKIP: class not found " + className);
                 return;
@@ -123,7 +117,7 @@ public final class ImeUnlockHook {
                 return;
             }
             target.setAccessible(true);
-            XposedBridge.hookMethod(target, XC_MethodReplacement.returnConstant(null));
+            XposedInit.hook(target, chain -> null);
             log("OK: deleteNotSupportIme on " + className);
         } catch (Throwable t) {
             log("FAIL: deleteNotSupportIme on " + className + " - " + t);
@@ -134,11 +128,11 @@ public final class ImeUnlockHook {
      * 常用语模块是从 dex 动态加载的，这里拦截加载过程，
      * 把 com.miui.inputmethod.InputMethodBottomManager 一并 hook 掉。
      */
-    private static void hookModuleManagerLoadDex(final XC_LoadPackage.LoadPackageParam lpparam,
+    private static void hookModuleManagerLoadDex(final ClassLoader cl,
                                                  final boolean isNonCustomize) {
         try {
-            Class<?> managerClass = XposedHelpers.findClassIfExists(
-                    "android.inputmethodservice.InputMethodModuleManager", lpparam.classLoader);
+            Class<?> managerClass = Reflect.findClassIfExists(
+                    "android.inputmethodservice.InputMethodModuleManager", cl);
             if (managerClass == null) {
                 log("SKIP: InputMethodModuleManager not found");
                 return;
@@ -159,47 +153,42 @@ public final class ImeUnlockHook {
             }
             loadDex.setAccessible(true);
 
-            XposedBridge.hookMethod(loadDex, new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    ClassLoader loader = (ClassLoader) param.args[0];
-                    String dexPath = (String) param.args[1];
+            // 原 before hook 始终 setResult(null) 短路，这里等价于「不 proceed，直接返回 null」
+            XposedInit.hook(loadDex, chain -> {
+                ClassLoader loader = (ClassLoader) chain.getArg(0);
+                String dexPath = (String) chain.getArg(1);
 
-                    if (!(loader instanceof BaseDexClassLoader)) {
-                        param.setResult(null);
-                        return;
-                    }
-                    // 已经加载过就别重复 hook
-                    try {
-                        Class.forName("com.miui.inputmethod.InputMethodBottomManager", true, loader);
-                        param.setResult(null);
-                        return;
-                    } catch (ClassNotFoundException ignored) {
-                        // 首次加载，继续往下走
-                    }
-
-                    if (!addDexPath(loader, dexPath)) {
-                        param.setResult(null);
-                        return;
-                    }
-
-                    hookDeleteNotSupportIme(
-                            "com.miui.inputmethod.InputMethodBottomManager$MiuiSwitchInputMethodListener",
-                            loader);
-
-                    Class<?> bottom = XposedHelpers.findClassIfExists(
-                            "com.miui.inputmethod.InputMethodBottomManager", loader);
-                    if (bottom != null) {
-                        if (isNonCustomize) {
-                            hookSIsImeSupport(bottom);
-                            hookIsXiaoAiEnable(bottom);
-                        }
-                        hookGetSupportIme(bottom);
-                    } else {
-                        log("WARN: InputMethodBottomManager not found after addDexPath");
-                    }
-                    param.setResult(null);
+                if (!(loader instanceof BaseDexClassLoader)) {
+                    return null;
                 }
+                // 已经加载过就别重复 hook
+                try {
+                    Class.forName("com.miui.inputmethod.InputMethodBottomManager", true, loader);
+                    return null;
+                } catch (ClassNotFoundException ignored) {
+                    // 首次加载，继续往下走
+                }
+
+                if (!addDexPath(loader, dexPath)) {
+                    return null;
+                }
+
+                hookDeleteNotSupportIme(
+                        "com.miui.inputmethod.InputMethodBottomManager$MiuiSwitchInputMethodListener",
+                        loader);
+
+                Class<?> bottom = Reflect.findClassIfExists(
+                        "com.miui.inputmethod.InputMethodBottomManager", loader);
+                if (bottom != null) {
+                    if (isNonCustomize) {
+                        hookSIsImeSupport(bottom);
+                        hookIsXiaoAiEnable(bottom);
+                    }
+                    hookGetSupportIme(bottom);
+                } else {
+                    log("WARN: InputMethodBottomManager not found after addDexPath");
+                }
+                return null;
             });
             log("OK: InputMethodModuleManager.loadDex");
         } catch (Throwable t) {
@@ -231,19 +220,14 @@ public final class ImeUnlockHook {
         try {
             Method m = bottomClass.getDeclaredMethod("getSupportIme");
             m.setAccessible(true);
-            XposedBridge.hookMethod(m, new XC_MethodReplacement() {
-                @Override
-                protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                    try {
-                        Object helper = XposedHelpers.getStaticObjectField(
-                                bottomClass, "sBottomViewHelper");
-                        Object imm = XposedHelpers.getObjectField(helper, "mImm");
-                        return ((InputMethodManager) imm).getEnabledInputMethodList();
-                    } catch (Throwable t) {
-                        log("getSupportIme fallback to original - " + t);
-                        return XposedBridge.invokeOriginalMethod(param.method,
-                                param.thisObject, param.args);
-                    }
+            XposedInit.hook(m, chain -> {
+                try {
+                    Object helper = Reflect.getStaticField(bottomClass, "sBottomViewHelper");
+                    Object imm = Reflect.getField(helper, "mImm");
+                    return ((InputMethodManager) imm).getEnabledInputMethodList();
+                } catch (Throwable t) {
+                    log("getSupportIme fallback to original - " + t);
+                    return chain.proceed();
                 }
             });
             log("OK: getSupportIme on " + bottomClass.getName());
@@ -255,7 +239,7 @@ public final class ImeUnlockHook {
     /** 在合适的时机把抬高区域的背景色改成导航栏颜色的反色。 */
     private static void setPhraseBgColor(final Class<?> injectorClass, ClassLoader classLoader) {
         try {
-            Class<?> phoneWindow = XposedHelpers.findClassIfExists(
+            Class<?> phoneWindow = Reflect.findClassIfExists(
                     "com.android.internal.policy.PhoneWindow", classLoader);
             if (phoneWindow != null) {
                 for (Method m : phoneWindow.getDeclaredMethods()) {
@@ -263,14 +247,14 @@ public final class ImeUnlockHook {
                     if ("setNavigationBarColor".equals(m.getName())
                             && ps.length == 1 && ps[0] == int.class) {
                         m.setAccessible(true);
-                        XposedBridge.hookMethod(m, new XC_MethodHook() {
-                            @Override
-                            protected void afterHookedMethod(MethodHookParam param) {
-                                int color = (Integer) param.args[0];
-                                if (color == 0) return;
+                        XposedInit.hook(m, chain -> {
+                            Object r = chain.proceed();
+                            int color = (Integer) chain.getArg(0);
+                            if (color != 0) {
                                 navBarColor = color;
                                 customizeBottomViewColor(injectorClass);
                             }
+                            return r;
                         });
                         log("OK: setNavigationBarColor");
                         break;
@@ -281,11 +265,10 @@ public final class ImeUnlockHook {
             for (Method m : injectorClass.getDeclaredMethods()) {
                 if ("addMiuiBottomView".equals(m.getName())) {
                     m.setAccessible(true);
-                    XposedBridge.hookMethod(m, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            customizeBottomViewColor(injectorClass);
-                        }
+                    XposedInit.hook(m, chain -> {
+                        Object r = chain.proceed();
+                        customizeBottomViewColor(injectorClass);
+                        return r;
                     });
                     log("OK: addMiuiBottomView");
                     break;

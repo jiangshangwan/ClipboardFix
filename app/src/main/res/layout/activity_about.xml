@@ -35,7 +35,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="v1.3"
+            android:text="v1.4"
             android:textColor="#88FFFFFF"
             android:textSize="14sp"
             android:layout_marginBottom="24dp" />
@@ -97,7 +97,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="微信输入法（com.tencent.wetype）&#10;豆包输入法（com.bytedance.android.doubaoime）&#10;搜狗输入法（com.sohu.inputmethod.sogou）&#10;讯飞输入法（com.iflytek.inputmethod）&#10;百度输入法（com.baidu.input）"
+                android:text="微信输入法（com.tencent.wetype）&#10;搜狗输入法（com.sohu.inputmethod.sogou）&#10;讯飞输入法（com.iflytek.inputmethod）"
                 android:textColor="#CCFFFFFF"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5" />

@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.util.Base64;
 
 import java.io.ByteArrayOutputStream;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -19,10 +20,6 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 
 /**
  * 剪贴板修复三件套，只在 com.miui.phrase 进程内安装。
@@ -55,50 +52,53 @@ public final class ClipboardHook {
     }
 
     private static void log(String msg) {
-        XposedBridge.log(XposedInit.TAG + " " + msg);
+        XposedInit.log(msg);
     }
 
     // ====== Hook 1: PackageManager.getNameForUid / getPackagesForUid ======
 
     private static void hookPackageManager() {
-        boolean nameHooked = hookNameForUidOn(PackageManager.class);
-        boolean pkgHooked = hookPkgsForUidOn(PackageManager.class);
+        Class<?> appPm = findApplicationPackageManager();
+        if (appPm != null) {
+            hookNameForUidOn(appPm);
+            hookPkgsForUidOn(appPm);
+        } else {
+            // 兜底：找不到具体实现时直接 hook 抽象声明
+            hookNameForUidOn(PackageManager.class);
+            hookPkgsForUidOn(PackageManager.class);
+        }
+    }
 
-        if (nameHooked && pkgHooked) return;
-
+    private static Class<?> findApplicationPackageManager() {
         try {
-            Class<?> appPmClass = Class.forName("android.app.ApplicationPackageManager",
+            return Class.forName("android.app.ApplicationPackageManager",
                     false, PackageManager.class.getClassLoader());
-            log("Found ApplicationPackageManager");
-            if (!nameHooked) hookNameForUidOn(appPmClass);
-            if (!pkgHooked) hookPkgsForUidOn(appPmClass);
-        } catch (ClassNotFoundException e) {
-            log("WARN: ApplicationPackageManager not found");
+        } catch (Throwable t) {
+            return null;
         }
     }
 
     private static boolean hookNameForUidOn(Class<?> clazz) {
         try {
-            XposedHelpers.findAndHookMethod(clazz, "getNameForUid", int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            // DexKit 精确校验期间放行真实包名
-                            if (Bypass.isActive()) return;
+            Method m = Reflect.findMethod(clazz, "getNameForUid", int.class);
+            XposedInit.hook(m, chain -> {
+                Object r = chain.proceed();
+                // DexKit 精确校验期间放行真实包名
+                if (Bypass.isActive()) return r;
 
-                            int uid = (Integer) param.args[0];
-                            String result = (String) param.getResult();
-                            if (uid > SYSTEM_UID && uid < 100000) {
-                                // 系统服务一律不伪造
-                                if (isSystemService(result)) return;
-                                // 白名单内的小米输入法本来就能通过
-                                if (isWhitelisted(result)) return;
-                                param.setResult(ALLOWED_PACKAGES[0]);
-                                log("getNameForUid spoofed: " + uid
-                                        + " (" + result + ") -> " + ALLOWED_PACKAGES[0]);
-                            }
-                        }
-                    });
+                int uid = (Integer) chain.getArg(0);
+                String result = (String) r;
+                if (uid > SYSTEM_UID && uid < 100000) {
+                    // 系统服务一律不伪造
+                    if (isSystemService(result)) return r;
+                    // 白名单内的小米输入法本来就能通过
+                    if (isWhitelisted(result)) return r;
+                    log("getNameForUid spoofed: " + uid
+                            + " (" + result + ") -> " + ALLOWED_PACKAGES[0]);
+                    return ALLOWED_PACKAGES[0];
+                }
+                return r;
+            });
             log("OK: getNameForUid on " + clazz.getSimpleName());
             return true;
         } catch (Throwable t) {
@@ -109,26 +109,24 @@ public final class ClipboardHook {
 
     private static boolean hookPkgsForUidOn(Class<?> clazz) {
         try {
-            XposedHelpers.findAndHookMethod(clazz, "getPackagesForUid", int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            // DexKit 精确校验期间放行真实包名
-                            if (Bypass.isActive()) return;
+            Method m = Reflect.findMethod(clazz, "getPackagesForUid", int.class);
+            XposedInit.hook(m, chain -> {
+                Object r = chain.proceed();
+                if (Bypass.isActive()) return r;
 
-                            int uid = (Integer) param.args[0];
-                            String[] result = (String[]) param.getResult();
-                            if (uid > SYSTEM_UID && uid < 100000) {
-                                if (result != null && result.length > 0) {
-                                    if (isSystemService(result[0])) return;
-                                    if (isWhitelisted(result[0])) return;
-                                    param.setResult(new String[]{ALLOWED_PACKAGES[0]});
-                                    log("getPackagesForUid spoofed: " + uid
-                                            + " (" + result[0] + ") -> " + ALLOWED_PACKAGES[0]);
-                                }
-                            }
-                        }
-                    });
+                int uid = (Integer) chain.getArg(0);
+                String[] result = (String[]) r;
+                if (uid > SYSTEM_UID && uid < 100000) {
+                    if (result != null && result.length > 0) {
+                        if (isSystemService(result[0])) return r;
+                        if (isWhitelisted(result[0])) return r;
+                        log("getPackagesForUid spoofed: " + uid
+                                + " (" + result[0] + ") -> " + ALLOWED_PACKAGES[0]);
+                        return new String[]{ALLOWED_PACKAGES[0]};
+                    }
+                }
+                return r;
+            });
             log("OK: getPackagesForUid on " + clazz.getSimpleName());
             return true;
         } catch (Throwable t) {
@@ -160,24 +158,22 @@ public final class ClipboardHook {
 
     private static void hookAttachInfo() {
         try {
-            XposedHelpers.findAndHookMethod(
-                    ContentProvider.class, "attachInfo",
-                    Context.class, ProviderInfo.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            Class<?> clazz = param.thisObject.getClass();
-                            if (clazz.equals(ContentProvider.class)) return;
-                            ProviderInfo info = (ProviderInfo) param.args[1];
-                            if (info != null && info.authority != null
-                                    && info.authority.contains("input")) {
-                                log("Found INPUT provider: " + clazz.getName()
-                                        + " authority=" + info.authority);
-                                hookConcreteQueryMethod(clazz);
-                            }
-                            hookGlobalContentProviderFile();
-                        }
-                    });
+            Method m = Reflect.findMethod(ContentProvider.class, "attachInfo",
+                    Context.class, ProviderInfo.class);
+            XposedInit.hook(m, chain -> {
+                Object r = chain.proceed();
+                Class<?> clazz = chain.getThisObject().getClass();
+                if (clazz.equals(ContentProvider.class)) return r;
+                ProviderInfo info = (ProviderInfo) chain.getArg(1);
+                if (info != null && info.authority != null
+                        && info.authority.contains("input")) {
+                    log("Found INPUT provider: " + clazz.getName()
+                            + " authority=" + info.authority);
+                    hookConcreteQueryMethod(clazz);
+                }
+                hookGlobalContentProviderFile();
+                return r;
+            });
             log("OK: ContentProvider.attachInfo");
         } catch (Throwable t) {
             log("FAIL: ContentProvider.attachInfo - " + t);
@@ -198,68 +194,63 @@ public final class ClipboardHook {
 
                     log("Found query: " + providerClass.getName() + "." + m.getName());
                     final Method queryMethod = m;
-                    XposedBridge.hookMethod(m, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (param.hasThrowable()) {
-                                Throwable t = param.getThrowable();
-                                if (t instanceof SecurityException) {
-                                    log("query CAUGHT SecurityException");
-                                    param.setThrowable(null);
-                                }
-                                return;
+                    XposedInit.hook(queryMethod, chain -> {
+                        Cursor cursor;
+                        try {
+                            cursor = (Cursor) chain.proceed();
+                        } catch (SecurityException se) {
+                            log("query CAUGHT SecurityException");
+                            return null;
+                        }
+                        if (cursor == null) return null;
+
+                        String[] cols = cursor.getColumnNames();
+                        log("query RESULT: " + cursor.getCount()
+                                + " rows, cols=" + Arrays.toString(cols));
+
+                        int phraseContentIdx = -1;
+                        for (int i = 0; i < cols.length; i++) {
+                            if ("phrase_content".equals(cols[i])) {
+                                phraseContentIdx = i;
+                                break;
                             }
-                            Cursor cursor = (Cursor) param.getResult();
-                            if (cursor == null) return;
+                        }
+                        if (phraseContentIdx < 0) return cursor;
 
-                            String[] cols = cursor.getColumnNames();
-                            log("query RESULT: " + cursor.getCount()
-                                    + " rows, cols=" + Arrays.toString(cols));
-
-                            int phraseContentIdx = -1;
-                            for (int i = 0; i < cols.length; i++) {
-                                if ("phrase_content".equals(cols[i])) {
-                                    phraseContentIdx = i;
-                                    break;
-                                }
-                            }
-                            if (phraseContentIdx < 0) return;
-
-                            boolean needsConversion = false;
-                            List<Object[]> allRows = new ArrayList<>();
-                            if (cursor.moveToFirst()) {
-                                do {
-                                    Object[] row = new Object[cols.length];
-                                    for (String col : cols) {
-                                        int idx = cursor.getColumnIndex(col);
-                                        if (idx >= 0) {
-                                            String val = cursor.getString(idx);
-                                            row[idx] = val;
-                                            if (idx == phraseContentIdx && val != null
-                                                    && val.contains("\"thumbImage\":\"")) {
-                                                needsConversion = true;
-                                            }
+                        boolean needsConversion = false;
+                        List<Object[]> allRows = new ArrayList<>();
+                        if (cursor.moveToFirst()) {
+                            do {
+                                Object[] row = new Object[cols.length];
+                                for (String col : cols) {
+                                    int idx = cursor.getColumnIndex(col);
+                                    if (idx >= 0) {
+                                        String val = cursor.getString(idx);
+                                        row[idx] = val;
+                                        if (idx == phraseContentIdx && val != null
+                                                && val.contains("\"thumbImage\":\"")) {
+                                            needsConversion = true;
                                         }
                                     }
-                                    allRows.add(row);
-                                } while (cursor.moveToNext());
-                            }
-
-                            if (!needsConversion) return;
-
-                            log("converting thumbImage WebP->PNG for " + allRows.size() + " rows");
-                            MatrixCursor newCursor = new MatrixCursor(cols);
-                            for (Object[] row : allRows) {
-                                Object[] newRow = row.clone();
-                                String content = (String) row[phraseContentIdx];
-                                if (content != null && content.contains("\"thumbImage\":\"")) {
-                                    newRow[phraseContentIdx] = convertThumbImageWebPToPng(content);
                                 }
-                                newCursor.addRow(newRow);
-                            }
-                            param.setResult(newCursor);
-                            log("conversion done, replaced cursor");
+                                allRows.add(row);
+                            } while (cursor.moveToNext());
                         }
+
+                        if (!needsConversion) return cursor;
+
+                        log("converting thumbImage WebP->PNG for " + allRows.size() + " rows");
+                        MatrixCursor newCursor = new MatrixCursor(cols);
+                        for (Object[] row : allRows) {
+                            Object[] newRow = row.clone();
+                            String content = (String) row[phraseContentIdx];
+                            if (content != null && content.contains("\"thumbImage\":\"")) {
+                                newRow[phraseContentIdx] = convertThumbImageWebPToPng(content);
+                            }
+                            newCursor.addRow(newRow);
+                        }
+                        log("conversion done, replaced cursor");
+                        return newCursor;
                     });
                     foundQuery = true;
                     break;
@@ -322,25 +313,24 @@ public final class ClipboardHook {
         globalFileHooked = true;
 
         try {
-            XposedHelpers.findAndHookMethod(ContentProvider.class, "attachInfo",
-                    Context.class, ProviderInfo.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            ProviderInfo info = (ProviderInfo) param.args[1];
-                            if (info == null || info.authority == null) return;
-                            String auth = info.authority;
-                            if (auth.contains("phrase")
-                                    || auth.contains("clipboard")
-                                    || auth.contains("continuity")) {
-                                Class<?> providerClass = param.thisObject.getClass();
-                                if (!HOOKED_PROVIDERS.add(providerClass.getName())) return;
-                                log("hooking provider: " + providerClass.getName()
-                                        + " authority=" + auth);
-                                hookProviderOpenFile(providerClass);
-                            }
-                        }
-                    });
+            Method m = Reflect.findMethod(ContentProvider.class, "attachInfo",
+                    Context.class, ProviderInfo.class);
+            XposedInit.hook(m, chain -> {
+                Object r = chain.proceed();
+                ProviderInfo info = (ProviderInfo) chain.getArg(1);
+                if (info == null || info.authority == null) return r;
+                String auth = info.authority;
+                if (auth.contains("phrase")
+                        || auth.contains("clipboard")
+                        || auth.contains("continuity")) {
+                    Class<?> providerClass = chain.getThisObject().getClass();
+                    if (!HOOKED_PROVIDERS.add(providerClass.getName())) return r;
+                    log("hooking provider: " + providerClass.getName()
+                            + " authority=" + auth);
+                    hookProviderOpenFile(providerClass);
+                }
+                return r;
+            });
             log("OK: global attachInfo hook");
         } catch (Throwable t) {
             log("FAIL: global attachInfo hook - " + t);
@@ -359,22 +349,21 @@ public final class ClipboardHook {
         try {
             Method m = providerClass.getDeclaredMethod(name, paramTypes);
             m.setAccessible(true);
-            XposedBridge.hookMethod(m, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    if (!param.hasThrowable()) return;
-                    Throwable t = param.getThrowable();
+            XposedInit.hook(m, chain -> {
+                try {
+                    return chain.proceed();
+                } catch (Throwable t) {
                     String msg = t.getMessage() != null ? t.getMessage() : "";
-                    Uri uri = (Uri) param.args[0];
+                    Uri uri = (Uri) chain.getArg(0);
                     if ((t instanceof SecurityException || t instanceof IllegalStateException)
                             && (msg.contains("Invalid caller") || msg.contains("Permission Denied"))) {
-                        param.setThrowable(null);
                         log(name + "(" + providerClass.getSimpleName()
                                 + ") exception suppressed for: " + uri);
-                    } else {
-                        log(name + "(" + providerClass.getSimpleName() + ") EXCEPTION: "
-                                + t.getClass().getSimpleName() + ": " + msg + " uri=" + uri);
+                        return null;
                     }
+                    log(name + "(" + providerClass.getSimpleName() + ") EXCEPTION: "
+                            + t.getClass().getSimpleName() + ": " + msg + " uri=" + uri);
+                    throw t;
                 }
             });
             log("OK: " + name + " on " + providerClass.getName());
@@ -396,27 +385,26 @@ public final class ClipboardHook {
 
     private static void hookSecExConstructor(Class<?>... paramTypes) {
         try {
-            Object[] params = new Object[paramTypes.length + 1];
-            System.arraycopy(paramTypes, 0, params, 0, paramTypes.length);
-            params[paramTypes.length] = new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    String msg = param.args.length > 0 && param.args[0] instanceof String
-                            ? (String) param.args[0] : "";
-                    if (!msg.contains("Permission Denied") && !msg.contains("Invalid caller")) {
-                        return;
-                    }
-                    StackTraceElement[] st = new Exception().getStackTrace();
-                    for (StackTraceElement e : st) {
-                        if (e.getClassName().contains("miui.provider")
-                                || e.getClassName().contains("miui.phrase")) {
-                            log("SecurityException BLOCKED: " + msg);
-                            throw new IllegalStateException("BYPASSED: " + msg);
-                        }
+            Constructor<?> ctor = Reflect.findConstructor(SecurityException.class, paramTypes);
+            // 用 PASSTHROUGH：这里故意抛 IllegalStateException 改变异常类型，
+            // 若被 PROTECTIVE 吞掉就失效了，必须让异常传播给调用方。
+            XposedInit.hookPassthrough(ctor, chain -> {
+                java.util.List<Object> args = chain.getArgs();
+                String msg = !args.isEmpty() && args.get(0) instanceof String
+                        ? (String) args.get(0) : "";
+                if (!msg.contains("Permission Denied") && !msg.contains("Invalid caller")) {
+                    return chain.proceed();
+                }
+                StackTraceElement[] st = new Exception().getStackTrace();
+                for (StackTraceElement e : st) {
+                    if (e.getClassName().contains("miui.provider")
+                            || e.getClassName().contains("miui.phrase")) {
+                        log("SecurityException BLOCKED: " + msg);
+                        throw new IllegalStateException("BYPASSED: " + msg);
                     }
                 }
-            };
-            XposedHelpers.findAndHookConstructor(SecurityException.class, params);
+                return chain.proceed();
+            });
         } catch (Throwable ignored) {
             // 构造函数不存在时忽略
         }

@@ -1,59 +1,116 @@
 package com.clipboardfix;
 
-import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import android.util.Log;
+
+import java.lang.reflect.Executable;
+
+import io.github.libxposed.api.XposedInterface;
+import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedModuleInterface;
 
 /**
- * 模块入口，只负责按包名分发。
+ * 模块入口（libxposed Modern API）。
  *
- * <p>三条支路：
+ * <p>替代旧版 {@code IXposedHookLoadPackage}。模块被框架注入后，
+ * 由框架 new 一个本类实例并回调生命周期方法：
  * <ul>
- *   <li>android（system_server）→ 输入法列表权限放行
- *   <li>com.miui.phrase → 剪贴板修复 + DexKit 精确校验
- *   <li>第三方输入法进程 → 全面屏优化解锁
+ *   <li>{@link #onSystemServerStarting} → system_server 里放行输入法权限</li>
+ *   <li>{@link #onPackageLoaded} → 按包名分发：剪贴板修复 / 全面屏优化解锁</li>
  * </ul>
  */
-public class XposedInit implements IXposedHookLoadPackage {
+public class XposedInit extends XposedModule {
 
     public static final String TAG = "[ClipboardFix]";
 
-    static final String PKG_ANDROID = "android";
     static final String PKG_PHRASE = "com.miui.phrase";
 
     /** 系统是否支持 MIUI 输入法底部栏，不支持就没必要 hook 全面屏优化。 */
     private static final String PROP_MIUI_IME_BOTTOM = "ro.miui.support_miui_ime_bottom";
 
+    /** 框架 new 出来的唯一入口实例，供静态工具类转发日志和 hook。 */
+    private static volatile XposedInit instance;
+
+    public XposedInit() {
+        super();
+        instance = this;
+    }
+
+    // ---------------- 供各 Hook 类使用的静态入口 ----------------
+
+    /** 统一打日志。 */
+    public static void log(String msg) {
+        XposedInit inst = instance;
+        if (inst != null) {
+            inst.log(Log.INFO, TAG, msg);
+        } else {
+            Log.i(TAG, msg);
+        }
+    }
+
+    /** 统一挂 hook：拦截器链模型，异常保护模式（hooker 异常不崩目标进程）。 */
+    public static void hook(Executable target, XposedInterface.Hooker hooker) {
+        module().hook(target)
+                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                .intercept(hooker);
+    }
+
+    /** 统一挂 hook：异常透传模式。用于「故意抛异常改变行为」的场景。 */
+    public static void hookPassthrough(Executable target, XposedInterface.Hooker hooker) {
+        module().hook(target)
+                .setExceptionMode(XposedInterface.ExceptionMode.PASSTHROUGH)
+                .intercept(hooker);
+    }
+
+    private static XposedInit module() {
+        XposedInit inst = instance;
+        if (inst == null) {
+            throw new IllegalStateException("XposedInit not initialized yet");
+        }
+        return inst;
+    }
+
+    // ---------------- 生命周期回调 ----------------
+
+    /** system_server 启动：放行第三方输入法的「获取应用列表」权限。 */
     @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
-        String pkg = lpparam.packageName;
+    public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
+        log("system server starting: v" + BuildConfig.VERSION_NAME);
+        if (imeBottomSupported()) {
+            ImePermissionHook.init(param.getClassLoader());
+        } else {
+            log("skip permission hook: " + PROP_MIUI_IME_BOTTOM + " != 1");
+        }
+    }
+
+    /** 作用域内每个包加载时：按包名分发。 */
+    @Override
+    public void onPackageLoaded(XposedModuleInterface.PackageLoadedParam param) {
+        String pkg = param.getPackageName();
         if (pkg == null) return;
 
-        if (PKG_ANDROID.equals(pkg)) {
-            XposedBridge.log(TAG + " android: v" + BuildConfig.VERSION_NAME);
-            if (imeBottomSupported()) {
-                ImePermissionHook.init(lpparam);
-            } else {
-                XposedBridge.log(TAG + " skip permission hook: " + PROP_MIUI_IME_BOTTOM + " != 1");
-            }
-            return;
-        }
-
         if (PKG_PHRASE.equals(pkg)) {
-            XposedBridge.log(TAG + " phrase: v" + BuildConfig.VERSION_NAME);
+            log("phrase: v" + BuildConfig.VERSION_NAME);
             ClipboardHook.init();
             // DexKit 需要扫描 dex，耗时较长，放到最后执行，
             // 保证剪贴板相关的 hook 已经装好，不会拖慢 com.miui.phrase 启动。
-            PackageValidationHook.init(lpparam);
+            PackageValidationHook.init(param);
             return;
         }
 
-        // 作用域内的其他进程，按第三方输入法处理
+        // 其余按第三方输入法处理（system / android 等无关包直接忽略）
         if (!imeBottomSupported()) {
-            XposedBridge.log(TAG + " " + pkg + " skip: " + PROP_MIUI_IME_BOTTOM + " != 1");
+            log(pkg + " skip: " + PROP_MIUI_IME_BOTTOM + " != 1");
             return;
         }
-        ImeUnlockHook.init(lpparam);
+
+        ClassLoader cl;
+        try {
+            cl = param.getDefaultClassLoader(); // API 29+
+        } catch (Throwable t) {
+            log(pkg + " skip: no classloader - " + t);
+            return;
+        }
+        ImeUnlockHook.init(pkg, cl);
     }
 
     private static boolean imeBottomSupported() {

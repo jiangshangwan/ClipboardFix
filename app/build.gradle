@@ -10,8 +10,8 @@ android {
         applicationId "com.clipboardfix"
         minSdk 28
         targetSdk 35
-        versionCode 6
-        versionName "1.3"
+        versionCode 7
+        versionName "1.4"
     }
 
     buildTypes {
@@ -30,16 +30,30 @@ android {
         targetCompatibility JavaVersion.VERSION_11
     }
 
+    sourceSets {
+        main {
+            // libxposed 新版模块声明放在 META-INF/xposed/ 下，显式声明以便打进 APK
+            resources.srcDirs = ['src/main/resources']
+        }
+    }
+
     packagingOptions {
-        exclude 'META-INF/**'
+        // 依赖自带的 META-INF 元数据排除掉，但保留我们自己的 META-INF/xposed 模块声明
+        exclude 'META-INF/LICENSE*'
+        exclude 'META-INF/NOTICE*'
+        exclude 'META-INF/*.version'
+        exclude 'META-INF/*.md'
+        exclude 'META-INF/*.kotlin_module'
+        exclude 'META-INF/proguard/**'
+        exclude 'META-INF/com/**'
         exclude 'kotlin/**'
         exclude '**.bin'
     }
 }
 
 dependencies {
-    compileOnly 'de.robv.android.xposed:api:82'
-    compileOnly 'de.robv.android.xposed:api:82:sources'
+    // libxposed 新 API（LSPosed 2.x 的 Modern API，API 102），替代旧 de.robv.android.xposed
+    compileOnly 'io.github.libxposed:api:102.0.0'
     implementation 'androidx.core:core:1.12.0'
 
     // DexKit：精确定位 com.miui.provider.InputProvider 的包名校验方法

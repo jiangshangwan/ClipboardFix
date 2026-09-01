@@ -4,20 +4,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     
-    <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:description="@string/module_description">
 
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="修复 HyperOS 第三方输入法无法使用系统剪贴板的问题，并解锁全面屏优化（输入法底部常用语/剪贴板入口）" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="82" />
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/HookList" />
+        <!-- libxposed 新版模块：作用域走 META-INF/xposed/scope.list，声明走 module.prop + java_init.list，
+             不再使用 xposedmodule / xposedminversion / xposedscope 等旧 meta-data -->
 
         <!-- 主界面：同时作为 LSPosed 设置入口（通过 MODULE_SETTINGS category） -->
         <activity

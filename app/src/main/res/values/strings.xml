@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">澎湃OS剪贴板补全</string>
     <string name="settings_class">com.clipboardfix.AboutActivity</string>
+    <string name="module_description">修复 HyperOS 第三方输入法无法使用系统剪贴板的问题，并解锁全面屏优化（输入法底部常用语/剪贴板入口）</string>
 </resources>
