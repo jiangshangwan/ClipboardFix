@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 模块推荐作用域。LSPosed 会预勾选这些，用户还可以自行追加其他输入法。 -->
+    <string-array name="HookList">
+        <item>android</item>
+        <item>com.miui.phrase</item>
+
+        <!-- 第三方输入法 · 官方版 -->
+        <item>com.tencent.wetype</item>
+        <item>com.bytedance.android.doubaoime</item>
+        <item>com.sohu.inputmethod.sogou</item>
+        <item>com.iflytek.inputmethod</item>
+        <item>com.baidu.input</item>
+        <item>com.google.android.inputmethod.latin</item>
+
+        <!-- 第三方输入法 · 小米定制版 -->
+        <item>com.sohu.inputmethod.sogou.xiaomi</item>
+        <item>com.iflytek.inputmethod.miui</item>
+        <item>com.baidu.input_mi</item>
+    </string-array>
+</resources>

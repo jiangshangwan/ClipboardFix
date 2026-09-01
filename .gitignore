@@ -4,3 +4,6 @@ build/
 local.properties
 *.iml
 *.apk
+*.log
+.blob-map.json
+.blob-map-v2.json

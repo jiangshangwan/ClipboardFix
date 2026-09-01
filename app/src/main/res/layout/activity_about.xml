@@ -35,7 +35,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="v1.2"
+            android:text="v1.3"
             android:textColor="#88FFFFFF"
             android:textSize="14sp"
             android:layout_marginBottom="24dp" />
@@ -61,7 +61,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="修复HyperOS 3.0常用语和剪贴板v4.7.7&#10;第三方输入法无法读取系统剪贴板历史记录的问题。&#10;&#10;目前本人就只测试了微信输入法，其他输入法暂时没有测试。"
+                android:text="修复在HyperOS3.0及以上系统常用于和剪贴板V4.7.7及以后的版本导致第三方输入法无法读取系统剪贴板历史记录的问题。&#10;同时并解锁第三方键盘全面屏优化功能。"
                 android:textColor="#CCFFFFFF"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5" />
@@ -69,7 +69,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="支持的输入法"
+                android:text="提醒"
                 android:textColor="#FF88CCFF"
                 android:textSize="14sp"
                 android:textStyle="bold"
@@ -79,19 +79,28 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="• 微信输入法（com.tencent.wetype）&#10;• 搜狗输入法小米版（com.sohu.inputmethod.sogou.xiaomi）&#10;• 其他第三方输入法（理论上均可）"
-                android:textColor="#CCFFFFFF"
-                android:textSize="14sp"
-                android:lineSpacingMultiplier="1.5" />
+                android:text="安装后请在Lsposed内勾选作用域【剪贴板和常用语】完成后必须要重启手机，否则无效！！&#10;本模块已经内置解锁第三方键盘全面屏优化功能，需要在Lsposed内勾选当前使用的第三方输入法！"
+                android:textColor="#FFCC66"
+                android:textSize="13sp"
+                android:lineSpacingMultiplier="1.4" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="安装后请在LSPosed内勾选作用域「剪贴板和常用语」，完成设置后请重启手机！"
-                android:textColor="#FFCC66"
-                android:textSize="13sp"
+                android:text="已测试输入法"
+                android:textColor="#FF88CCFF"
+                android:textSize="14sp"
+                android:textStyle="bold"
                 android:layout_marginTop="12dp"
-                android:lineSpacingMultiplier="1.4" />
+                android:layout_marginBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="微信输入法（com.tencent.wetype）&#10;豆包输入法（com.bytedance.android.doubaoime）&#10;搜狗输入法（com.sohu.inputmethod.sogou）&#10;讯飞输入法（com.iflytek.inputmethod）&#10;百度输入法（com.baidu.input）"
+                android:textColor="#CCFFFFFF"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5" />
         </LinearLayout>
 
         <!-- Card: 意见反馈 -->

@@ -11,13 +11,13 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="修复 HyperOS 3.0 第三方输入法无法使用系统剪贴板的问题" />
+            android:value="修复 HyperOS 第三方输入法无法使用系统剪贴板的问题，并解锁全面屏优化（输入法底部常用语/剪贴板入口）" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
         <meta-data
             android:name="xposedscope"
-            android:value="com.miui.phrase" />
+            android:resource="@array/HookList" />
 
         <!-- 主界面：同时作为 LSPosed 设置入口（通过 MODULE_SETTINGS category） -->
         <activity

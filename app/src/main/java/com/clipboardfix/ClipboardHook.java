@@ -1,0 +1,424 @@
+package com.clipboardfix;
+
+import android.content.ContentProvider;
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
+import android.database.Cursor;
+import android.database.MatrixCursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
+import android.util.Base64;
+
+import java.io.ByteArrayOutputStream;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedBridge;
+import de.robv.android.xposed.XposedHelpers;
+
+/**
+ * 剪贴板修复三件套，只在 com.miui.phrase 进程内安装。
+ *
+ * <p>Hook 1：包名伪造，绕过 V4.7.7 的白名单校验
+ * <p>Hook 2：ContentProvider 查询改写，吞异常 + thumbImage WebP 转 PNG
+ * <p>Hook 3：SecurityException 构造拦截
+ */
+public final class ClipboardHook {
+
+    private static final int SYSTEM_UID = 1000;
+    private static final String[] ALLOWED_PACKAGES = {
+            "com.sohu.inputmethod.sogou.xiaomi",
+            "com.xiaomi.type"
+    };
+
+    /** 已 hook 过 openFile 的 provider，避免重复挂载。 */
+    private static final Set<String> HOOKED_PROVIDERS =
+            Collections.synchronizedSet(new HashSet<String>());
+
+    private static boolean globalFileHooked = false;
+
+    private ClipboardHook() {
+    }
+
+    public static void init() {
+        hookPackageManager();
+        hookAttachInfo();
+        hookSecurityException();
+    }
+
+    private static void log(String msg) {
+        XposedBridge.log(XposedInit.TAG + " " + msg);
+    }
+
+    // ====== Hook 1: PackageManager.getNameForUid / getPackagesForUid ======
+
+    private static void hookPackageManager() {
+        boolean nameHooked = hookNameForUidOn(PackageManager.class);
+        boolean pkgHooked = hookPkgsForUidOn(PackageManager.class);
+
+        if (nameHooked && pkgHooked) return;
+
+        try {
+            Class<?> appPmClass = Class.forName("android.app.ApplicationPackageManager",
+                    false, PackageManager.class.getClassLoader());
+            log("Found ApplicationPackageManager");
+            if (!nameHooked) hookNameForUidOn(appPmClass);
+            if (!pkgHooked) hookPkgsForUidOn(appPmClass);
+        } catch (ClassNotFoundException e) {
+            log("WARN: ApplicationPackageManager not found");
+        }
+    }
+
+    private static boolean hookNameForUidOn(Class<?> clazz) {
+        try {
+            XposedHelpers.findAndHookMethod(clazz, "getNameForUid", int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            // DexKit 精确校验期间放行真实包名
+                            if (Bypass.isActive()) return;
+
+                            int uid = (Integer) param.args[0];
+                            String result = (String) param.getResult();
+                            if (uid > SYSTEM_UID && uid < 100000) {
+                                // 系统服务一律不伪造
+                                if (isSystemService(result)) return;
+                                // 白名单内的小米输入法本来就能通过
+                                if (isWhitelisted(result)) return;
+                                param.setResult(ALLOWED_PACKAGES[0]);
+                                log("getNameForUid spoofed: " + uid
+                                        + " (" + result + ") -> " + ALLOWED_PACKAGES[0]);
+                            }
+                        }
+                    });
+            log("OK: getNameForUid on " + clazz.getSimpleName());
+            return true;
+        } catch (Throwable t) {
+            log("FAIL: getNameForUid on " + clazz.getSimpleName() + " - " + t);
+            return false;
+        }
+    }
+
+    private static boolean hookPkgsForUidOn(Class<?> clazz) {
+        try {
+            XposedHelpers.findAndHookMethod(clazz, "getPackagesForUid", int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            // DexKit 精确校验期间放行真实包名
+                            if (Bypass.isActive()) return;
+
+                            int uid = (Integer) param.args[0];
+                            String[] result = (String[]) param.getResult();
+                            if (uid > SYSTEM_UID && uid < 100000) {
+                                if (result != null && result.length > 0) {
+                                    if (isSystemService(result[0])) return;
+                                    if (isWhitelisted(result[0])) return;
+                                    param.setResult(new String[]{ALLOWED_PACKAGES[0]});
+                                    log("getPackagesForUid spoofed: " + uid
+                                            + " (" + result[0] + ") -> " + ALLOWED_PACKAGES[0]);
+                                }
+                            }
+                        }
+                    });
+            log("OK: getPackagesForUid on " + clazz.getSimpleName());
+            return true;
+        } catch (Throwable t) {
+            log("FAIL: getPackagesForUid on " + clazz.getSimpleName() + " - " + t);
+            return false;
+        }
+    }
+
+    /** 系统服务永不伪造，避免误伤 milink、phrase provider 等。 */
+    private static boolean isSystemService(String pkgName) {
+        return pkgName != null && (
+                pkgName.startsWith("com.miui.") ||
+                        pkgName.startsWith("com.xiaomi.") ||
+                        pkgName.startsWith("android.") ||
+                        pkgName.startsWith("com.android.") ||
+                        pkgName.contains("milink")
+        );
+    }
+
+    private static boolean isWhitelisted(String pkgName) {
+        if (pkgName == null) return false;
+        for (String allowed : ALLOWED_PACKAGES) {
+            if (allowed.equals(pkgName)) return true;
+        }
+        return false;
+    }
+
+    // ====== Hook 2: ContentProvider.attachInfo -> 定位 input / phrase provider ======
+
+    private static void hookAttachInfo() {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    ContentProvider.class, "attachInfo",
+                    Context.class, ProviderInfo.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            Class<?> clazz = param.thisObject.getClass();
+                            if (clazz.equals(ContentProvider.class)) return;
+                            ProviderInfo info = (ProviderInfo) param.args[1];
+                            if (info != null && info.authority != null
+                                    && info.authority.contains("input")) {
+                                log("Found INPUT provider: " + clazz.getName()
+                                        + " authority=" + info.authority);
+                                hookConcreteQueryMethod(clazz);
+                            }
+                            hookGlobalContentProviderFile();
+                        }
+                    });
+            log("OK: ContentProvider.attachInfo");
+        } catch (Throwable t) {
+            log("FAIL: ContentProvider.attachInfo - " + t);
+        }
+    }
+
+    private static void hookConcreteQueryMethod(Class<?> providerClass) {
+        try {
+            boolean foundQuery = false;
+            for (Method m : providerClass.getDeclaredMethods()) {
+                Class<?>[] params = m.getParameterTypes();
+                if (params.length == 5
+                        && Uri.class.isAssignableFrom(params[0])
+                        && String[].class.equals(params[1])
+                        && String.class.equals(params[2])
+                        && String[].class.equals(params[3])
+                        && String.class.equals(params[4])) {
+
+                    log("Found query: " + providerClass.getName() + "." + m.getName());
+                    final Method queryMethod = m;
+                    XposedBridge.hookMethod(m, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (param.hasThrowable()) {
+                                Throwable t = param.getThrowable();
+                                if (t instanceof SecurityException) {
+                                    log("query CAUGHT SecurityException");
+                                    param.setThrowable(null);
+                                }
+                                return;
+                            }
+                            Cursor cursor = (Cursor) param.getResult();
+                            if (cursor == null) return;
+
+                            String[] cols = cursor.getColumnNames();
+                            log("query RESULT: " + cursor.getCount()
+                                    + " rows, cols=" + Arrays.toString(cols));
+
+                            int phraseContentIdx = -1;
+                            for (int i = 0; i < cols.length; i++) {
+                                if ("phrase_content".equals(cols[i])) {
+                                    phraseContentIdx = i;
+                                    break;
+                                }
+                            }
+                            if (phraseContentIdx < 0) return;
+
+                            boolean needsConversion = false;
+                            List<Object[]> allRows = new ArrayList<>();
+                            if (cursor.moveToFirst()) {
+                                do {
+                                    Object[] row = new Object[cols.length];
+                                    for (String col : cols) {
+                                        int idx = cursor.getColumnIndex(col);
+                                        if (idx >= 0) {
+                                            String val = cursor.getString(idx);
+                                            row[idx] = val;
+                                            if (idx == phraseContentIdx && val != null
+                                                    && val.contains("\"thumbImage\":\"")) {
+                                                needsConversion = true;
+                                            }
+                                        }
+                                    }
+                                    allRows.add(row);
+                                } while (cursor.moveToNext());
+                            }
+
+                            if (!needsConversion) return;
+
+                            log("converting thumbImage WebP->PNG for " + allRows.size() + " rows");
+                            MatrixCursor newCursor = new MatrixCursor(cols);
+                            for (Object[] row : allRows) {
+                                Object[] newRow = row.clone();
+                                String content = (String) row[phraseContentIdx];
+                                if (content != null && content.contains("\"thumbImage\":\"")) {
+                                    newRow[phraseContentIdx] = convertThumbImageWebPToPng(content);
+                                }
+                                newCursor.addRow(newRow);
+                            }
+                            param.setResult(newCursor);
+                            log("conversion done, replaced cursor");
+                        }
+                    });
+                    foundQuery = true;
+                    break;
+                }
+            }
+            if (!foundQuery) {
+                log("WARN: no query method found on " + providerClass.getName());
+            }
+        } catch (Throwable t) {
+            log("FAIL: hookConcreteQueryMethod - " + t);
+        }
+    }
+
+    /**
+     * 系统输入法（小米搜狗/小米智能）能渲染 WebP，第三方输入法（微信键盘等）不行，
+     * 这里转成 PNG 以修复图片条目显示异常。
+     */
+    private static String convertThumbImageWebPToPng(String json) {
+        try {
+            String marker = "\"thumbImage\":\"";
+            int thumbStart = json.indexOf(marker);
+            if (thumbStart == -1) return json;
+            thumbStart += marker.length();
+            int thumbEnd = json.indexOf("\"", thumbStart);
+            if (thumbEnd == -1) return json;
+
+            byte[] imageBytes = Base64.decode(json.substring(thumbStart, thumbEnd), Base64.DEFAULT);
+
+            // 非 WebP（不以 RIFF 开头）不做转换
+            if (imageBytes.length < 12
+                    || imageBytes[0] != 'R' || imageBytes[1] != 'I'
+                    || imageBytes[2] != 'F' || imageBytes[3] != 'F') {
+                return json;
+            }
+
+            Bitmap bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+            if (bitmap == null) {
+                log("WARN: failed to decode WebP bitmap");
+                return json;
+            }
+
+            ByteArrayOutputStream pngOut = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, pngOut);
+            byte[] pngBytes = pngOut.toByteArray();
+            String base64Png = Base64.encodeToString(pngBytes, Base64.NO_WRAP);
+            bitmap.recycle();
+
+            log("thumbImage WebP->PNG: " + imageBytes.length
+                    + " bytes -> " + pngBytes.length + " bytes");
+            return json.substring(0, thumbStart) + base64Png + json.substring(thumbEnd);
+        } catch (Throwable t) {
+            log("convertThumbImageWebPToPng error: " + t);
+            return json;
+        }
+    }
+
+    /** 对 phrase / clipboard / continuity 相关 provider 抑制 openFile 的权限异常。 */
+    private static synchronized void hookGlobalContentProviderFile() {
+        if (globalFileHooked) return;
+        globalFileHooked = true;
+
+        try {
+            XposedHelpers.findAndHookMethod(ContentProvider.class, "attachInfo",
+                    Context.class, ProviderInfo.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            ProviderInfo info = (ProviderInfo) param.args[1];
+                            if (info == null || info.authority == null) return;
+                            String auth = info.authority;
+                            if (auth.contains("phrase")
+                                    || auth.contains("clipboard")
+                                    || auth.contains("continuity")) {
+                                Class<?> providerClass = param.thisObject.getClass();
+                                if (!HOOKED_PROVIDERS.add(providerClass.getName())) return;
+                                log("hooking provider: " + providerClass.getName()
+                                        + " authority=" + auth);
+                                hookProviderOpenFile(providerClass);
+                            }
+                        }
+                    });
+            log("OK: global attachInfo hook");
+        } catch (Throwable t) {
+            log("FAIL: global attachInfo hook - " + t);
+        }
+    }
+
+    private static void hookProviderOpenFile(Class<?> providerClass) {
+        hookFileMethod(providerClass, "openFile", Uri.class, String.class);
+        hookFileMethod(providerClass, "openFile", Uri.class, String.class,
+                android.os.CancellationSignal.class);
+        hookFileMethod(providerClass, "openAssetFile", Uri.class, String.class);
+    }
+
+    private static void hookFileMethod(final Class<?> providerClass,
+                                       final String name, Class<?>... paramTypes) {
+        try {
+            Method m = providerClass.getDeclaredMethod(name, paramTypes);
+            m.setAccessible(true);
+            XposedBridge.hookMethod(m, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    if (!param.hasThrowable()) return;
+                    Throwable t = param.getThrowable();
+                    String msg = t.getMessage() != null ? t.getMessage() : "";
+                    Uri uri = (Uri) param.args[0];
+                    if ((t instanceof SecurityException || t instanceof IllegalStateException)
+                            && (msg.contains("Invalid caller") || msg.contains("Permission Denied"))) {
+                        param.setThrowable(null);
+                        log(name + "(" + providerClass.getSimpleName()
+                                + ") exception suppressed for: " + uri);
+                    } else {
+                        log(name + "(" + providerClass.getSimpleName() + ") EXCEPTION: "
+                                + t.getClass().getSimpleName() + ": " + msg + " uri=" + uri);
+                    }
+                }
+            });
+            log("OK: " + name + " on " + providerClass.getName());
+        } catch (NoSuchMethodException e) {
+            log(providerClass.getSimpleName() + " does not override "
+                    + name + "(" + paramTypes.length + "arg)");
+        } catch (Throwable t) {
+            log("FAIL: " + name + " on " + providerClass.getName() + " - " + t);
+        }
+    }
+
+    // ====== Hook 3: SecurityException 构造拦截 ======
+
+    private static void hookSecurityException() {
+        hookSecExConstructor(String.class);
+        hookSecExConstructor(String.class, Throwable.class);
+        hookSecExConstructor();
+    }
+
+    private static void hookSecExConstructor(Class<?>... paramTypes) {
+        try {
+            Object[] params = new Object[paramTypes.length + 1];
+            System.arraycopy(paramTypes, 0, params, 0, paramTypes.length);
+            params[paramTypes.length] = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    String msg = param.args.length > 0 && param.args[0] instanceof String
+                            ? (String) param.args[0] : "";
+                    if (!msg.contains("Permission Denied") && !msg.contains("Invalid caller")) {
+                        return;
+                    }
+                    StackTraceElement[] st = new Exception().getStackTrace();
+                    for (StackTraceElement e : st) {
+                        if (e.getClassName().contains("miui.provider")
+                                || e.getClassName().contains("miui.phrase")) {
+                            log("SecurityException BLOCKED: " + msg);
+                            throw new IllegalStateException("BYPASSED: " + msg);
+                        }
+                    }
+                }
+            };
+            XposedHelpers.findAndHookConstructor(SecurityException.class, params);
+        } catch (Throwable ignored) {
+            // 构造函数不存在时忽略
+        }
+    }
+}
