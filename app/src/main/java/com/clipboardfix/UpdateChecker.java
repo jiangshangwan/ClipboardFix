@@ -259,8 +259,9 @@ public class UpdateChecker {
         if (info.downloadUrl == null || info.downloadUrl.isEmpty()) {
             String tag = info.tagName;
             if (tag != null && !tag.isEmpty()) {
+                // 与实际发布的 asset 命名保持一致（ClipboardFix-<tag>.apk）
                 info.downloadUrl = "https://github.com/jiangshangwan/ClipboardFix/releases/download/"
-                        + tag + "/OS3.0." + tag + ".apk";
+                        + tag + "/ClipboardFix-" + tag + ".apk";
                 android.util.Log.d("ClipboardFix", "fallback URL: " + info.downloadUrl);
             }
         }

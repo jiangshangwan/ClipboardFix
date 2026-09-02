@@ -1,0 +1,6 @@
+# gradlew 必须保持 LF 行尾：若被转成 CRLF，Linux/Mac 执行会报
+# "/bin/sh^M: bad interpreter"。Windows 上开发时靠这条规则兜底。
+gradlew text eol=lf
+
+# Windows 批处理脚本相反，必须用 CRLF
+*.bat text eol=crlf

@@ -10,6 +10,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.util.Base64;
+import android.util.LruCache;
 
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Constructor;
@@ -39,6 +40,16 @@ public final class ClipboardHook {
     /** 已 hook 过 openFile 的 provider，避免重复挂载。 */
     private static final Set<String> HOOKED_PROVIDERS =
             Collections.synchronizedSet(new HashSet<String>());
+
+    /**
+     * thumbImage 转换结果缓存。
+     *
+     * <p>key 是原始的 base64 内容，value 是转换后的 PNG base64。
+     * 剪贴板面板会被频繁查询，不缓存的话每条图片每次都要重新解码再编码，条目多时明显卡顿。
+     * 若某条内容本就无需转换，则把 value 存成与 key 相同的值，下次命中时直接原样返回。
+     * LruCache 自身线程安全。
+     */
+    private static final LruCache<String, String> THUMB_CACHE = new LruCache<>(32);
 
     private static boolean globalFileHooked = false;
 
@@ -277,18 +288,28 @@ public final class ClipboardHook {
             int thumbEnd = json.indexOf("\"", thumbStart);
             if (thumbEnd == -1) return json;
 
-            byte[] imageBytes = Base64.decode(json.substring(thumbStart, thumbEnd), Base64.DEFAULT);
+            String rawBase64 = json.substring(thumbStart, thumbEnd);
 
-            // 非 WebP（不以 RIFF 开头）不做转换
+            // 命中缓存直接拼回去，省掉解码 + 编码
+            String cached = THUMB_CACHE.get(rawBase64);
+            if (cached != null) {
+                return json.substring(0, thumbStart) + cached + json.substring(thumbEnd);
+            }
+
+            byte[] imageBytes = Base64.decode(rawBase64, Base64.DEFAULT);
+
+            // 非 WebP（不以 RIFF 开头）不做转换，记进缓存避免下次重复解码
             if (imageBytes.length < 12
                     || imageBytes[0] != 'R' || imageBytes[1] != 'I'
                     || imageBytes[2] != 'F' || imageBytes[3] != 'F') {
+                THUMB_CACHE.put(rawBase64, rawBase64);
                 return json;
             }
 
             Bitmap bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
             if (bitmap == null) {
                 log("WARN: failed to decode WebP bitmap");
+                THUMB_CACHE.put(rawBase64, rawBase64);
                 return json;
             }
 
@@ -297,6 +318,8 @@ public final class ClipboardHook {
             byte[] pngBytes = pngOut.toByteArray();
             String base64Png = Base64.encodeToString(pngBytes, Base64.NO_WRAP);
             bitmap.recycle();
+
+            THUMB_CACHE.put(rawBase64, base64Png);
 
             log("thumbImage WebP->PNG: " + imageBytes.length
                     + " bytes -> " + pngBytes.length + " bytes");
