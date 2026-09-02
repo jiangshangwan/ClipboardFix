@@ -70,8 +70,32 @@ public final class ImeUnlockHook {
         return false;
     }
 
-    /** 跳过包名检查，直接开启输入法优化。字段可能是 int 也可能是 boolean，两种都试。 */
+    /**
+     * 跳过包名检查，直接开启输入法优化。
+     *
+     * <p>同时做两件事，互为兜底：
+     * <ol>
+     *   <li>改静态字段 {@code sIsImeSupport}（可能是 int 也可能是 boolean）——对旧版 ROM 有效；</li>
+     *   <li>hook 方法 {@code isImeSupport()} 恒返回 true——与赋值时机无关，服务重建后依然有效。</li>
+     * </ol>
+     *
+     * <p>第 2 点参照 RC1844/MIUI_IME_Unlock v1.17（PR #34「Fix IME support hook after service
+     * recreation」）。只改静态字段是一次性赋值：输入法服务重建、类被重新初始化或别处重新
+     * 计算该字段时，值会被写回 false，底部常用语入口随之消失且必须重启输入法进程才恢复。
+     * 改为拦截判断方法后，任何调用点拿到的恒为 true，不受重置时机影响。
+     */
     private static void hookSIsImeSupport(Class<?> clazz) {
+        boolean fieldOk = hookSIsImeSupportField(clazz);
+        int methodCount = hookIsImeSupportMethod(clazz);
+        if (fieldOk || methodCount > 0) {
+            log("OK: ime support on " + clazz.getName()
+                    + " (field=" + fieldOk + ", method=" + methodCount + ")");
+        } else {
+            log("SKIP: neither sIsImeSupport field nor isImeSupport() in " + clazz.getName());
+        }
+    }
+
+    private static boolean hookSIsImeSupportField(Class<?> clazz) {
         try {
             java.lang.reflect.Field f = Reflect.findField(clazz, "sIsImeSupport");
             if (f.getType() == boolean.class) {
@@ -79,10 +103,41 @@ public final class ImeUnlockHook {
             } else {
                 Reflect.setStaticField(clazz, "sIsImeSupport", 1);
             }
-            log("OK: sIsImeSupport on " + clazz.getName());
+            return true;
         } catch (Throwable t) {
-            log("FAIL: sIsImeSupport on " + clazz.getName() + " - " + t);
+            log("SKIP: field sIsImeSupport on " + clazz.getName() + " - " + t);
+            return false;
         }
+    }
+
+    /**
+     * 让目标类里所有 {@code isImeSupport()} 恒返回 true。
+     *
+     * <p>沿父类链找，命中所有「无参且返回 boolean / Boolean」的同名方法。
+     * 静态、实例、私有方法都 hook，避免 ROM 改动签名后漏掉。
+     *
+     * @return 成功 hook 的方法数量
+     */
+    private static int hookIsImeSupportMethod(Class<?> clazz) {
+        int count = 0;
+        Class<?> c = clazz;
+        while (c != null && c != Object.class) {
+            for (Method m : c.getDeclaredMethods()) {
+                if (!"isImeSupport".equals(m.getName())) continue;
+                if (m.getParameterTypes().length != 0) continue;
+                Class<?> rt = m.getReturnType();
+                if (rt != boolean.class && rt != Boolean.class) continue;
+                try {
+                    m.setAccessible(true);
+                    XposedInit.hook(m, chain -> Boolean.TRUE);
+                    count++;
+                } catch (Throwable t) {
+                    log("FAIL: method isImeSupport on " + c.getName() + " - " + t);
+                }
+            }
+            c = c.getSuperclass();
+        }
+        return count;
     }
 
     /** 小爱语音输入按钮失效修复。 */
