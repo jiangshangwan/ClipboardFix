@@ -61,6 +61,33 @@ public class XposedInit extends XposedModule {
                 .intercept(hooker);
     }
 
+    /**
+     * hook 类的静态初始化块（{@code <clinit>}）。
+     *
+     * <p>{@code chain.proceed()} 之前是静态初始化执行前，之后是执行完毕。
+     * 用于在类被（重新）初始化后立刻重设静态字段——服务重建导致类重新加载时，
+     * 之前一次性赋的值会丢失，靠这个回调补回来。
+     */
+    public static void hookClassInitializer(Class<?> clazz, XposedInterface.Hooker hooker) {
+        module().hookClassInitializer(clazz)
+                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                .intercept(hooker);
+    }
+
+    /**
+     * 反优化指定方法，绕过 ART 的内联。
+     *
+     * <p>系统框架里被频繁调用的短方法（如 {@code isImeSupport()}）容易被 ART 内联到调用点，
+     * 一旦内联，hook 就不会被调用。新版本 Android 的 ART 优化更激进，需要先反优化。
+     */
+    public static void deoptimizeMethod(Executable target) {
+        try {
+            module().deoptimize(target);
+        } catch (Throwable t) {
+            log("deoptimize failed on " + target + " - " + t);
+        }
+    }
+
     private static XposedInit module() {
         XposedInit inst = instance;
         if (inst == null) {

@@ -1,5 +1,6 @@
 package com.clipboardfix;
 
+import android.os.Build;
 import android.view.inputmethod.InputMethodManager;
 
 import java.lang.reflect.Method;
@@ -30,7 +31,10 @@ public final class ImeUnlockHook {
 
     public static void init(String pkg, ClassLoader cl) {
         boolean isNonCustomize = !contains(MIUI_IME_LIST, pkg);
-        log(pkg + " start (customized=" + !isNonCustomize + ")");
+        log(pkg + " start (customized=" + !isNonCustomize
+                + ", sdk=" + Build.VERSION.SDK_INT
+                + ", device=" + Build.DEVICE
+                + ", miui=" + SysProps.get("ro.miui.ui.version.name", "?"));
 
         if (isNonCustomize) {
             Class<?> injector = Reflect.findClassIfExists(
@@ -87,9 +91,11 @@ public final class ImeUnlockHook {
     private static void hookSIsImeSupport(Class<?> clazz) {
         boolean fieldOk = hookSIsImeSupportField(clazz);
         int methodCount = hookIsImeSupportMethod(clazz);
-        if (fieldOk || methodCount > 0) {
+        boolean clinitOk = hookClassInitToReapply(clazz);
+        if (fieldOk || methodCount > 0 || clinitOk) {
             log("OK: ime support on " + clazz.getName()
-                    + " (field=" + fieldOk + ", method=" + methodCount + ")");
+                    + " (field=" + fieldOk + ", method=" + methodCount
+                    + ", clinit=" + clinitOk + ")");
         } else {
             log("SKIP: neither sIsImeSupport field nor isImeSupport() in " + clazz.getName());
         }
@@ -124,13 +130,16 @@ public final class ImeUnlockHook {
         while (c != null && c != Object.class) {
             for (Method m : c.getDeclaredMethods()) {
                 if (!"isImeSupport".equals(m.getName())) continue;
-                if (m.getParameterTypes().length != 0) continue;
                 Class<?> rt = m.getReturnType();
                 if (rt != boolean.class && rt != Boolean.class) continue;
                 try {
                     m.setAccessible(true);
+                    // 系统框架里这类短方法容易被 ART 内联，内联后 hook 不会被调用，先反优化
+                    XposedInit.deoptimizeMethod(m);
                     XposedInit.hook(m, chain -> Boolean.TRUE);
                     count++;
+                    log("OK: isImeSupport(" + describeParams(m) + ") on "
+                            + c.getSimpleName());
                 } catch (Throwable t) {
                     log("FAIL: method isImeSupport on " + c.getName() + " - " + t);
                 }
@@ -138,6 +147,40 @@ public final class ImeUnlockHook {
             c = c.getSuperclass();
         }
         return count;
+    }
+
+    /**
+     * 类被（重新）初始化后立刻把 support 字段改回来。
+     *
+     * <p>只在包加载时赋值一次是不够的：类重新初始化、或走动态加载路径稍后才初始化时，
+     * {@code <clinit>} 会把 {@code sIsImeSupport} 重新算回默认值。
+     * 这里挂在静态初始化之后补一刀，覆盖所有初始化时序。
+     */
+    private static boolean hookClassInitToReapply(Class<?> clazz) {
+        try {
+            XposedInit.hookClassInitializer(clazz, chain -> {
+                Object r = chain.proceed();   // 先跑完原始静态初始化
+                hookSIsImeSupportField(clazz); // 再覆盖成我们期望的值
+                log("reapplied support flag after <clinit> of " + clazz.getSimpleName());
+                return r;
+            });
+            return true;
+        } catch (Throwable t) {
+            log("SKIP: class initializer hook on " + clazz.getName() + " - " + t);
+            return false;
+        }
+    }
+
+    /** 把方法参数类型拼成可读字符串，便于在日志里确认签名差异。 */
+    private static String describeParams(Method m) {
+        Class<?>[] ps = m.getParameterTypes();
+        if (ps.length == 0) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ps.length; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(ps[i].getSimpleName());
+        }
+        return sb.toString();
     }
 
     /** 小爱语音输入按钮失效修复。 */
