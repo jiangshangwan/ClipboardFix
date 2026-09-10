@@ -10,13 +10,19 @@ android {
         applicationId "com.clipboardfix"
         minSdk 28
         targetSdk 35
-        versionCode 10
-        versionName "1.4.3"
+        versionCode 11
+        versionName "1.4.4"
+        // 小米设备全部为 ARM 架构；剔除 x86 / x86_64 原生库（libdexkit.so），省约 817KB
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
     }
 
     buildTypes {
         release {
-            minifyEnabled false
+            // R8 收缩：砍掉 androidx.core / kotlin 用不到的代码（DexKit 与自身代码已整包 keep，DEX 安全瘦身）
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
