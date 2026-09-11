@@ -1,4 +1,4 @@
-# 澎湃OS剪贴板功能补全（ClipboardFix）
+# HyperIMEPatch（ClipboardFix）
 
 🛠️ 修复 HyperOS 3.0+ 第三方输入法无法使用系统剪贴板历史的问题，并解锁第三方输入法全面屏优化（底部常用语 / 剪贴板入口）
 
