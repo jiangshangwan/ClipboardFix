@@ -14,6 +14,8 @@
 
 **全面屏优化解锁**：在输入法进程内 hook `InputMethodServiceInjector`，将 `sIsImeSupport` 置位并让 `isImeSupport()` 恒返回 true 以跳过包名检查；在 system_server 内放行输入法权限校验，修复切换输入法列表被裁剪的问题。
 
+开源致谢：感谢[MIUI_IME_Unlock(MIT)](https://github.com/RC1844/MIUI_IME_Unlock)开源项目提供的解锁MIUI键盘全面屏优化限制
+
 ## ✏支持的输入法
 
 | 名称 |   版本号 |
@@ -37,7 +39,7 @@
   - 在 LSPosed 管理器首页「已激活」下方可以看到当前框架的 API 版本
   - 本模块基于新版 API 开发，与旧的 `de.robv.android.xposed` 不兼容
 
-### ⌨操作步骤
+### ⌨️操作步骤
 
 1. 在 LSPosed 中启用本模块
 2. 勾选作用域：
