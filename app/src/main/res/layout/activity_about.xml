@@ -35,7 +35,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="v1.4.4"
+            android:text="v1.4.5"
             android:textColor="#88FFFFFF"
             android:textSize="14sp"
             android:layout_marginBottom="24dp" />
@@ -255,6 +255,17 @@
             android:textSize="15sp"
             android:background="@drawable/btn_show_bg"
             android:layout_marginTop="8dp"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Export Log Button -->
+        <Button
+            android:id="@+id/btnExportLog"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="📄 导出日志（发给作者排查）"
+            android:textColor="#FFFFFFFF"
+            android:textSize="15sp"
+            android:background="@drawable/btn_show_bg"
             android:layout_marginBottom="12dp" />
 
         <!-- Hide / Show Desktop Icon Button -->

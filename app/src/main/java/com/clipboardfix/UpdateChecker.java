@@ -27,6 +27,9 @@ import java.net.URL;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * GitHub Release 自动更新检查器
  *
@@ -249,11 +252,11 @@ public class UpdateChecker {
         String cleanTag = info.tagName.replace("v", "").replace("V", "").trim();
         info.hasUpdate = isNewer(cleanTag, info.currentVersion);
 
-        // 从 assets 中找 APK 下载链接
+        // 从 assets 中找 APK 下载链接（优先选 release 常规版，避免 debug 取证版被普通用户安装）
         String assets = extractArray(json, "assets");
         android.util.Log.d("ClipboardFix", "assets: " + (assets == null ? "null" : assets.length() + " chars"));
         if (assets != null) {
-            info.downloadUrl = extractStringFromObjects(assets, "browser_download_url");
+            info.downloadUrl = selectDownloadUrl(assets);
         }
         // Fallback: 如果 API 解析失败，用 tag 构造下载 URL（保留 v 前缀）
         if (info.downloadUrl == null || info.downloadUrl.isEmpty()) {
@@ -336,6 +339,35 @@ public class UpdateChecker {
             if (depth == 0) return json.substring(start, i + 1);
         }
         return null;
+    }
+
+    /**
+     * 从 GitHub Release 的 assets 数组中选择最合适的 APK 下载链接。
+     * 优先返回不含 "debug" 的 release 常规版；如果全是 debug 或没有匹配项，兜底返回第一个。
+     */
+    private String selectDownloadUrl(String assets) {
+        List<String> urls = new ArrayList<>();
+        String key = "\"browser_download_url\"";
+        int idx = 0;
+        while ((idx = assets.indexOf(key, idx)) != -1) {
+            int colonIdx = assets.indexOf(':', idx + key.length());
+            if (colonIdx == -1) break;
+            int startQuote = assets.indexOf('"', colonIdx + 1);
+            if (startQuote == -1) break;
+            int endQuote = assets.indexOf('"', startQuote + 1);
+            if (endQuote == -1) break;
+            urls.add(assets.substring(startQuote + 1, endQuote));
+            idx = endQuote + 1;
+        }
+        // 优先选 release（非 debug）
+        for (String url : urls) {
+            String lower = url.toLowerCase();
+            if (lower.endsWith(".apk") && !lower.contains("-debug") && !lower.contains("debug")) {
+                return url;
+            }
+        }
+        // 兜底第一个
+        return urls.isEmpty() ? null : urls.get(0);
     }
 
     private String extractStringFromObjects(String arrayJson, String key) {

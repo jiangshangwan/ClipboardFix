@@ -10,20 +10,39 @@ android {
         applicationId "com.clipboardfix"
         minSdk 28
         targetSdk 35
-        versionCode 11
-        versionName "1.4.4"
+        versionCode 17
+        versionName "1.4.6"
         // 小米设备全部为 ARM 架构；剔除 x86 / x86_64 原生库（libdexkit.so），省约 817KB
         ndk {
             abiFilters 'armeabi-v7a', 'arm64-v8a'
         }
     }
 
+    // 统一用项目 keystore：debug 变体默认会用 Android 的 debug.keystore 签名，
+    // 与已安装的 release 版签名不一致会导致覆盖安装失败（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。
+    signingConfigs {
+        clipboard {
+            storeFile file("../../clipboardfix.jks")
+            storePassword "clipboardfix"
+            keyAlias "clipboardfix"
+            keyPassword "clipboardfix"
+        }
+    }
+
     buildTypes {
+        debug {
+            // 用与 release 相同的 keystore，保证可直接覆盖安装
+            signingConfig signingConfigs.clipboard
+            // debug 版保留导出日志按钮，供测试者抓日志
+            buildConfigField "boolean", "ENABLE_EXPORT_LOG", "true"
+        }
         release {
             // R8 收缩：砍掉 androidx.core / kotlin 用不到的代码（DexKit 与自身代码已整包 keep，DEX 安全瘦身）
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // release 纯净版隐藏导出日志按钮
+            buildConfigField "boolean", "ENABLE_EXPORT_LOG", "false"
         }
     }
 
@@ -34,6 +53,12 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+    }
+
+    // 低内存环境：跳过 release lint（lintVital 会撑爆 metaspace），避免无谓的 metaspace OOM
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 
     sourceSets {
@@ -55,6 +80,21 @@ android {
         exclude 'kotlin/**'
         exclude '**.bin'
     }
+}
+
+// 低内存环境（页面文件偏小）构建：把 javac 子进程堆/元空间压到最小，避免默认 1/4 物理内存(≈3.75G) 撑爆提交上限
+tasks.withType(JavaCompile).configureEach {
+    options.fork = true
+    options.forkOptions.memoryMaximumSize = '192m'
+    options.forkOptions.memoryInitialSize = '64m'
+    options.forkOptions.jvmArgs += [
+        '-XX:+UseSerialGC',
+        '-XX:MaxMetaspaceSize=96m',
+        '-XX:TieredStopAtLevel=1',
+        '-XX:CICompilerCount=1',
+        '-Xss512k',
+        '-XX:ReservedCodeCacheSize=32m'
+    ]
 }
 
 dependencies {

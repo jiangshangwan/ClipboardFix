@@ -1,7 +1,13 @@
 package com.clipboardfix;
 
 import android.os.Build;
+import android.util.DisplayMetrics;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 
 import java.lang.reflect.Method;
 
@@ -24,6 +30,17 @@ public final class ImeUnlockHook {
             "com.xiaomi.type",
     };
 
+    /**
+     * 需要启用「键盘抬高」修复的输入法白名单。
+     *
+     * <p>抬高修复会强制修改 keyboard view 的 LayoutParams（height=0/weight=1、清 paddingBottom），
+     * 对本身布局正常的输入法（搜狗普通版/小米版、百度等）反而会造成输入框被顶高等异常。
+     * 因此只对实测出现底部空白/抬高问题的输入法启用。
+     */
+    private static final String[] RAISE_FIX_IME_LIST = {
+            "com.tencent.wetype",   // 微信输入法：澎湃 OS4 / 部分机型底部被抬高
+    };
+
     private static volatile Integer navBarColor;
 
     private ImeUnlockHook() {
@@ -37,6 +54,13 @@ public final class ImeUnlockHook {
                 + ", miui=" + SysProps.get("ro.miui.ui.version.name", "?"));
 
         if (isNonCustomize) {
+            // 抬高修复只针对白名单输入法，避免误伤搜狗等本身布局正常的输入法
+            if (contains(RAISE_FIX_IME_LIST, pkg)) {
+                hookKeyboardRaiseFix();
+                log("raise-fix enabled for " + pkg);
+            } else {
+                log("raise-fix skipped for " + pkg);
+            }
             Class<?> injector = Reflect.findClassIfExists(
                     "android.inputmethodservice.InputMethodServiceInjector", cl);
             if (injector == null) {
@@ -397,5 +421,186 @@ public final class ImeUnlockHook {
             }
         }
         log("SKIP: customizeBottomViewColor(boolean,int,int,int) not found");
+    }
+
+    // ---------------------------------------------------------------
+    // 输入法被「抬高」修复
+    //
+    // 现象：部分机型（澎湃 OS4 / 小米 17 Pro Max、15 Ultra）上第三方输入法
+    //（微信输入法）键盘底部出现多余空白、键盘整体被顶高；小米 13 Pro / 15 Pro 正常。
+    // 机制与早期豆包输入法一致：MIUI 全面屏优化注入底部功能区（BottomView）后，
+    // onCreateInputView 返回的 keyboard view 仍是 WRAP_CONTENT，且可能自带用于
+    //「避让导航栏」的 paddingBottom —— 全面屏优化下导航栏已透明，这段间距就成了
+    // 无用留白，把键盘顶高。
+    //
+    // 修法：让 keyboard view 在父容器 InputFrame（继承 LinearLayout）里撑满剩余空间
+    //（height=0 / weight=1），并清掉 paddingBottom / bottomMargin。
+    // 仅在值不等于目标值时才写回，保证幂等，不会与输入法的 layout 形成死循环。
+    //
+    // hook 点选 setInputView(View)：framework 的 public 方法、子类极少重写；
+    // 而 onCreateInputView 常被子类重写，只 hook 基类拦截不到。
+    // ---------------------------------------------------------------
+
+    private static final int MAX_IME_DUMP = 8;
+    private static int imeDumpCount = 0;
+
+    private static void hookKeyboardRaiseFix() {
+        try {
+            Class<?> ims = android.inputmethodservice.InputMethodService.class;
+            Method setInputView = ims.getDeclaredMethod("setInputView", View.class);
+            setInputView.setAccessible(true);
+            XposedInit.hook(setInputView, chain -> {
+                Object r = chain.proceed();
+                try {
+                    Object arg0 = chain.getArg(0);
+                    if (arg0 instanceof View) {
+                        fixKeyboardView((View) arg0);
+                    }
+                } catch (Throwable t) {
+                    log("raise: setInputView err - " + t);
+                }
+                return r;
+            });
+            log("OK: setInputView raise-fix hook");
+        } catch (Throwable t) {
+            log("FAIL: setInputView raise-fix - " + t);
+        }
+    }
+
+    private static void fixKeyboardView(final View v) {
+        if (v == null) return;
+        dumpKeyboard(v, "setInputView");
+        if (v.isAttachedToWindow()) {
+            applyFillParent(v, "already-attached");
+            dumpKeyboard(v, "already-attached");
+        }
+        v.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(final View vv) {
+                applyFillParent(vv, "attach");
+                dumpKeyboard(vv, "attach");
+                for (final long d : new long[]{300L, 1200L}) {
+                    vv.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            applyFillParent(vv, "t+" + d);
+                            dumpKeyboard(vv, "t+" + d);
+                        }
+                    }, d);
+                }
+                vv.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+                    @Override
+                    public void onLayoutChange(View v2, int l, int t, int r, int b,
+                                               int ol, int ot, int or_, int ob) {
+                        applyFillParent(v2, "layout");
+                    }
+                });
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View vv) {
+            }
+        });
+    }
+
+    /** 让 keyboard view 撑满父容器并清掉底部多余间距；幂等，仅在需要时才写回。 */
+    private static void applyFillParent(View v, String tag) {
+        try {
+            boolean changed = false;
+            if (v.getPaddingBottom() != 0) {
+                v.setPadding(v.getPaddingLeft(), v.getPaddingTop(),
+                        v.getPaddingRight(), 0);
+                changed = true;
+            }
+            ViewGroup.LayoutParams lp = v.getLayoutParams();
+            if (lp == null) return;
+
+            if (lp instanceof LinearLayout.LayoutParams) {
+                LinearLayout.LayoutParams l = (LinearLayout.LayoutParams) lp;
+                if (l.height != 0 || l.weight != 1f || l.bottomMargin != 0) {
+                    log("raise: fix LinearLayout lp h=" + l.height + "->0"
+                            + " weight=" + l.weight + "->1"
+                            + " margB=" + l.bottomMargin + "->0 [" + tag + "]");
+                    l.height = 0;
+                    l.weight = 1f;
+                    l.bottomMargin = 0;
+                    changed = true;
+                }
+            } else if (lp instanceof FrameLayout.LayoutParams) {
+                if (lp.height != ViewGroup.LayoutParams.MATCH_PARENT) {
+                    log("raise: fix FrameLayout lp h=" + lp.height
+                            + "->MATCH [" + tag + "]");
+                    lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                    changed = true;
+                }
+                if (lp instanceof ViewGroup.MarginLayoutParams) {
+                    ViewGroup.MarginLayoutParams ml = (ViewGroup.MarginLayoutParams) lp;
+                    if (ml.bottomMargin != 0) {
+                        ml.bottomMargin = 0;
+                        changed = true;
+                    }
+                }
+            } else if (lp instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams ml = (ViewGroup.MarginLayoutParams) lp;
+                if (ml.bottomMargin != 0) {
+                    ml.bottomMargin = 0;
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                v.setLayoutParams(lp);
+            }
+        } catch (Throwable t) {
+            log("raise: applyFillParent err - " + t);
+        }
+    }
+
+    /** 打出键盘 view 与父容器的实际位置，用于确认「抬高」的空白来自哪一层。 */
+    private static void dumpKeyboard(View v, String tag) {
+        if (imeDumpCount >= MAX_IME_DUMP) return;
+        imeDumpCount++;
+        try {
+            DisplayMetrics dm = v.getResources().getDisplayMetrics();
+            StringBuilder sb = new StringBuilder();
+            sb.append("raise-dump[").append(tag).append("] screenH=").append(dm.heightPixels);
+            sb.append(" view=").append(v.getClass().getSimpleName())
+                    .append('[').append(v.getTop()).append("->").append(v.getBottom()).append(']')
+                    .append(" padB=").append(v.getPaddingBottom())
+                    .append(" measH=").append(v.getMeasuredHeight());
+            ViewParent p = v.getParent();
+            if (p instanceof View) {
+                View pv = (View) p;
+                sb.append(" parent=").append(pv.getClass().getSimpleName())
+                        .append('[').append(pv.getTop()).append("->").append(pv.getBottom())
+                        .append(']');
+                if (pv instanceof ViewGroup) {
+                    ViewGroup g = (ViewGroup) pv;
+                    sb.append(" kids=");
+                    int n = Math.min(g.getChildCount(), 6);
+                    for (int i = 0; i < n; i++) {
+                        View c = g.getChildAt(i);
+                        sb.append(c.getClass().getSimpleName())
+                                .append('[').append(c.getTop()).append("->").append(c.getBottom())
+                                .append(']');
+                    }
+                }
+            }
+            Object insets = v.getRootWindowInsets();
+            if (insets != null) {
+                try {
+                    Class<?> typeCls = Class.forName("android.view.WindowInsets$Type");
+                    int navBars = (Integer) typeCls.getMethod("navigationBars").invoke(null);
+                    Object nav = insets.getClass().getMethod("getInsets", int.class)
+                            .invoke(insets, navBars);
+                    sb.append(" navInsets=").append(nav);
+                } catch (Throwable ignored) {
+                    // API < 30，忽略
+                }
+            }
+            log(sb.toString());
+        } catch (Throwable t) {
+            log("raise: dump err - " + t);
+        }
     }
 }
