@@ -4,17 +4,8 @@
 
 ## 💻问题描述
 
-在 HyperOS 3.0（Android 16）+上，系统应用「剪贴板与常用语V4.7.7」应用会阻止第三方输入法（如微信输入法等）访问剪贴板历史数据。官方内置输入法（搜狗小米定制版、讯飞小米定制版、百度小米定制版、小米智能输入法）不受影响。
-
-此外，系统的「全面屏优化」默认只对官方定制输入法开放，第三方输入法不显示底部常用语 / 剪贴板入口。本模块一并解锁。
-
-## 💡原理
-
-**剪贴板修复**：「剪贴板与常用语V4.7.7」的 `InputProvider` 通过 `PackageManager.getNameForUid(callingUid)` 获取调用者包名，与白名单比对后决定是否允许访问。本模块 hook `PackageManager.getNameForUid()` 和 `getPackagesForUid()`，对非白名单的第三方输入法返回白名单包名，从而绕过验证。
-
-**全面屏优化解锁**：在输入法进程内 hook `InputMethodServiceInjector`，将 `sIsImeSupport` 置位并让 `isImeSupport()` 恒返回 true 以跳过包名检查；在 system_server 内放行输入法权限校验，修复切换输入法列表被裁剪的问题。
-
-开源致谢：感谢[MIUI_IME_Unlock(MIT)](https://github.com/RC1844/MIUI_IME_Unlock)开源项目提供的解锁MIUI键盘全面屏优化限制
+在 HyperOS 3.0（Android 16）+上，系统应用「剪贴板与常用语V4.7.7」应用会阻止第三方输入法（如微信输入法等）访问剪贴板历史数据，导致第三方输入法无法使用系统剪贴板功能。
+官方内置输入法（搜狗小米定制版、讯飞小米定制版、百度小米定制版、小米小爱输入法）不受影响。
 
 ## ✏支持的输入法
 
@@ -55,10 +46,14 @@
 - 如果您的系统剪贴板功能正常请勿安装本模块！
 - 从1.3版本起模块内置解锁MIUI键盘全面屏优化限制并适配HyperOS4，可能在OS3版本上存在部分异常问题，具体请自测。
 - 目前模块在跨设备剪贴板存中存在bug但是不影响使用，安装重启后请切换至系统内置输入法，手动打开系统剪贴板进行预热，然后再切换回第三方输入法跨设备剪贴板即可正常使用（手机每次重启都需要操作一遍）至今本人没有找到什么原因导致的。
+  
 ## 💕开发者
 
 - 酷安：[江上晚](https://www.coolapk.com/u/3019478)
 - 微博：[李十六的日记本](https://weibo.com/u/3725737792)
+  
+## 🥂开源致谢
+感谢[MIUI_IME_Unlock(MIT)](https://github.com/RC1844/MIUI_IME_Unlock)开源项目提供的解锁MIUI键盘全面屏优化限制
 
 ## 您的支持就是我最大的动力
 <img width="420" height="420" alt="澎湃OS剪贴板补全_打赏二维码_1778172233017" src="https://github.com/user-attachments/assets/5ace0a63-6575-489c-843e-01c190c22832" />
