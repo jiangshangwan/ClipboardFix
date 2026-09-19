@@ -9,14 +9,42 @@
 
 ## ✏支持的输入法
 
-| 名称 | 版本号 | 测试机型 | 测试ROM |
-| :--- | :--- | :--- | :--- |
-| 微信输入法 | 3.2.0 | 小米13Pro | 澎湃OS3.0.5 |
-| 搜狗输入法 | 20.6.3 | 小米13Pro | 澎湃OS3.0.5 |
-| 讯飞输入法 | 15.0.14 | 小米13Pro | 澎湃OS3.0.5 |
-| QQ输入法 | 8.7.15 | 小米15Pro | 澎湃OS2.0.26.12.19.DEV |
-| 豆包输入法 | 1.3.6 | 小米15Pro | 澎湃OS2.0.26.12.19.DEV |
-| 百度输入法 | 13.2.22.37 | 小米15Pro | 澎湃OS2.0.26.12.19.DEV |
+<table>
+  <tr>
+    <th>名称</th>
+    <th>版本号</th>
+    <th>测试机型</th>
+    <th>测试ROM</th>
+  </tr>
+  <tr>
+    <td>微信输入法</td>
+    <td>3.2.0</td>
+    <td rowspan="3" style="vertical-align:middle; text-align:center">小米13Pro</td>
+    <td rowspan="3" style="vertical-align:middle; text-align:center">澎湃OS3.0.5</td>
+  </tr>
+  <tr>
+    <td>搜狗输入法</td>
+    <td>20.6.3</td>
+  </tr>
+  <tr>
+    <td>讯飞输入法</td>
+    <td>15.0.14</td>
+  </tr>
+  <tr>
+    <td>QQ输入法</td>
+    <td>8.7.15</td>
+    <td rowspan="3" style="vertical-align:middle; text-align:center">小米15Pro</td>
+    <td rowspan="3" style="vertical-align:middle; text-align:center">澎湃OS2.0.26.12.19.DEV</td>
+  </tr>
+  <tr>
+    <td>豆包输入法</td>
+    <td>1.3.6</td>
+  </tr>
+  <tr>
+    <td>百度输入法</td>
+    <td>13.2.22.37</td>
+  </tr>
+</table>
 
 > 测试都是基于以上版本进行测试的，理论可兼容所有版本。
 >
