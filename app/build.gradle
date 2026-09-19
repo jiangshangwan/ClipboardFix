@@ -20,12 +20,26 @@ android {
 
     // 统一用项目 keystore：debug 变体默认会用 Android 的 debug.keystore 签名，
     // 与已安装的 release 版签名不一致会导致覆盖安装失败（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。
+    // 重要：密钥库口令不再硬编码进仓库，避免泄露到公开 GitHub。
+    //   读取顺序：local.properties（已被 .gitignore 忽略）→ 环境变量（CF_STORE_PASSWORD / CF_KEY_PASSWORD / CF_KEY_ALIAS）。
+    //   两者皆缺时口令为空，签名阶段会直接报错，fail-safe 而非静默用空口令。
     signingConfigs {
         clipboard {
             storeFile file("../../clipboardfix.jks")
-            storePassword "clipboardfix"
-            keyAlias "clipboardfix"
-            keyPassword "clipboardfix"
+            def ksProps = new Properties()
+            def ksFile = rootProject.file('local.properties')
+            if (ksFile.exists()) {
+                ksFile.withInputStream { ksProps.load(it) }
+            }
+            def storePw = ksProps.getProperty('STORE_PASSWORD')
+            if (storePw == null) storePw = System.getenv('CF_STORE_PASSWORD') ?: ''
+            def keyPw = ksProps.getProperty('KEY_PASSWORD')
+            if (keyPw == null) keyPw = System.getenv('CF_KEY_PASSWORD') ?: ''
+            def alias = ksProps.getProperty('KEY_ALIAS')
+            if (alias == null) alias = System.getenv('CF_KEY_ALIAS') ?: 'clipboardfix'
+            storePassword storePw
+            keyAlias alias
+            keyPassword keyPw
         }
     }
 
