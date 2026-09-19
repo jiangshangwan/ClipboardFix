@@ -19,8 +19,8 @@
   <tr>
     <td>微信输入法</td>
     <td>3.2.0</td>
-    <td rowspan="3" style="vertical-align:middle; text-align:center">小米13Pro</td>
-    <td rowspan="3" style="vertical-align:middle; text-align:center">澎湃OS3.0.5</td>
+    <td rowspan="6" style="vertical-align:middle; text-align:center">小米15Pro</td>
+    <td rowspan="6" style="vertical-align:middle; text-align:center">HyperOS4</td>
   </tr>
   <tr>
     <td>搜狗输入法</td>
@@ -33,8 +33,6 @@
   <tr>
     <td>QQ输入法</td>
     <td>8.7.15</td>
-    <td rowspan="3" style="vertical-align:middle; text-align:center">小米15Pro</td>
-    <td rowspan="3" style="vertical-align:middle; text-align:center">澎湃OS2.0.26.12.19.DEV</td>
   </tr>
   <tr>
     <td>豆包输入法</td>
