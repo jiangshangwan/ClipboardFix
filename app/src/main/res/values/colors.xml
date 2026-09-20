@@ -24,6 +24,10 @@
     <color name="snack_bg">#E61E1E22</color>
     <color name="snack_stroke">#33FFFFFF</color>
 
+    <!-- 底部弹卡：遮罩 + 可点击蓝色链接（对齐 PPT 强调蓝） -->
+    <color name="sheet_scrim">#59000000</color>
+    <color name="text_link">#00B0F0</color>
+
     <!-- 状态色（来自 PPT：绿填充 B1E8B0 / 绿圆 00B050 / 红字 C00000） -->
     <color name="status_green_fill">#B1E8B0</color>
     <color name="status_green_solid">#00B050</color>

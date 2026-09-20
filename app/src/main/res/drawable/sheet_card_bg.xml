@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 居中弹卡：四角圆角，表面色随主题（card_bg 浅色白 / 深色深灰） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@color/card_bg" />
+    <corners android:radius="20dp" />
+</shape>

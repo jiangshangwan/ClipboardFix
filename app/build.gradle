@@ -99,19 +99,10 @@ android {
     }
 }
 
-// 低内存环境（页面文件偏小）构建：把 javac 子进程堆/元空间压到最小，避免默认 1/4 物理内存(≈3.75G) 撑爆提交上限
+// 低内存环境（页面文件偏小）构建：不 fork 独立 javac 子进程，复用 Gradle JVM（256m），
+// 避免再开一个 ≈3.75G 默认堆的子进程撑爆提交上限；本项目源码量小，256m 足够编译。
 tasks.withType(JavaCompile).configureEach {
-    options.fork = true
-    options.forkOptions.memoryMaximumSize = '192m'
-    options.forkOptions.memoryInitialSize = '64m'
-    options.forkOptions.jvmArgs += [
-        '-XX:+UseSerialGC',
-        '-XX:MaxMetaspaceSize=96m',
-        '-XX:TieredStopAtLevel=1',
-        '-XX:CICompilerCount=1',
-        '-Xss512k',
-        '-XX:ReservedCodeCacheSize=32m'
-    ]
+    options.fork = false
 }
 
 dependencies {

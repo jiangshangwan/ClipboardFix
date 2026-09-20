@@ -1,19 +1,21 @@
 package com.clipboardfix;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.view.Gravity;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
@@ -29,6 +31,8 @@ import java.util.concurrent.TimeUnit;
 public class AboutActivity extends Activity {
 
     private static final String ALIAS_NAME = "com.clipboardfix.LauncherAlias";
+    private static final String PREFS_NAME = "clipboardfix_prefs";
+    private static final String KEY_MUST_KNOW = "must_know_agreed";
 
     private View pageHome, pageFeature, pageAbout;
     private LiquidGlassBarView bottomNav;
@@ -59,6 +63,11 @@ public class AboutActivity extends Activity {
         setupAbout();
 
         selectTab(0);
+
+        // 首次启动强制阅读「您需了解」弹卡（不可点遮罩关闭，须点「我已知悉」）
+        if (!mustKnowAgreed()) {
+            showMustKnow(true);
+        }
 
         // 静默检查更新（有新版本才弹窗）
         new UpdateChecker(this).checkSilent();
@@ -142,6 +151,9 @@ public class AboutActivity extends Activity {
             checker.setMessageSink(this::showSnack);
             checker.checkForUpdates();
         });
+
+        // 您需了解：打开「特别说明」弹卡（非强制，可点遮罩关闭）
+        findViewById(R.id.rowMustKnow).setOnClickListener(v -> showMustKnow(false));
     }
 
     /**
@@ -227,37 +239,222 @@ public class AboutActivity extends Activity {
                 openUrl("https://www.coolapk.com/u/3019478"));
         findViewById(R.id.rowGithub).setOnClickListener(v ->
                 openUrl("https://github.com/jiangshangwan/ClipboardFix"));
-        findViewById(R.id.rowReleases).setOnClickListener(v ->
-                openUrl("https://github.com/jiangshangwan/ClipboardFix/releases"));
-        findViewById(R.id.rowTelegram);
+        // 更新日志：打开「最近三版」弹卡（不再直接跳外链）
+        findViewById(R.id.rowReleases).setOnClickListener(v -> showChangelog());
         // 社群讨论暂不开放：UI 占位，不设置跳转
-        findViewById(R.id.rowUpstream).setOnClickListener(v ->
-                openUrl("https://github.com/RC1844/MIUI_IME_Unlock"));
-        findViewById(R.id.rowDonate).setOnClickListener(v -> showDonateDialog());
+        // 为爱发电：打开含「向开发者捐赠 / 捐赠名单」的弹卡
+        findViewById(R.id.rowDonate).setOnClickListener(v -> showDonateSheet());
+        // 开源致谢：打开「致谢名单」弹卡（内含可点击蓝字链接）
+        findViewById(R.id.rowUpstream).setOnClickListener(v -> showThanksSheet());
     }
 
-    /** 打赏二维码：以弹窗展示，可保存到相册后去微信扫一扫识别 */
-    private void showDonateDialog() {
-        ImageView img = new ImageView(this);
-        Bitmap qr = BitmapFactory.decodeResource(getResources(), R.drawable.donate_qrcode);
-        img.setImageBitmap(qr);
-        int pad = (int) (24 * getResources().getDisplayMetrics().density);
-        img.setPadding(pad, pad, pad, pad);
-        img.setAdjustViewBounds(true);
+    // ---------------- 弹卡：您需了解（特别说明） ----------------
+    private boolean mustKnowAgreed() {
+        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getBoolean(KEY_MUST_KNOW, false);
+    }
 
-        new AlertDialog.Builder(this)
-                .setTitle("为爱发电")
-                .setMessage("您的支持就是我的最大动力")
-                .setView(img)
-                .setPositiveButton("保存到相册", (d, w) -> {
-                    if (saveQrToGallery(qr)) {
-                        Toast.makeText(this, "二维码已保存到相册\n已打开微信，请用「扫一扫」→「相册」识别",
-                                Toast.LENGTH_LONG).show();
-                        openWeChat();
-                    }
-                })
-                .setNegativeButton("关闭", null)
-                .show();
+    private void markMustKnowAgreed() {
+        SharedPreferences.Editor e = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit();
+        e.putBoolean(KEY_MUST_KNOW, true);
+        e.apply();
+    }
+
+    private void showMustKnow(boolean mandatory) {
+        float density = getResources().getDisplayMetrics().density;
+        TextView tv = new TextView(this);
+        tv.setText("💕 特别说明\n\n" +
+                "感谢您使用【HyperOS剪贴板功能补全】模块，本模块免费试用，请勿二改及盗卖！以下信息还请仔细阅读：\n\n" +
+                "1、本模块仅修改剪贴板和常用语验证逻辑，不影响数据内容，请放心使用。如果您的系统剪贴板功能正常请勿安装本模块！\n" +
+                "2、从1.3版本起模块内置解锁MIUI键盘全面屏优化限制并适配HyperOS4，可能在OS3版本上存在部分异常问题，具体请自测。\n" +
+                "3、本模块已适配微信输入法、搜狗输入法、讯飞输入法、QQ输入法、Gboard输入法\n" +
+                "4、本模块需LSPosed支持libxposed新版API（API 102）\n" +
+                "5、请在LSPosed框架内勾选推荐作用域，完成后务必重启手机，否则不生效\n\n" +
+                "最后温馨提醒：玩机有风险，请及时备份您的手机数据，造成损失本人不承担任何责任！");
+        tv.setTextColor(getColor(R.color.text_primary));
+        tv.setTextSize(15f);
+        tv.setLineSpacing(6 * density, 1f);
+        tv.setPadding(0, (int) (4 * density), 0, 0);
+        BottomSheet.show(this, "您需了解", tv, !mandatory,
+                mandatory ? "我已知悉" : null, () -> {
+                    if (mandatory) markMustKnowAgreed();
+                });
+    }
+
+    // ---------------- 弹卡：更新日志（最近三版） ----------------
+    private void showChangelog() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.8",
+                "1、修复开启手势提示线导致输入法被异常抬高的BUG\n" +
+                "2、重构软件界面，全新UI焕然一新"));
+        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.7",
+                "1、修复跨设备剪贴板同步BUG，无需通过切换系统输入法进行预热\n" +
+                "2、新增对Gboard键盘的适配\n" +
+                "3、使用中如果出现键盘异常抬高的问题请尝试关闭小白条"));
+        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.6",
+                "1、修复搜狗输入法输入框被异常抬高的BUG\n" +
+                "2、优化模块自动更新检测逻辑"));
+        BottomSheet.show(this, "更新日志", content, true, null, null);
+    }
+
+    // ---------------- 弹卡：为爱发电（捐赠码 / 捐赠名单） ----------------
+    private void showDonateSheet() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(sheetRow(R.drawable.ic_heart, "向开发者捐赠",
+                "觉得有帮助到您，可以向开发者捐赠以此感谢", v -> showDonateQr()));
+        content.addView(sheetDivider());
+        content.addView(sheetRow(R.drawable.ic_books, "捐赠名单",
+                "感谢每一位支持者", v -> showDonateList()));
+        BottomSheet.show(this, "为爱发电", content, true, null, null);
+    }
+
+    private void showDonateQr() {
+        float density = getResources().getDisplayMetrics().density;
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        Bitmap qr = BitmapFactory.decodeResource(getResources(), R.drawable.donate_qrcode);
+        ImageView img = new ImageView(this);
+        img.setImageBitmap(qr);
+        int size = Math.round(220 * density);
+        img.setLayoutParams(new LinearLayout.LayoutParams(size, size));
+        img.setAdjustViewBounds(true);
+        content.addView(img);
+
+        TextView note = new TextView(this);
+        note.setText("打赏请备注昵称，如：酷安/XXX，微博/XXX");
+        note.setTextColor(getColor(R.color.text_tertiary));
+        note.setTextSize(14f);
+        note.setGravity(Gravity.CENTER);
+        note.setPadding(0, Math.round(12 * density), 0, 0);
+        content.addView(note);
+
+        BottomSheet.show(this, "向开发者捐赠", content, true, "保存到相册", () -> {
+            if (saveQrToGallery(qr)) {
+                Toast.makeText(this, "二维码已保存到相册\n已打开微信，请用「扫一扫」→「相册」识别",
+                        Toast.LENGTH_LONG).show();
+                openWeChat();
+            }
+        });
+    }
+
+    private void showDonateList() {
+        float density = getResources().getDisplayMetrics().density;
+        String[] donors = {
+                "酷安 / 匿名网友 — 5 元",
+                "酷安 / 匿名网友 — 10 元",
+                "酷安 / 热心用户 — 20 元",
+                "微博 / 小江 — 6.6 元"
+        };
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        for (String d : donors) {
+            TextView t = new TextView(this);
+            t.setText(d);
+            t.setTextColor(getColor(R.color.text_primary));
+            t.setTextSize(16f);
+            t.setPadding(0, Math.round(10 * density), 0, Math.round(10 * density));
+            content.addView(t);
+            content.addView(sheetDivider());
+        }
+        BottomSheet.show(this, "捐赠名单", content, true, null, null);
+    }
+
+    // ---------------- 弹卡：致谢名单（蓝字可点击） ----------------
+    private void showThanksSheet() {
+        float density = getResources().getDisplayMetrics().density;
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+
+        TextView link = new TextView(this);
+        link.setText("1、MIUI_IME_Unlock");
+        link.setTextColor(getColor(R.color.text_link));
+        link.setTextSize(16f);
+        link.setTypeface(null, Typeface.BOLD);
+        link.setPadding(0, Math.round(4 * density), 0, Math.round(4 * density));
+        link.setOnClickListener(v -> openUrl("https://github.com/RC1844/MIUI_IME_Unlock"));
+        content.addView(link);
+
+        TextView gray = new TextView(this);
+        gray.setText("2、感谢酷安/xhand提供的部分代码思路");
+        gray.setTextColor(getColor(R.color.text_tertiary));
+        gray.setTextSize(15f);
+        gray.setPadding(0, Math.round(10 * density), 0, Math.round(10 * density));
+        content.addView(gray);
+
+        BottomSheet.show(this, "致谢列表", content, true, null, null);
+    }
+
+    // ---------------- 弹卡内通用行 / 分隔线 ----------------
+    private View sheetRow(int iconRes, String title, String subtitle, View.OnClickListener onClick) {
+        float density = getResources().getDisplayMetrics().density;
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setBackgroundResource(R.drawable.row_ripple);
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setMinimumHeight(Math.round(64 * density));
+        row.setPadding(Math.round(4 * density), Math.round(14 * density),
+                Math.round(4 * density), Math.round(14 * density));
+        row.setOnClickListener(onClick);
+
+        ImageView icon = new ImageView(this);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(
+                Math.round(24 * density), Math.round(24 * density));
+        iconLp.setMargins(0, 0, Math.round(16 * density), 0);
+        icon.setLayoutParams(iconLp);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(getColor(R.color.text_secondary));
+        row.addView(icon);
+
+        LinearLayout textWrap = new LinearLayout(this);
+        textWrap.setOrientation(LinearLayout.VERTICAL);
+        textWrap.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView t1 = new TextView(this);
+        t1.setText(title);
+        t1.setTextColor(getColor(R.color.text_primary));
+        t1.setTextSize(17f);
+        textWrap.addView(t1);
+
+        TextView t2 = new TextView(this);
+        t2.setText(subtitle);
+        t2.setTextColor(getColor(R.color.text_tertiary));
+        t2.setTextSize(14f);
+        t2.setPadding(0, Math.round(4 * density), 0, 0);
+        textWrap.addView(t2);
+
+        row.addView(textWrap);
+
+        ImageView chevron = new ImageView(this);
+        chevron.setLayoutParams(new LinearLayout.LayoutParams(
+                Math.round(24 * density), Math.round(24 * density)));
+        chevron.setImageResource(R.drawable.ic_chevron);
+        chevron.setColorFilter(getColor(R.color.text_secondary));
+        row.addView(chevron);
+
+        return row;
+    }
+
+    private View sheetDivider() {
+        float density = getResources().getDisplayMetrics().density;
+        View v = new View(this);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 1);
+        lp.setMargins(Math.round(4 * density), 0, Math.round(4 * density), 0);
+        v.setLayoutParams(lp);
+        v.setBackgroundColor(getColor(R.color.divider));
+        return v;
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (BottomSheet.dismissTop()) return;
+        super.onBackPressed();
     }
 
     // ---------------- 桌面图标显隐（沿用原逻辑，操作 LauncherAlias） ----------------

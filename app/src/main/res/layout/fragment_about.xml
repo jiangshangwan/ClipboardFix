@@ -333,14 +333,14 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:layout_marginEnd="16dp"
-                android:src="@drawable/ic_coffee"
+                android:src="@drawable/ic_bookshelf"
                 android:tint="@color/text_secondary" />
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="MIUI_IME_Unlock"
+                android:text="方案参考"
                 android:textColor="@color/text_primary"
                 android:textSize="17sp" />
 

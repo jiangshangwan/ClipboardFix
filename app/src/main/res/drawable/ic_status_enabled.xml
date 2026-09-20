@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主页状态卡「已启用」大号徽章：绿色圆环 + 粗对勾（参考 HyperModifier 风格） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="110dp"
+    android:height="110dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- 绿色圆环 -->
+    <path
+        android:pathData="M48,8 A40,40 0 1,1 47.9,8"
+        android:fillColor="#00000000"
+        android:strokeColor="#FF00B050"
+        android:strokeWidth="8" />
+    <!-- 粗对勾 -->
+    <path
+        android:pathData="M28,50 L44,66 L72,34"
+        android:fillColor="#00000000"
+        android:strokeColor="#FF00B050"
+        android:strokeWidth="11"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 方案参考（PPT 原稿 Office 图标：BooksOnShelf） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- 书架底板 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M14,76 h68 v6 h-68 z" />
+    <!-- 左侧竖板 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M14,14 h8 v58 h-8 z" />
+    <!-- 右侧立书 1（最矮） -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M64,64 h18 v8 h-18 z" />
+    <!-- 右侧立书 2（中等） -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M64,30 h18 v30 h-18 z" />
+    <!-- 右侧立书 3（顶部） -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M64,18 h18 v8 h-18 z" />
+    <!-- 中间厚书 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M52,36 C50.9,36 50,35.1 50,34 C50,32.9 50.9,32 52,32 C53.1,32 54,32.9 54,34 C54,35.1 53.1,36 52,36 Z M52,68 C50.9,68 50,67.1 50,66 C50,64.9 50.9,64 52,64 C53.1,64 54,64.9 54,66 C54,67.1 53.1,68 52,68 Z M60,28 L44,28 L44,72 L60,72 L60,28 Z" />
+    <!-- 左侧立书 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M36,30 L30,30 L30,24 L36,24 L36,30 Z M40,20 L26,20 L26,72 L40,72 L40,20 Z" />
+</vector>

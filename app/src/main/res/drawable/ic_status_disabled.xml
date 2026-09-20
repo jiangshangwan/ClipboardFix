@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主页状态卡「未启用」大号徽章：红色圆环 + 粗叉（备用，待 hook 侧真实状态检测接入） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="110dp"
+    android:height="110dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- 红色圆环 -->
+    <path
+        android:pathData="M48,8 A40,40 0 1,1 47.9,8"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFC00000"
+        android:strokeWidth="8" />
+    <!-- 粗叉 -->
+    <path
+        android:pathData="M32,32 L64,64 M64,32 L32,64"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFC00000"
+        android:strokeWidth="11"
+        android:strokeLineCap="round" />
+</vector>

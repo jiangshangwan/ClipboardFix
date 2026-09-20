@@ -22,6 +22,10 @@
     <color name="snack_bg">#E62C2C2E</color>
     <color name="snack_stroke">#4DFFFFFF</color>
 
+    <!-- 底部弹卡：遮罩 + 可点击蓝色链接（深色下仍用强调蓝，保证可读） -->
+    <color name="sheet_scrim">#99000000</color>
+    <color name="text_link">#00B0F0</color>
+
     <!-- 状态色：与浅色保持一致（PPT 深色稿同样使用 B1E8B0 / 00B050 / C00000） -->
     <color name="status_green_fill">#B1E8B0</color>
     <color name="status_green_solid">#00B050</color>

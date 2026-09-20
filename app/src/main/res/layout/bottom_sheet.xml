@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通用居中弹卡：全屏遮罩 + 中间卡片。
+     卡片吃掉背后所有触摸（含导航栏），故弹卡时导航栏不可点击；
+     cancelable 时点击遮罩（含导航栏位置）关闭卡片。 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/sheetRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <View
+        android:id="@+id/sheetScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/sheet_scrim" />
+
+    <LinearLayout
+        android:id="@+id/sheetCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginStart="28dp"
+        android:layout_marginEnd="28dp"
+        android:orientation="vertical"
+        android:background="@drawable/sheet_card_bg"
+        android:clipToOutline="true"
+        android:paddingTop="18dp"
+        android:paddingBottom="18dp">
+
+        <!-- 头部：仅标题 -->
+        <TextView
+            android:id="@+id/sheetTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="22dp"
+            android:paddingEnd="22dp"
+            android:paddingBottom="10dp"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1px"
+            android:layout_marginStart="22dp"
+            android:layout_marginEnd="22dp"
+            android:background="@color/divider" />
+
+        <!-- 内容区：外部统一滚动（避免内容超高时溢出） -->
+        <ScrollView
+            android:id="@+id/sheetScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fillViewport="false"
+            android:paddingStart="22dp"
+            android:paddingEnd="22dp"
+            android:paddingTop="14dp"
+            android:paddingBottom="8dp">
+
+            <LinearLayout
+                android:id="@+id/sheetBody"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <!-- 操作按钮区（可选，如「我已知悉」「保存到相册」） -->
+        <LinearLayout
+            android:id="@+id/sheetActions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="22dp"
+            android:paddingEnd="22dp"
+            android:paddingTop="6dp"
+            android:visibility="gone" />
+    </LinearLayout>
+</FrameLayout>
