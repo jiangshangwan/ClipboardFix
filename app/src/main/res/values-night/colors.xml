@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色：页面底色 / 卡片面 / 导航胶囊面 -->
+    <color name="bg_surface">#121214</color>
+    <color name="card_bg">#1E1E22</color>
+    <color name="nav_surface">#1E1E22</color>
+
+    <!-- 文字层级 -->
+    <color name="text_primary">#F2F2F7</color>
+    <color name="text_secondary">#C7C7CC</color>
+    <color name="text_tertiary">#8E8E93</color>
+    <color name="divider">#2E2E34</color>
+
+    <!-- 强调色 -->
+    <color name="accent">#00B0F0</color>
+    <color name="accent_soft">#3300B0F0</color>
+
+    <!-- 列表行按压波纹（深色调柔，避免生硬的灰白矩形） -->
+    <color name="row_highlight">#26FFFFFF</color>
+
+    <!-- 胶囊提示：深色模式下用更亮的表面容器 + 明显边框，避免和背景融为一体 -->
+    <color name="snack_bg">#E62C2C2E</color>
+    <color name="snack_stroke">#4DFFFFFF</color>
+
+    <!-- 状态色：与浅色保持一致（PPT 深色稿同样使用 B1E8B0 / 00B050 / C00000） -->
+    <color name="status_green_fill">#B1E8B0</color>
+    <color name="status_green_solid">#00B050</color>
+    <color name="status_red">#C00000</color>
+</resources>

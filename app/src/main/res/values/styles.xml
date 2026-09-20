@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 单一天题：背景/状态栏/导航栏均引用 @color/bg_surface，
+         由 values-night 资源限定符跟随系统深浅色自动切换。 -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg_surface</item>
+        <item name="android:colorBackground">@color/bg_surface</item>
+        <item name="android:statusBarColor">@color/bg_surface</item>
+        <item name="android:navigationBarColor">@color/bg_surface</item>
+        <!-- 所有 selectableItemBackground 的波纹色：浅色下默认太淡几乎看不见，
+             深色下默认又太生硬（用户实机反馈），统一走自定义色。 -->
+        <item name="android:colorControlHighlight">@color/row_highlight</item>
+    </style>
+</resources>

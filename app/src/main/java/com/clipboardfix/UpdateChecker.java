@@ -44,38 +44,44 @@ public class UpdateChecker {
     private final Context context;
     private final Handler handler;
 
+    /** 结果提示出口：默认系统 Toast，Activity 可替换为深色胶囊提示（对齐 HyperIsland）。 */
+    public interface MessageSink {
+        void show(String text);
+    }
+
+    private MessageSink sink;
+
     public UpdateChecker(Context context) {
         this.context = context;
         this.handler = new Handler(Looper.getMainLooper());
     }
 
+    public void setMessageSink(MessageSink sink) {
+        this.sink = sink;
+    }
+
+    private void showMessage(String text) {
+        if (sink != null) {
+            sink.show(text);
+        } else {
+            Toast.makeText(context, text, Toast.LENGTH_SHORT).show();
+        }
+    }
+
     /** 主动检查更新（用户点击触发，始终显示结果） */
     public void checkForUpdates() {
-        ProgressDialog dialog = new ProgressDialog(context);
-        dialog.setMessage("正在检查更新...");
-        dialog.setCancelable(true);
-        dialog.show();
-
+        showMessage("正在检查更新...");
         new Thread(() -> {
             try {
                 String json = httpGet(API_URL);
                 if (json == null) {
-                    handler.post(() -> {
-                        dialog.dismiss();
-                        Toast.makeText(context, "网络请求失败，请检查网络", Toast.LENGTH_SHORT).show();
-                    });
+                    handler.post(() -> showMessage("网络请求失败，请检查网络"));
                     return;
                 }
                 ReleaseInfo release = parseRelease(json);
-                handler.post(() -> {
-                    dialog.dismiss();
-                    showResult(release);
-                });
+                handler.post(() -> showResult(release));
             } catch (Exception e) {
-                handler.post(() -> {
-                    dialog.dismiss();
-                    Toast.makeText(context, "检查更新失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                });
+                handler.post(() -> showMessage("检查更新失败: " + e.getMessage()));
             }
         }).start();
     }
@@ -100,10 +106,9 @@ public class UpdateChecker {
         if (release.hasUpdate) {
             showUpdateDialog(release);
         } else {
-            Toast.makeText(context, "当前已是最新版本 v" + release.currentVersion, Toast.LENGTH_SHORT).show();
+            showMessage("当前已是最新版本 v" + release.currentVersion);
         }
     }
-
     private void showUpdateDialog(ReleaseInfo release) {
         new AlertDialog.Builder(context)
                 .setTitle("发现新版本 " + release.tagName)
@@ -136,7 +141,7 @@ public class UpdateChecker {
                 android.util.Log.e("ClipboardFix", "downloadAndInstall failed", e);
                 handler.post(() -> {
                     dialog.dismiss();
-                    Toast.makeText(context, "下载失败: " + e.getClass().getSimpleName() + ": " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    showMessage("下载失败: " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 });
             }
         }).start();
@@ -187,7 +192,7 @@ public class UpdateChecker {
         // Android 8+ 需要 REQUEST_INSTALL_PACKAGES 权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!context.getPackageManager().canRequestPackageInstalls()) {
-                Toast.makeText(context, "请先开启「安装未知应用」权限", Toast.LENGTH_LONG).show();
+                showMessage("请先开启「安装未知应用」权限");
                 Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
                 settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 context.startActivity(settings);

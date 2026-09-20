@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  列表行按压反馈：高亮裁成圆角矩形（对齐 HyperIsland 的行按压样式），
+  避免直角矩形高亮在圆角卡片内显得生硬。波纹色跟随主题 colorControlHighlight。
+-->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="?android:attr/colorControlHighlight">
+    <item android:id="@android:id/mask">
+        <shape>
+            <corners android:radius="14dp" />
+            <!-- mask 必须有不透明填充，否则整个波纹被裁成不可见 -->
+            <solid android:color="#FFFFFFFF" />
+        </shape>
+    </item>
+</ripple>

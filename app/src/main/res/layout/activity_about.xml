@@ -1,292 +1,149 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  根布局：内容区铺满整屏，底部液态玻璃导航条悬浮在内容之上（才能折射到背后的页面内容）。
+  注意：fitsSystemWindows 必需——targetSdk 35 在 Android 15+ 会被强制 edge-to-edge。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FF1A1A2E"
-    android:fillViewport="true">
+    android:background="@color/bg_surface"
+    android:fitsSystemWindows="true">
 
-    <LinearLayout
+    <!-- 内容区：三页叠放，按 Tab 切换可见性（同时作为玻璃条的折射背景） -->
+    <FrameLayout
+        android:id="@+id/contentContainer"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="24dp"
-        android:gravity="center_horizontal">
+        android:layout_height="match_parent">
 
-        <!-- App Icon -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="📋"
-            android:textSize="48sp"
-            android:layout_marginTop="16dp"
-            android:layout_marginBottom="16dp" />
+        <include
+            android:id="@+id/pageHome"
+            layout="@layout/fragment_home"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
 
-        <!-- Title -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="澎湃OS剪贴板补全"
-            android:textColor="#FFFFFFFF"
-            android:textSize="22sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="4dp" />
+        <include
+            android:id="@+id/pageFeature"
+            layout="@layout/fragment_feature"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
 
-        <!-- Version -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="v1.4.7"
-            android:textColor="#88FFFFFF"
-            android:textSize="14sp"
-            android:layout_marginBottom="24dp" />
+        <include
+            android:id="@+id/pageAbout"
+            layout="@layout/fragment_about"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+    </FrameLayout>
 
-        <!-- Card: 模块说明 -->
+    <!-- 底部导航：居中悬浮液态玻璃胶囊（折射背后的页面内容） -->
+    <com.clipboardfix.LiquidGlassBarView
+        android:id="@+id/bottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="28dp"
+        android:layout_marginEnd="28dp"
+        android:layout_marginBottom="20dp"
+        android:padding="4dp">
+
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/card_bg"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="16dp">
+            android:layout_height="match_parent"
+            android:orientation="horizontal">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="模块说明"
-                android:textColor="#FF88CCFF"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="10dp" />
+            <FrameLayout
+                android:id="@+id/navHome"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="修复在HyperOS3.0及以上系统常用于和剪贴板V4.7.7及以后的版本导致第三方输入法无法读取系统剪贴板历史记录的问题。&#10;同时并解锁第三方键盘全面屏优化功能。"
-                android:textColor="#CCFFFFFF"
-                android:textSize="14sp"
-                android:lineSpacingMultiplier="1.5" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:orientation="vertical">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="提醒"
-                android:textColor="#FF88CCFF"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:layout_marginTop="12dp"
-                android:layout_marginBottom="6dp" />
+                    <ImageView
+                        android:id="@+id/navIconHome"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@drawable/ic_home" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="安装后请在Lsposed内勾选作用域【剪贴板和常用语】完成后必须要重启手机，否则无效！！&#10;本模块已经内置解锁第三方键盘全面屏优化功能，需要在Lsposed内勾选当前使用的第三方输入法！"
-                android:textColor="#FFCC66"
-                android:textSize="13sp"
-                android:lineSpacingMultiplier="1.4" />
+                    <TextView
+                        android:id="@+id/navLabelHome"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:letterSpacing="0.08"
+                        android:text="主页"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </FrameLayout>
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="已测试输入法"
-                android:textColor="#FF88CCFF"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:layout_marginTop="12dp"
-                android:layout_marginBottom="6dp" />
+            <FrameLayout
+                android:id="@+id/navFeature"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="微信输入法（com.tencent.wetype）&#10;搜狗输入法（com.sohu.inputmethod.sogou）&#10;讯飞输入法（com.iflytek.inputmethod）"
-                android:textColor="#CCFFFFFF"
-                android:textSize="14sp"
-                android:lineSpacingMultiplier="1.5" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:orientation="vertical">
+
+                    <ImageView
+                        android:id="@+id/navIconFeature"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@drawable/ic_tools" />
+
+                    <TextView
+                        android:id="@+id/navLabelFeature"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:letterSpacing="0.08"
+                        android:text="功能"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/navAbout"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:orientation="vertical">
+
+                    <ImageView
+                        android:id="@+id/navIconAbout"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@drawable/ic_user" />
+
+                    <TextView
+                        android:id="@+id/navLabelAbout"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:letterSpacing="0.08"
+                        android:text="关于"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </FrameLayout>
         </LinearLayout>
-
-        <!-- Card: 意见反馈 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/card_bg"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="16dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="意见反馈"
-                android:textColor="#FF88CCFF"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="10dp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="如您有更好的建议或发现对其他输入法不生效，&#10;请通过微博、酷安反馈，反馈时请提供您使用的输入法包名。"
-                android:textColor="#CCFFFFFF"
-                android:textSize="14sp"
-                android:lineSpacingMultiplier="1.5" />
-
-            <!-- 酷安 -->
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="10dp"
-                android:layout_marginBottom="4dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="酷安："
-                    android:textColor="#88FFFFFF"
-                    android:textSize="14sp" />
-
-                <TextView
-                    android:id="@+id/tvCoolapk"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="江上晚"
-                    android:textColor="#FF66AAFF"
-                    android:textSize="14sp"
-                    android:background="?android:attr/selectableItemBackground" />
-            </LinearLayout>
-
-            <!-- 微博 -->
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="4dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="微博："
-                    android:textColor="#88FFFFFF"
-                    android:textSize="14sp" />
-
-                <TextView
-                    android:id="@+id/tvWeibo"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="李十六的日记本"
-                    android:textColor="#FF66AAFF"
-                    android:textSize="14sp"
-                    android:background="?android:attr/selectableItemBackground" />
-            </LinearLayout>
-
-            <!-- GitHub -->
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="GitHub："
-                    android:textColor="#88FFFFFF"
-                    android:textSize="14sp" />
-
-                <TextView
-                    android:id="@+id/tvGithub"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="jiangshangwan/ClipboardFix"
-                    android:textColor="#FF66AAFF"
-                    android:textSize="14sp"
-                    android:background="?android:attr/selectableItemBackground" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- Card: 打赏支持 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/card_bg"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="16dp"
-            android:gravity="center_horizontal">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="☕ 打赏支持"
-                android:textColor="#FF88CCFF"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="12dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="您的支持就是我的最大动力"
-                android:textColor="#CCFFFFFF"
-                android:textSize="14sp"
-                android:layout_marginBottom="16dp" />
-
-            <ImageView
-                android:id="@+id/imgDonate"
-                android:layout_width="200dp"
-                android:layout_height="200dp"
-                android:src="@drawable/donate_qrcode"
-                android:scaleType="fitCenter"
-                android:layout_marginBottom="8dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="点击图片 → 保存并打开微信「扫一扫→相册」"
-                android:textColor="#88FFFFFF"
-                android:textSize="12sp" />
-        </LinearLayout>
-
-        <!-- Check Update Button -->
-        <Button
-            android:id="@+id/btnCheckUpdate"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="🔍 检查更新"
-            android:textColor="#FFFFFFFF"
-            android:textSize="15sp"
-            android:background="@drawable/btn_show_bg"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="12dp" />
-
-        <!-- Export Log Button -->
-        <Button
-            android:id="@+id/btnExportLog"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="📄 导出日志（发给作者排查）"
-            android:textColor="#FFFFFFFF"
-            android:textSize="15sp"
-            android:background="@drawable/btn_show_bg"
-            android:layout_marginBottom="12dp" />
-
-        <!-- Hide / Show Desktop Icon Button -->
-        <Button
-            android:id="@+id/btnHideIcon"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="隐藏桌面图标"
-            android:textColor="#FFFFFFFF"
-            android:textSize="15sp"
-            android:background="@drawable/btn_hide_bg"
-            android:layout_marginBottom="16dp" />
-
-        <!-- Footer -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="by 江上晚"
-            android:textColor="#44FFFFFF"
-            android:textSize="12sp"
-            android:layout_marginBottom="16dp" />
-
-    </LinearLayout>
-</ScrollView>
+    </com.clipboardfix.LiquidGlassBarView>
+</FrameLayout>

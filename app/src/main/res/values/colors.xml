@@ -1,4 +1,31 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#1A1A2E</color>
+
+    <!-- 页面底色 / 卡片面 / 导航胶囊面 -->
+    <color name="bg_surface">#F2F2F4</color>
+    <color name="card_bg">#FFFFFF</color>
+    <color name="nav_surface">#FFFFFF</color>
+
+    <!-- 文字层级 -->
+    <color name="text_primary">#1A1A1A</color>
+    <color name="text_secondary">#5C5C60</color>
+    <color name="text_tertiary">#9A9AA0</color>
+    <color name="divider">#E8E8ED</color>
+
+    <!-- 强调色（来自 PPT：#00B0F0） -->
+    <color name="accent">#00B0F0</color>
+    <color name="accent_soft">#1A00B0F0</color>
+
+    <!-- 列表行按压波纹（浅色加深，按下有明确反馈） -->
+    <color name="row_highlight">#33000000</color>
+
+    <!-- 胶囊提示：深色底白字 + 浅色模式用边框勾边，避免与背景融为一体 -->
+    <color name="snack_bg">#E61E1E22</color>
+    <color name="snack_stroke">#33FFFFFF</color>
+
+    <!-- 状态色（来自 PPT：绿填充 B1E8B0 / 绿圆 00B050 / 红字 C00000） -->
+    <color name="status_green_fill">#B1E8B0</color>
+    <color name="status_green_solid">#00B050</color>
+    <color name="status_red">#C00000</color>
 </resources>

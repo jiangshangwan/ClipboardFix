@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主页（图标取自 PPT 原稿 Office 图标：Home） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M48 12 48 12 6 52 10.5 55.8 48 20.2 48 20.2 85.5 55.8 90 52Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M18 54.3 18 84 42 84 42 59 54 59 54 84 78 84 78 54.3 48 25.8 18 54.3Z" />
+</vector>

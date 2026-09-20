@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 功能（图标取自 PPT 原稿 Office 图标：Tools） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M16.5 82.8C15.8 83.5 14.9 83.7 14 83.3 13.1 82.9 12.6 82.1 12.6 81.2 12.6 80.3 13.2 79.4 14 79.1 14.9 78.7 15.8 78.9 16.5 79.6 17.4 80.4 17.4 81.9 16.5 82.8ZM87.1 16.9 79 25 72.6 23.3 71 17 79.1 8.9C74.3 7.1 68.9 8.2 65.1 11.6 61.3 15.1 59.8 20.3 61.1 25.3L10.1 76.3C8.3 78 7.6 80.6 8.2 83 8.8 85.4 10.7 87.3 13.1 87.9 15.5 88.5 18 87.8 19.8 86L70.8 35C75.8 36.3 81 34.8 84.5 31 87.9 27.2 89 21.7 87.1 16.9Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M86.7 76.3 60.9 50.5 50.5 60.9 75.5 85.9 76.4 86.8 76.5 86.7C79.4 88.8 83.4 88.4 85.9 85.9 88.4 83.3 88.7 79.3 86.7 76.3L86.7 76.3Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M22.6 19.8 22.7 19.7 20.1 14.9 11.5 8 8 11.5 14.9 20.1 19.7 22.7 19.8 22.6 38.9 41.7 41.7 38.9Z" />
+</vector>

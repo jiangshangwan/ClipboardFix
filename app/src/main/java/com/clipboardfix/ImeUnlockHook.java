@@ -13,6 +13,10 @@ import java.lang.reflect.Method;
 
 import dalvik.system.BaseDexClassLoader;
 
+import java.util.Collections;
+import java.util.Set;
+import java.util.WeakHashMap;
+
 /**
  * 解锁 MIUI 全面屏优化（第三方输入法底部常用语/剪贴板入口）。
  *
@@ -42,6 +46,10 @@ public final class ImeUnlockHook {
     };
 
     private static volatile Integer navBarColor;
+
+    /** 已接管 WindowInsets 的 view 集合（弱引用，避免重复安装监听器）。 */
+    private static final Set<View> INSET_TURFED = Collections.newSetFromMap(
+            new WeakHashMap<View, Boolean>());
 
     private ImeUnlockHook() {
     }
@@ -470,6 +478,9 @@ public final class ImeUnlockHook {
     private static void fixKeyboardView(final View v) {
         if (v == null) return;
         dumpKeyboard(v, "setInputView");
+        // 接管 WindowInsets：手势提示线会往 keyboard view 注入底部 inset，
+        // 把键盘顶高。强制底部 padding 恒为 0（参考图三网友方案）。
+        applyInsetsFix(v);
         if (v.isAttachedToWindow()) {
             applyFillParent(v, "already-attached");
             dumpKeyboard(v, "already-attached");
@@ -501,6 +512,41 @@ public final class ImeUnlockHook {
             public void onViewDetachedFromWindow(View vv) {
             }
         });
+    }
+
+    /**
+     * 接管 keyboard view 的 WindowInsets：手势提示线开启时，系统会给 keyboard view
+     * 注入底部 navigationBars inset，输入法为了"避让"就会把键盘整体抬高。
+     * 这里强制底部 padding 恒为 0，left/right 保持原 inset 以适配挖孔/刘海边距。
+     *
+     * <p>与 applyFillParent 双管齐下：insets 监听负责"不要被系统反复加 padding"，
+     * applyFillParent 负责"撑满父容器并清掉 bottomMargin"。
+     */
+    private static void applyInsetsFix(final View v) {
+        if (v == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT_WATCH) {
+            return;
+        }
+        if (INSET_TURFED.add(v)) {
+            v.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+                @Override
+                public android.view.WindowInsets onApplyWindowInsets(View view,
+                        android.view.WindowInsets insets) {
+                    if (insets == null) {
+                        return null;
+                    }
+                    int left = 0, right = 0;
+                    try {
+                        left = insets.getSystemWindowInsetLeft();
+                        right = insets.getSystemWindowInsetRight();
+                    } catch (Throwable ignored) {
+                    }
+                    // 关键：底部 padding 恒为 0，避免手势提示线把键盘顶高
+                    view.setPadding(left, 0, right, 0);
+                    return insets;
+                }
+            });
+        }
+        v.setPadding(0, 0, 0, 0);
     }
 
     /** 让 keyboard view 撑满父容器并清掉底部多余间距；幂等，仅在需要时才写回。 */

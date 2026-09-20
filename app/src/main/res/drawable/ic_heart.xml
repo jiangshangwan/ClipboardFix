@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 为爱发电（PPT 原稿此处为 Coins，改用更贴合语义的爱心） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M48 84C48 84 12 60.4 12 36C12 24.4 21.4 15 33 15C39.5 15 45.4 18.3 48 23.2C50.6 18.3 56.5 15 63 15C74.6 15 84 24.4 84 36C84 60.4 48 84 48 84Z" />
+</vector>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 胶囊提示背景：深浅色分离，避免在深色模式下与背景融为一体 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@color/snack_bg" />
+    <stroke android:width="1dp" android:color="@color/snack_stroke" />
+    <corners android:radius="24dp" />
+</shape>
