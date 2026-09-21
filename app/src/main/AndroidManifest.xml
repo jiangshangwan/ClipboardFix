@@ -3,7 +3,15 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    
+
+    <!-- 包可见性（targetSdk 30+）：声明查询输入法服务，否则第三方输入法
+         （微信输入法、讯飞输入法等）对本应用不可见，导致「已启用输入法」计数漏统计。 -->
+    <queries>
+        <intent>
+            <action android:name="android.view.InputMethod" />
+        </intent>
+    </queries>
+
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"

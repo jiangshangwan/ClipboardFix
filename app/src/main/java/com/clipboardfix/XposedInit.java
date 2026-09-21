@@ -138,6 +138,7 @@ public class XposedInit extends XposedModule {
             log(pkg + " skip: no classloader - " + t);
             return;
         }
+        // 全面屏优化：默认开启（还原到加入开关之前的行为）
         ImeUnlockHook.init(pkg, cl);
     }
 

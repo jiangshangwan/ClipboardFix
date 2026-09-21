@@ -11,6 +11,7 @@
     <color name="text_primary">#1A1A1A</color>
     <color name="text_secondary">#5C5C60</color>
     <color name="text_tertiary">#9A9AA0</color>
+    <color name="text_brand">#1A1A2E</color>
     <color name="divider">#E8E8ED</color>
 
     <!-- 强调色（来自 PPT：#00B0F0） -->

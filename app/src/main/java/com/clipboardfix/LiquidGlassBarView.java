@@ -13,11 +13,13 @@ import android.graphics.RenderNode;
 import android.graphics.RuntimeShader;
 import android.graphics.Shader;
 import android.os.Build;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewOutlineProvider;
+import android.view.ViewParent;
 import android.widget.FrameLayout;
 
 import java.lang.ref.WeakReference;
@@ -25,32 +27,37 @@ import java.lang.ref.WeakReference;
 /**
  * 底部悬浮「液态玻璃」导航条（零新依赖，纯 framework API）。
  *
- * <p>实现参照两个开源项目（参数与 HyperIsland / KernelSU 的 FloatingBottomBar 对齐）：
+ * <p>实现参照两个开源项目：
  * <ul>
  *   <li>liuran001/WeChat-LiquidGlass（Apache-2.0）：单 pass AGSL 透镜管线，圆角矩形 SDF 折射。</li>
  *   <li>1812z/HyperIsland：条高 64dp / 内部 56dp、饱和度 1.5 → 模糊 4dp → 折射 24dp、
- *       液滴弹簧 damping 1.0 / stiffness 1000、按压放大 78/56。</li>
+ *       液滴弹簧 damping 1.0 / stiffness 1000、按压放大 78/56 ≈ 1.4x、支持左右拖动切页。</li>
  * </ul>
  *
  * <p>效果链：把背后内容录进 {@link RenderNode} → 饱和度提升 → 4dp 模糊 → 边缘折射透镜，
- * 再叠一层容器色垫底 + 1dp 边缘高光；选中项是一颗跟随弹簧滑动、按压时放大的「液滴」。
+ * 再叠一层容器色垫底 + 1dp 边缘高光；选中项是一颗跟随弹簧滑动、按压/拖动时会被拉伸变形的「液滴」。
+ *
+ * <p>交互：点击 item 切换；按住液滴/选中区域左右拖动可连续滑动，松手后弹簧吸附到最近项。
  *
  * <p>分级降级：Android 13(API 33)+ 走完整 AGSL 透镜；API 31-32 只做模糊+饱和；
  * 更低版本或渲染异常时退化为半透明磨砂面，不会崩。
  */
 public class LiquidGlassBarView extends FrameLayout {
 
-    /** KernelSU: lens(refractionHeight = 24.dp, refractionAmount = 24.dp)。 */
+    /** HyperIsland: lens(refractionHeight = 24.dp, refractionAmount = 24.dp)。 */
     private static final float REFRACTION_DP = 24f;
-    /** KernelSU: blur(4.dp, 4.dp)。 */
+    /** HyperIsland: blur(4.dp, 4.dp)。 */
     private static final float BLUR_DP = 4f;
-    /** KernelSU: vibrancy() -> colorControls(saturation = 1.5f)。 */
+    /** HyperIsland: vibrancy() -> colorControls(saturation = 1.5f)。 */
     private static final float SATURATION = 1.5f;
-    /** 按压时液滴放大倍率（KernelSU 的 78/56 太夸张，这里收敛一些）。 */
-    private static final float PRESS_SCALE = 1.16f;
+    /** 按压时液滴放大倍率（HyperIsland 的 78/56）。 */
+    private static final float PRESS_SCALE = 78f / 56f;
     /** 液滴按压时的透明度；静止态按深浅色在 applyTheme 里设置（浅色 18% / 深色 20%）。 */
     private static final int DROPLET_ALPHA_PRESSED = 0x4D;
     private int mDropletIdleAlpha = 0x2E;
+
+    /** 判定为拖动所需的最小位移。 */
+    private static final float DRAG_THRESHOLD_DP = 12f;
 
     /** 圆角矩形 SDF（Kyant0 的透镜实现，Apache-2.0，经 WeChat-LiquidGlass 转引）。 */
     private static final String SDF_SOURCE = ""
@@ -102,9 +109,14 @@ public class LiquidGlassBarView extends FrameLayout {
             + "    return content.eval(refractedCoord);\n"
             + "}\n";
 
+    public interface OnItemSelectedListener {
+        void onItemSelected(int index);
+    }
+
     private WeakReference<View> mBackdrop;
     private final float mDensity;
     private final int mPad;
+    private final float mDragThresholdPx;
 
     private RenderNode mNode;
     private RuntimeShader mLens;
@@ -133,6 +145,16 @@ public class LiquidGlassBarView extends FrameLayout {
     private boolean mFramesRunning;
     private long mLastNs;
 
+    /** 拖动/点击状态。 */
+    private float mTouchStartX;
+    private float mTouchStartY;
+    private boolean mIsDragging;
+    private boolean mIsPressed;
+    private float mLastDragPos;
+    private long mLastDragMs;
+    private float mDragVelocity; // positions / s, used for droplet stretch
+    private OnItemSelectedListener mItemListener;
+
     public LiquidGlassBarView(Context ctx) {
         this(ctx, null);
     }
@@ -146,6 +168,7 @@ public class LiquidGlassBarView extends FrameLayout {
         mDensity = getResources().getDisplayMetrics().density;
         // 透镜会采样自身边界之外的内容，所以背景要多录一圈折射量。
         mPad = Math.round(REFRACTION_DP * mDensity);
+        mDragThresholdPx = DRAG_THRESHOLD_DP * mDensity;
         setWillNotDraw(false);
         applyTheme();
         prepareEffects();
@@ -190,10 +213,17 @@ public class LiquidGlassBarView extends FrameLayout {
         mItemCount = Math.max(1, count);
     }
 
+    public void setOnItemSelectedListener(OnItemSelectedListener listener) {
+        mItemListener = listener;
+    }
+
     /**
      * 让某个 item 的按压状态驱动液滴：按下时液滴立刻弹簧滑到该项并放大（这就是按压反馈，
      * 不再额外画波纹——玻璃条里任何圆形/矩形高亮都会显脏）；抬起只是回弹尺寸；
      * 手指划走(取消)则弹回当前选中项。
+     *
+     * <p>新版（v1.4.8+）由 {@link #setOnItemSelectedListener} + 全局触摸处理接管切页，
+     * 本方法保留仅作兼容：仍可用来给子 View 加按下反馈，但不会触发页面切换。
      */
     public void attachPress(View item, int index) {
         item.setOnTouchListener((v, event) -> {
@@ -233,26 +263,152 @@ public class LiquidGlassBarView extends FrameLayout {
         startFrames();
     }
 
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        if (!isEnabled()) {
+            return super.onTouchEvent(event);
+        }
+        float x = event.getX();
+        float y = event.getY();
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                mTouchStartX = x;
+                mTouchStartY = y;
+                mIsDragging = false;
+                mIsPressed = true;
+                mLastDragPos = mPosSpring.getValue();
+                mLastDragMs = SystemClock.uptimeMillis();
+                mDragVelocity = 0f;
+                setPressedState(true);
+                startFrames();
+                return true;
+
+            case MotionEvent.ACTION_MOVE:
+                float dx = x - mTouchStartX;
+                float dy = y - mTouchStartY;
+                if (!mIsDragging
+                        && (Math.abs(dx) > mDragThresholdPx || Math.abs(dy) > mDragThresholdPx)) {
+                    // 只有在水平位移占主导时才进入拖动，避免纵向滚动误触。
+                    if (Math.abs(dx) > Math.abs(dy)) {
+                        mIsDragging = true;
+                        ViewParent parent = getParent();
+                        if (parent != null) {
+                            parent.requestDisallowInterceptTouchEvent(true);
+                        }
+                    }
+                }
+                if (mIsDragging) {
+                    updateDragPosition(x);
+                }
+                return true;
+
+            case MotionEvent.ACTION_UP:
+                mIsPressed = false;
+                setPressedState(false);
+                if (mIsDragging) {
+                    finishDrag();
+                } else {
+                    int clicked = indexFromX(x);
+                    if (clicked >= 0 && clicked < mItemCount) {
+                        if (clicked != mSelectedIndex) {
+                            mSelectedIndex = clicked;
+                            mPosSpring.setTarget(clicked);
+                            startFrames();
+                        }
+                        if (mItemListener != null) {
+                            mItemListener.onItemSelected(clicked);
+                        }
+                    }
+                }
+                mIsDragging = false;
+                return true;
+
+            case MotionEvent.ACTION_CANCEL:
+                mIsPressed = false;
+                setPressedState(false);
+                if (mIsDragging) {
+                    mPosSpring.setTarget(mSelectedIndex);
+                    startFrames();
+                }
+                mIsDragging = false;
+                return true;
+
+            default:
+                return super.onTouchEvent(event);
+        }
+    }
+
+    private int indexFromX(float x) {
+        int innerW = getWidth() - getPaddingLeft() - getPaddingRight();
+        if (innerW <= 0) {
+            return -1;
+        }
+        int idx = (int) ((x - getPaddingLeft()) / (innerW / (float) mItemCount));
+        if (idx < 0) idx = 0;
+        if (idx >= mItemCount) idx = mItemCount - 1;
+        return idx;
+    }
+
+    private void updateDragPosition(float x) {
+        int innerW = getWidth() - getPaddingLeft() - getPaddingRight();
+        if (innerW <= 0) {
+            return;
+        }
+        float itemW = innerW / (float) mItemCount;
+        float pos = (x - getPaddingLeft()) / itemW - 0.5f;
+        pos = Math.max(-0.5f, Math.min(mItemCount - 0.5f, pos));
+
+        long now = SystemClock.uptimeMillis();
+        float dt = (now - mLastDragMs) / 1000f;
+        if (dt > 0f && dt < 0.2f) {
+            float rawVel = (pos - mLastDragPos) / dt;
+            mDragVelocity = mDragVelocity * 0.5f + rawVel * 0.5f;
+        }
+        mLastDragPos = pos;
+        mLastDragMs = now;
+
+        mPosSpring.setValue(pos);
+        applyDroplet();
+    }
+
+    private void finishDrag() {
+        int innerW = getWidth() - getPaddingLeft() - getPaddingRight();
+        if (innerW <= 0) {
+            return;
+        }
+        float currentPos = mPosSpring.getValue();
+        int target = Math.round(currentPos);
+        target = Math.max(0, Math.min(mItemCount - 1, target));
+        mSelectedIndex = target;
+        mPosSpring.setTarget(target);
+        startFrames();
+        if (mItemListener != null) {
+            mItemListener.onItemSelected(target);
+        }
+        mDragVelocity = 0f;
+    }
+
     private void applyTheme() {
         int night = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
         boolean dark = night == Configuration.UI_MODE_NIGHT_YES;
         mBaseColor = dark ? 0xFF111111 : 0xFFF7F7F7;
-        // KernelSU: containerColor = surfaceContainer.copy(0.4f)。
+        // HyperIsland: containerColor = surfaceContainer.copy(0.4f)。
         // surfaceContainer 比页面背景深一档（浅色 ECEDEF / 深色 2C2C2E），
         // 否则浅色模式下玻璃与底色同色，条会隐形。
         mSurfacePaint.setColor(dark ? 0x662C2C2E : 0x66ECEDEF);
-        // iosIndicatorSpecular: 1dp 白色描边 @ 0.75
+        // 去掉导航条外描边，整体更干净（参考文件管理器底部胶囊）。
         mStrokePaint.setStyle(Paint.Style.STROKE);
         mStrokePaint.setStrokeWidth(mDensity);
-        mStrokePaint.setColor(dark ? 0x1FFFFFFF : 0x2EFFFFFF);
-        // 液滴：静止态用足够辨识的色块（浅色黑 18% / 深色白 20%），保证首次进入
-        // 不点也能看到选中指示；按压时经 drawDroplet 的 alpha 插值加深到 30%。
-        mDropletIdleAlpha = dark ? 0x33 : 0x2E;
+        mStrokePaint.setColor(0x00000000);
+        // 液滴：中性半透明色块——浅色 15% 黑 / 深色 18% 白。比原先 18% 略浅一点，
+        // 但在浅色玻璃上仍清晰可辨（不能做成近白色，否则与胶囊底色融为一体看不见）。
+        mDropletIdleAlpha = dark ? 0x2E : 0x26;
         mDropletPaint.setColor(dark ? 0xFFFFFFFF : 0xFF000000);
         mDropletPaint.setAlpha(mDropletIdleAlpha);
+        // 水滴边缘线去掉，避免选中项出现明显描边。
         mDropletEdge.setStyle(Paint.Style.STROKE);
         mDropletEdge.setStrokeWidth(mDensity);
-        mDropletEdge.setColor(dark ? 0x40FFFFFF : 0x40000000);
+        mDropletEdge.setColor(0x00000000);
     }
 
     private void prepareEffects() {
@@ -327,14 +483,19 @@ public class LiquidGlassBarView extends FrameLayout {
         mDropletPaint.setAlpha(Math.round(
                 mDropletIdleAlpha + (DROPLET_ALPHA_PRESSED - mDropletIdleAlpha) * press));
 
+        // HyperIsland 式速度形变：根据拖动速度在 X/Y 方向上拉伸/挤压液滴。
+        float v = Math.max(-0.2f, Math.min(0.2f, mDragVelocity * 0.05f));
+        float scaleX = scale / (1f - v * 0.75f);
+        float scaleY = scale * (1f - v * 0.25f);
+
         // 玻璃本体已按胶囊 clip；液滴按压缩放后会超出胶囊，同样必须裁进去，
         // 否则按压时液滴"溢出"胶囊边缘（用户实测反馈的深色按下异常）。
         canvas.save();
         canvas.clipPath(mClip);
         float cx = getPaddingLeft() + (mPosSpring.getValue() + 0.5f) * itemW;
         float cy = getPaddingTop() + innerH * 0.5f;
-        float halfW = itemW * 0.5f * scale;
-        float halfH = innerH * 0.5f * scale;
+        float halfW = itemW * 0.5f * scaleX;
+        float halfH = innerH * 0.5f * scaleY;
         float dr = Math.min(halfW, halfH);
         canvas.drawRoundRect(cx - halfW, cy - halfH, cx + halfW, cy + halfH, dr, dr, mDropletPaint);
         float eh = mDropletEdge.getStrokeWidth() * 0.5f;
@@ -380,7 +541,7 @@ public class LiquidGlassBarView extends FrameLayout {
                         mLens.setFloatUniform("offset", -mPad, -mPad);
                         mLens.setFloatUniform("cornerRadii", radius, radius, radius, radius);
                         mLens.setFloatUniform("refractionHeight", REFRACTION_DP * mDensity);
-                        // KernelSU 传入的是负值
+                        // HyperIsland 传入的是负值
                         mLens.setFloatUniform("refractionAmount", -REFRACTION_DP * mDensity);
                         mLens.setFloatUniform("depthEffect", 0f);
                         mChain = RenderEffect.createChainEffect(
@@ -459,8 +620,16 @@ public class LiquidGlassBarView extends FrameLayout {
             target = v;
         }
 
+        void setVelocity(float v) {
+            velocity = v;
+        }
+
         float getValue() {
             return value;
+        }
+
+        float getTarget() {
+            return target;
         }
 
         boolean step(float dt) {

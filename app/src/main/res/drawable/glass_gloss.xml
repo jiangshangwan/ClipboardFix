@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <!-- 顶部微光泽，模拟液态玻璃的高光层（深浅色通用，低透明度白） -->
+    <gradient
+        android:angle="270"
+        android:startColor="#00000000"
+        android:centerColor="#1AFFFFFF"
+        android:endColor="#00000000"
+        android:centerY="0.1" />
+</shape>

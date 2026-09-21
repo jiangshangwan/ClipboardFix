@@ -14,9 +14,12 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.MediaStore;
 import android.view.Gravity;
 import android.view.View;
+import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -24,8 +27,12 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import io.github.libxposed.service.XposedService;
+import io.github.libxposed.service.XposedServiceHelper;
+
 import java.io.DataOutputStream;
 import java.io.OutputStream;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class AboutActivity extends Activity {
@@ -44,6 +51,19 @@ public class AboutActivity extends Activity {
     private TextView tvHideIcon, tvHideIconSub;
     private TextView mSnackView;
 
+    // 模块启用状态（通过 libxposed:service 实时查询 LSPosed）
+    private static final String MODULE_PKG = "com.clipboardfix";
+    private static final String[] LSPOSED_PKGS = {
+            "org.lsposed.manager", "org.lsposed.manager.debug"
+    };
+    private TextView tvStatus, tvImeCount;
+    private ImageView ivStatusMark;
+    private XposedServiceHelper.OnServiceListener mXposedListener;
+    private XposedService mXposedService;
+    private boolean mModuleBound = false;
+    private boolean mListenerRegistered = false;
+    private final Handler mStatusHandler = new Handler(Looper.getMainLooper());
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -61,6 +81,9 @@ public class AboutActivity extends Activity {
         setupHome();
         setupFeature();
         setupAbout();
+
+        // 初始状态栏颜色跟随主页背景
+        applyStatusBarForTab(0);
 
         selectTab(0);
 
@@ -92,18 +115,9 @@ public class AboutActivity extends Activity {
     }
 
     private void setupBottomNav() {
-        View.OnClickListener listener = v -> {
-            if (v == navHome) selectTab(0);
-            else if (v == navFeature) selectTab(1);
-            else if (v == navAbout) selectTab(2);
-        };
-        navHome.setOnClickListener(listener);
-        navFeature.setOnClickListener(listener);
-        navAbout.setOnClickListener(listener);
-        // 按压/抬起驱动玻璃条里液滴的滑动与放大回弹（液滴本身就是按压反馈，不画波纹）
-        bottomNav.attachPress(navHome, 0);
-        bottomNav.attachPress(navFeature, 1);
-        bottomNav.attachPress(navAbout, 2);
+        // 玻璃条自己接管触摸：点击切换 + 按住左右拖动切换。
+        // 子 item 不再设置 OnClickListener，避免与拖动冲突。
+        bottomNav.setOnItemSelectedListener(this::selectTab);
     }
 
     private void selectTab(int idx) {
@@ -117,6 +131,14 @@ public class AboutActivity extends Activity {
         applyNavItem(navIconFeature, navLabelFeature, currentTab == 1);
         applyNavItem(navIconAbout, navLabelAbout, currentTab == 2);
         bottomNav.setSelectedIndex(idx, true);
+
+        // 切到关于页时状态栏染成渐变顶部色，与头部背景无缝衔接；其他页用页面背景色
+        applyStatusBarForTab(idx);
+    }
+
+    /** 根据当前 Tab 设置状态栏颜色（关于页已无渐变，统一用页面底色）。 */
+    private void applyStatusBarForTab(int idx) {
+        getWindow().setStatusBarColor(getColor(R.color.bg_surface));
     }
 
     private void applyNavItem(ImageView icon, TextView label, boolean selected) {
@@ -127,23 +149,19 @@ public class AboutActivity extends Activity {
 
     // ---------------- 主页 ----------------
     private void setupHome() {
-        // 状态占位：真实「已启用」检测需 hook 侧写入跨进程标记，暂以 UI 占位显示
-        TextView tvStatus = findViewById(R.id.tvStatus);
-        tvStatus.setText("已启用");
-        tvStatus.setTextColor(getColor(R.color.status_red));
+        // 模块状态 + 已启用输入法数量（真实检测，见 initModuleStatus）
+        tvStatus = findViewById(R.id.tvStatus);
+        tvImeCount = findViewById(R.id.tvImeCount);
+        ivStatusMark = findViewById(R.id.ivStatusMark);
+        tvStatus.setText("检测中…");
+        tvStatus.setTextColor(getColor(R.color.text_tertiary));
+        tvImeCount.setText("已启用输入法：—");
 
-        // 已勾选输入法计数（框架 API，无需 hook）
-        TextView tvImeCount = findViewById(R.id.tvImeCount);
-        try {
-            InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-            int n = imm.getEnabledInputMethodList().size();
-            tvImeCount.setText("已勾选的输入法：" + n);
-        } catch (Exception e) {
-            tvImeCount.setText("已勾选的输入法：—");
-        }
+        initModuleStatus();
 
         ((TextView) findViewById(R.id.tvAppVersion)).setText(BuildConfig.VERSION_NAME);
         ((TextView) findViewById(R.id.tvBuildDate)).setText(BuildConfig.BUILD_DATE);
+        ((TextView) findViewById(R.id.tvDeviceModel)).setText(Build.BRAND + " " + Build.MODEL);
         ((TextView) findViewById(R.id.tvSystemVersion)).setText(Build.VERSION.INCREMENTAL);
 
         findViewById(R.id.rowCheckUpdate).setOnClickListener(v -> {
@@ -154,6 +172,116 @@ public class AboutActivity extends Activity {
 
         // 您需了解：打开「特别说明」弹卡（非强制，可点遮罩关闭）
         findViewById(R.id.rowMustKnow).setOnClickListener(v -> showMustKnow(false));
+    }
+
+    // ---------------- 模块启用状态（libxposed:service 实时查询） ----------------
+    /**
+     * 通过 libxposed:service 的 XposedServiceHelper 查询本模块在 LSPosed 中的启用状态。
+     * 能拿到 XposedService binder 即代表模块已启用（LSPosed 仅对启用模块回传 binder）；
+     * getScope() 返回本模块作用域包名，过滤出输入法即「已启用输入法数量」。
+     * 回调 onServiceBind/onServiceDied 提供了「实时」刷新：在 LSPosed 内开关模块后，
+     * binder 会随之建立/断开，主页状态即时更新；onResume 时重新订阅以捕获后台切换。
+     */
+    private void initModuleStatus() {
+        if (mXposedListener == null) {
+            mXposedListener = new XposedServiceHelper.OnServiceListener() {
+                @Override
+                public void onServiceBind(XposedService service) {
+                    mXposedService = service;
+                    mModuleBound = true;
+                    refreshModuleStatus();
+                }
+
+                @Override
+                public void onServiceDied(XposedService service) {
+                    mXposedService = null;
+                    mModuleBound = false;
+                    mStatusHandler.post(() -> applyModuleDisabled("未启用"));
+                }
+            };
+        }
+        // registerListener 是静态订阅；重复调用为幂等（同一监听器实例），可安全在 onResume 重订阅
+        XposedServiceHelper.registerListener(mXposedListener);
+        mListenerRegistered = true;
+
+        // 兜底：若 2.5s 内未拿到 binder，说明模块未启用或 LSPosed 未安装，给出明确状态
+        scheduleStatusFallback();
+    }
+
+    /** 延迟确认状态：超时仍未绑定则给出「未启用 / 未检测」结论（每次订阅都重置计时）。 */
+    private void scheduleStatusFallback() {
+        mStatusHandler.removeCallbacksAndMessages(null);
+        mStatusHandler.postDelayed(() -> {
+            if (!mModuleBound) {
+                applyModuleDisabled(isLsposedInstalled() ? "未启用" : "未检测");
+            }
+        }, 2500);
+    }
+
+    /** 从 XposedService 读取本模块作用域并刷新 UI（binder 线程或主线程均可调用）。 */
+    private void refreshModuleStatus() {
+        if (mXposedService == null) {
+            mStatusHandler.post(() -> applyModuleDisabled("未启用"));
+            return;
+        }
+        final XposedService svc = mXposedService;
+        int imeCount;
+        try {
+            List<String> scope = svc.getScope();
+            imeCount = countInputMethodsInScope(scope);
+        } catch (Exception e) {
+            imeCount = -1;
+        }
+        final int finalCount = imeCount;
+        mStatusHandler.post(() -> applyModuleEnabled(finalCount));
+    }
+
+    /** 统计作用域中属于输入法的包数量（即本模块已启用/勾选的输入法数量）。 */
+    private int countInputMethodsInScope(List<String> scope) {
+        if (scope == null || scope.isEmpty()) return 0;
+        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (imm == null) return 0;
+        try {
+            List<InputMethodInfo> imis = imm.getInputMethodList();
+            if (imis == null || imis.isEmpty()) return 0;
+            int n = 0;
+            for (InputMethodInfo imi : imis) {
+                if (imi == null) continue;
+                String pkg = imi.getPackageName();
+                if (pkg != null && scope.contains(pkg)) n++;
+            }
+            return n;
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private void applyModuleEnabled(int imeCount) {
+        tvStatus.setText("已启用");
+        tvStatus.setTextColor(getColor(R.color.status_green_solid));
+        ivStatusMark.setImageResource(R.drawable.ic_status_enabled);
+        tvImeCount.setText("已启用输入法：" + (imeCount < 0 ? "—" : imeCount));
+    }
+
+    private void applyModuleDisabled(String text) {
+        tvStatus.setText(text);
+        tvStatus.setTextColor(getColor(R.color.status_red));
+        ivStatusMark.setImageResource(R.drawable.ic_status_disabled);
+        tvImeCount.setText("已启用输入法：—");
+    }
+
+    /** LSPosed 管理器是否已安装（用于区分「未启用」与「未检测」）。 */
+    private boolean isLsposedInstalled() {
+        PackageManager pm = getPackageManager();
+        for (String p : LSPOSED_PKGS) {
+            try {
+                pm.getPackageInfo(p, 0);
+                return true;
+            } catch (Exception ignored) {
+                // 继续尝试下一个包名
+            }
+        }
+        return false;
     }
 
     /**
@@ -264,7 +392,7 @@ public class AboutActivity extends Activity {
         float density = getResources().getDisplayMetrics().density;
         TextView tv = new TextView(this);
         tv.setText("💕 特别说明\n\n" +
-                "感谢您使用【HyperOS剪贴板功能补全】模块，本模块免费试用，请勿二改及盗卖！以下信息还请仔细阅读：\n\n" +
+                "感谢您使用【HyperOS剪贴板功能补全】模块，本模块免费使用，请勿二改及盗卖！以下信息还请仔细阅读：\n\n" +
                 "1、本模块仅修改剪贴板和常用语验证逻辑，不影响数据内容，请放心使用。如果您的系统剪贴板功能正常请勿安装本模块！\n" +
                 "2、从1.3版本起模块内置解锁MIUI键盘全面屏优化限制并适配HyperOS4，可能在OS3版本上存在部分异常问题，具体请自测。\n" +
                 "3、本模块已适配微信输入法、搜狗输入法、讯飞输入法、QQ输入法、Gboard输入法\n" +
@@ -378,13 +506,6 @@ public class AboutActivity extends Activity {
         link.setOnClickListener(v -> openUrl("https://github.com/RC1844/MIUI_IME_Unlock"));
         content.addView(link);
 
-        TextView gray = new TextView(this);
-        gray.setText("2、感谢酷安/xhand提供的部分代码思路");
-        gray.setTextColor(getColor(R.color.text_tertiary));
-        gray.setTextSize(15f);
-        gray.setPadding(0, Math.round(10 * density), 0, Math.round(10 * density));
-        content.addView(gray);
-
         BottomSheet.show(this, "致谢列表", content, true, null, null);
     }
 
@@ -449,6 +570,17 @@ public class AboutActivity extends Activity {
         v.setLayoutParams(lp);
         v.setBackgroundColor(getColor(R.color.divider));
         return v;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 从 LSPosed 返回时重新订阅，捕获后台切换的启用/未启用变化；已绑定时刷新输入法计数
+        if (mListenerRegistered) {
+            XposedServiceHelper.registerListener(mXposedListener);
+            scheduleStatusFallback();
+            if (mModuleBound) refreshModuleStatus();
+        }
     }
 
     @Override

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 关于页：LOGO + 版本 + 分组卡片（开发者 / 项目 / 为爱发电 / 社群讨论 / 开源致谢），宽松大气排版 -->
+<!-- 关于页：顶部渐变 LOGO 区 + 下方卡片内容区（可滚动） -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -11,275 +11,300 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_horizontal"
-        android:orientation="vertical"
-        android:paddingStart="22dp"
-        android:paddingTop="24dp"
-        android:paddingEnd="22dp"
-        android:paddingBottom="24dp">
+        android:orientation="vertical">
 
-        <!-- LOGO + 版本（LOGO 用圆角矩形裁切） -->
-        <ImageView
-            android:id="@+id/ivLogo"
-            android:layout_width="84dp"
-            android:layout_height="84dp"
-            android:background="@drawable/card_bg"
-            android:clipToOutline="true"
-            android:padding="0dp"
-            android:src="@mipmap/ic_launcher" />
-
-        <TextView
-            android:id="@+id/tvVersion"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:layout_marginBottom="28dp"
-            android:text="V1.4.8"
-            android:textColor="@color/text_tertiary"
-            android:textSize="15sp" />
-
-        <!-- 开发者 -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:layout_marginBottom="10dp"
-            android:text="开发者"
-            android:textColor="@color/text_tertiary"
-            android:textSize="14sp" />
-
+        <!-- 头部：LOGO/名称/版本区域（无渐变，使用页面底色） -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="22dp"
-            android:background="@drawable/card_bg"
-            android:clipToOutline="true"
-            android:orientation="vertical">
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingStart="22dp"
+            android:paddingTop="42dp"
+            android:paddingEnd="22dp"
+            android:paddingBottom="48dp">
 
-            <LinearLayout
-                android:id="@+id/rowCoolapk"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/row_ripple"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingStart="20dp"
-                android:paddingTop="18dp"
-                android:paddingEnd="16dp"
-                android:paddingBottom="18dp">
-
-                <!-- 真实头像：圆形裁切 -->
-                <ImageView
-                    android:layout_width="56dp"
-                    android:layout_height="56dp"
-                    android:layout_marginEnd="16dp"
-                    android:background="@drawable/avatar_round"
-                    android:clipToOutline="true"
-                    android:scaleType="centerCrop"
-                    android:src="@drawable/author_avatar" />
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="江上晚"
-                        android:textColor="@color/text_primary"
-                        android:textSize="18sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="酷安 @江上晚"
-                        android:textColor="@color/text_tertiary"
-                        android:textSize="14sp" />
-                </LinearLayout>
-
-                <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:src="@drawable/ic_chevron"
-                    android:tint="@color/text_secondary" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- 项目 -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:layout_marginBottom="10dp"
-            android:text="项目"
-            android:textColor="@color/text_tertiary"
-            android:textSize="14sp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="22dp"
-            android:background="@drawable/card_bg"
-            android:clipToOutline="true"
-            android:orientation="vertical">
-
-            <LinearLayout
-                android:id="@+id/rowGithub"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/row_ripple"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingStart="20dp"
-                android:paddingTop="18dp"
-                android:paddingEnd="16dp"
-                android:paddingBottom="18dp">
-
-                <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:layout_marginEnd="16dp"
-                    android:src="@drawable/ic_github"
-                    android:tint="@color/text_secondary" />
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="GitHub"
-                    android:textColor="@color/text_primary"
-                    android:textSize="17sp" />
-
-                <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:src="@drawable/ic_chevron"
-                    android:tint="@color/text_secondary" />
-            </LinearLayout>
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1px"
-                android:layout_marginStart="20dp"
-                android:background="@color/divider" />
-
-            <LinearLayout
-                android:id="@+id/rowReleases"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/row_ripple"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingStart="20dp"
-                android:paddingTop="18dp"
-                android:paddingEnd="16dp"
-                android:paddingBottom="18dp">
-
-                <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:layout_marginEnd="16dp"
-                    android:src="@drawable/ic_books"
-                    android:tint="@color/text_secondary" />
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="更新日志"
-                    android:textColor="@color/text_primary"
-                    android:textSize="17sp" />
-
-                <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:src="@drawable/ic_chevron"
-                    android:tint="@color/text_secondary" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- 为爱发电 -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:layout_marginBottom="10dp"
-            android:text="为爱发电"
-            android:textColor="@color/text_tertiary"
-            android:textSize="14sp" />
-
-        <LinearLayout
-            android:id="@+id/rowDonate"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="22dp"
-            android:background="@drawable/card_bg"
-            android:clipToOutline="true"
-            android:clickable="true"
-            android:focusable="true"
-            android:foreground="@drawable/row_ripple"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="20dp"
-            android:paddingTop="18dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="18dp">
-
+            <!-- LOGO：圆角矩形裁切 -->
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_marginEnd="16dp"
-                android:src="@drawable/ic_heart"
-                android:tint="@color/text_secondary" />
+                android:id="@+id/ivLogo"
+                android:layout_width="96dp"
+                android:layout_height="96dp"
+                android:background="@drawable/logo_bg"
+                android:clipToOutline="true"
+                android:scaleType="centerCrop"
+                android:src="@drawable/ic_logo" />
 
             <TextView
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="您的支持就是我的最大动力"
-                android:textColor="@color/text_primary"
-                android:textSize="17sp" />
+                android:layout_marginTop="20dp"
+                android:text="HyperFixClip"
+                android:textColor="@color/text_brand"
+                android:textSize="32sp"
+                android:textStyle="bold" />
 
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_chevron"
-                android:tint="@color/text_secondary" />
+            <TextView
+                android:id="@+id/tvVersion"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="V1.4.8"
+                android:textColor="@color/text_secondary"
+                android:textSize="15sp" />
         </LinearLayout>
 
-        <!-- 社群讨论 -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:layout_marginBottom="10dp"
-            android:text="社群讨论"
-            android:textColor="@color/text_tertiary"
-            android:textSize="14sp" />
-
+        <!-- 内容区：卡片列表，正常页面背景 -->
         <LinearLayout
-            android:id="@+id/rowTelegram"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="22dp"
-            android:background="@drawable/card_bg"
-            android:clipToOutline="true"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="20dp"
-            android:paddingTop="18dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="18dp">
+            android:orientation="vertical"
+            android:paddingStart="22dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="22dp"
+            android:paddingBottom="24dp">
+
+            <!-- 开发者 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_marginBottom="10dp"
+                android:text="开发者"
+                android:textColor="@color/text_tertiary"
+                android:textSize="14sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="22dp"
+                android:background="@drawable/card_bg"
+                android:clipToOutline="true"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:id="@+id/rowCoolapk"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/row_ripple"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="20dp"
+                    android:paddingTop="18dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="18dp">
+
+                    <!-- 真实头像：圆形裁切 -->
+                    <ImageView
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:layout_marginEnd="16dp"
+                        android:background="@drawable/avatar_round"
+                        android:clipToOutline="true"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/author_avatar" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="江上晚"
+                            android:textColor="@color/text_primary"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="酷安 @江上晚"
+                            android:textColor="@color/text_tertiary"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@drawable/ic_chevron"
+                        android:tint="@color/text_secondary" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 项目 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_marginBottom="10dp"
+                android:text="项目"
+                android:textColor="@color/text_tertiary"
+                android:textSize="14sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="22dp"
+                android:background="@drawable/card_bg"
+                android:clipToOutline="true"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:id="@+id/rowGithub"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/row_ripple"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="20dp"
+                    android:paddingTop="18dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="18dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_marginEnd="16dp"
+                        android:src="@drawable/ic_github"
+                        android:tint="@color/text_secondary" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="GitHub"
+                        android:textColor="@color/text_primary"
+                        android:textSize="17sp" />
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@drawable/ic_chevron"
+                        android:tint="@color/text_secondary" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1px"
+                    android:layout_marginStart="20dp"
+                    android:background="@color/divider" />
+
+                <LinearLayout
+                    android:id="@+id/rowReleases"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/row_ripple"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="20dp"
+                    android:paddingTop="18dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="18dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_marginEnd="16dp"
+                        android:src="@drawable/ic_books"
+                        android:tint="@color/text_secondary" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="更新日志"
+                        android:textColor="@color/text_primary"
+                        android:textSize="17sp" />
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@drawable/ic_chevron"
+                        android:tint="@color/text_secondary" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 为爱发电 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_marginBottom="10dp"
+                android:text="为爱发电"
+                android:textColor="@color/text_tertiary"
+                android:textSize="14sp" />
+
+            <LinearLayout
+                android:id="@+id/rowDonate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="22dp"
+                android:background="@drawable/card_bg"
+                android:clipToOutline="true"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="@drawable/row_ripple"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="20dp"
+                android:paddingTop="18dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="18dp">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginEnd="16dp"
+                    android:src="@drawable/ic_heart"
+                    android:tint="@color/text_secondary" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="您的支持就是我的最大动力"
+                    android:textColor="@color/text_primary"
+                    android:textSize="17sp" />
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:src="@drawable/ic_chevron"
+                    android:tint="@color/text_secondary" />
+            </LinearLayout>
+
+            <!-- 社群讨论 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_marginBottom="10dp"
+                android:text="社群讨论"
+                android:textColor="@color/text_tertiary"
+                android:textSize="14sp" />
+
+            <LinearLayout
+                android:id="@+id/rowTelegram"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="22dp"
+                android:background="@drawable/card_bg"
+                android:clipToOutline="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="20dp"
+                android:paddingTop="18dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="18dp">
 
                 <ImageView
                     android:layout_width="24dp"
@@ -288,67 +313,68 @@
                     android:src="@drawable/ic_link"
                     android:tint="@color/text_secondary" />
 
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="暂不开放"
+                    android:textColor="@color/text_primary"
+                    android:textSize="17sp" />
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:src="@drawable/ic_chevron"
+                    android:tint="@color/text_secondary" />
+            </LinearLayout>
+
+            <!-- 开源致谢 -->
             <TextView
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="暂不开放"
-                android:textColor="@color/text_primary"
-                android:textSize="17sp" />
+                android:layout_marginStart="6dp"
+                android:layout_marginBottom="10dp"
+                android:text="开源致谢"
+                android:textColor="@color/text_tertiary"
+                android:textSize="14sp" />
 
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_chevron"
-                android:tint="@color/text_secondary" />
-        </LinearLayout>
-
-        <!-- 开源致谢 -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:layout_marginBottom="10dp"
-            android:text="开源致谢"
-            android:textColor="@color/text_tertiary"
-            android:textSize="14sp" />
-
-        <LinearLayout
-            android:id="@+id/rowUpstream"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/card_bg"
-            android:clipToOutline="true"
-            android:clickable="true"
-            android:focusable="true"
-            android:foreground="@drawable/row_ripple"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="20dp"
-            android:paddingTop="18dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="18dp">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_marginEnd="16dp"
-                android:src="@drawable/ic_bookshelf"
-                android:tint="@color/text_secondary" />
-
-            <TextView
-                android:layout_width="0dp"
+            <LinearLayout
+                android:id="@+id/rowUpstream"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="方案参考"
-                android:textColor="@color/text_primary"
-                android:textSize="17sp" />
+                android:background="@drawable/card_bg"
+                android:clipToOutline="true"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="@drawable/row_ripple"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="20dp"
+                android:paddingTop="18dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="18dp">
 
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_chevron"
-                android:tint="@color/text_secondary" />
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginEnd="16dp"
+                    android:src="@drawable/ic_bookshelf"
+                    android:tint="@color/text_secondary" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="方案参考"
+                    android:textColor="@color/text_primary"
+                    android:textSize="17sp" />
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:src="@drawable/ic_chevron"
+                    android:tint="@color/text_secondary" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

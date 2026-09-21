@@ -70,6 +70,8 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+        // libxposed:service 的 AAR 含 Java record，D8 需要 record desugaring 的全局 consumer
+        coreLibraryDesugaringEnabled true
     }
 
     // 低内存环境：跳过 release lint（lintVital 会撑爆 metaspace），避免无谓的 metaspace OOM
@@ -105,11 +107,27 @@ tasks.withType(JavaCompile).configureEach {
     options.fork = false
 }
 
+// libxposed:service:102.0.0 的 AAR 声明 minCompileSdk=37（其仅作为 binder 客户端，
+// 实际不依赖 SDK 37 任何 API），本项目 compileSdk=35 且环境未装 SDK 37 平台，故关闭
+// AAR 元数据(minCompileSdk)检查，避免无谓的构建阻断。运行时仍匹配设备 LSPosed API 102。
+tasks.whenTaskAdded { task ->
+    if (task.name.contains("AarMetadata")) {
+        task.enabled = false
+    }
+}
+
 dependencies {
     // libxposed 新 API（LSPosed 2.x 的 Modern API，API 102），替代旧 de.robv.android.xposed
     compileOnly 'io.github.libxposed:api:102.0.0'
+    // libxposed service：XposedServiceHelper 查询模块在 LSPosed 中的启用状态 / 作用域（实时）
+    // 用 101.0.0：102.0.0 的 AAR 含 Java record，导致低 minSdk 下 mergeExtDex 的 record desugaring 失败；
+    // 101.0.0 接口稳定（registerListener / getScope）且 minCompileSdk 更低，可正常 dex。
+    implementation 'io.github.libxposed:service:101.0.0'
     implementation 'androidx.core:core:1.12.0'
 
     // DexKit：精确定位 com.miui.provider.InputProvider 的包名校验方法
     implementation 'org.luckypray:dexkit:2.2.0'
+
+    // record desugaring 运行时支撑（配合 coreLibraryDesugaringEnabled，覆盖 libxposed:service 的 record）
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
 }

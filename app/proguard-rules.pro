@@ -12,6 +12,11 @@
 -keep class org.luckypray.dexkit.** { *; }
 -keepattributes *Annotation*
 
+# libxposed:service / :interface 的 binder（AIDL Stub/Proxy）由框架回传 binder 时按名加载，
+# 必须整包保留，否则 release 收缩后运行期触发 NoClassDefFoundError / 绑定失败。
+-keep class io.github.libxposed.service.** { *; }
+-keep class io.github.libxposed.** { *; }
+
 # 抑制第三方库在 R8 分析期的告警（不阻断构建）
 -dontwarn org.luckypray.dexkit.**
 -dontwarn io.github.libxposed.**

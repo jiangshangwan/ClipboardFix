@@ -36,29 +36,28 @@
             android:visibility="gone" />
     </FrameLayout>
 
-    <!-- 底部导航：居中悬浮液态玻璃胶囊（折射背后的页面内容） -->
+    <!-- 底部导航：居中悬浮液态玻璃胶囊（折射背后的页面内容）。
+         按 HyperIsland 比例：wrap_content 宽度、每个 item 最小 76dp、图标 24dp、标签 11sp、
+         条高 64dp / 内高 56dp、左右边距 16dp、底部 16dp。 -->
     <com.clipboardfix.LiquidGlassBarView
         android:id="@+id/bottomNav"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="64dp"
-        android:layout_gravity="bottom"
-        android:layout_marginStart="28dp"
-        android:layout_marginEnd="28dp"
-        android:layout_marginBottom="20dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
         android:padding="4dp">
 
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="match_parent"
             android:orientation="horizontal">
 
             <FrameLayout
                 android:id="@+id/navHome"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:clickable="true"
-                android:focusable="true">
+                android:layout_width="76dp"
+                android:layout_height="match_parent">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -76,20 +75,16 @@
                         android:id="@+id/navLabelHome"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:letterSpacing="0.08"
+                        android:layout_marginTop="1dp"
                         android:text="主页"
-                        android:textSize="13sp" />
+                        android:textSize="11sp" />
                 </LinearLayout>
             </FrameLayout>
 
             <FrameLayout
                 android:id="@+id/navFeature"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:clickable="true"
-                android:focusable="true">
+                android:layout_width="76dp"
+                android:layout_height="match_parent">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -107,20 +102,16 @@
                         android:id="@+id/navLabelFeature"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:letterSpacing="0.08"
+                        android:layout_marginTop="1dp"
                         android:text="功能"
-                        android:textSize="13sp" />
+                        android:textSize="11sp" />
                 </LinearLayout>
             </FrameLayout>
 
             <FrameLayout
                 android:id="@+id/navAbout"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:clickable="true"
-                android:focusable="true">
+                android:layout_width="76dp"
+                android:layout_height="match_parent">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -138,10 +129,9 @@
                         android:id="@+id/navLabelAbout"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:letterSpacing="0.08"
+                        android:layout_marginTop="1dp"
                         android:text="关于"
-                        android:textSize="13sp" />
+                        android:textSize="11sp" />
                 </LinearLayout>
             </FrameLayout>
         </LinearLayout>

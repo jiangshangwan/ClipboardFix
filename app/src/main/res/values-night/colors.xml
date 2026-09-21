@@ -9,6 +9,7 @@
     <color name="text_primary">#F2F2F7</color>
     <color name="text_secondary">#C7C7CC</color>
     <color name="text_tertiary">#8E8E93</color>
+    <color name="text_brand">#E8E0FF</color>
     <color name="divider">#2E2E34</color>
 
     <!-- 强调色 -->
