@@ -174,7 +174,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="江上晚"
+                            android:text="李十六的日子本"
                             android:textColor="@color/text_primary"
                             android:textSize="18sp"
                             android:textStyle="bold" />
@@ -183,7 +183,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="4dp"
-                            android:text="微博 @江上晚"
+                            android:text="微博 @李十六的日子本"
                             android:textColor="@color/text_tertiary"
                             android:textSize="14sp" />
                     </LinearLayout>
