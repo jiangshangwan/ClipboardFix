@@ -365,6 +365,8 @@ public class AboutActivity extends Activity {
 
         findViewById(R.id.rowCoolapk).setOnClickListener(v ->
                 openUrl("https://www.coolapk.com/u/3019478"));
+        findViewById(R.id.rowWeibo).setOnClickListener(v ->
+                openUrl("https://weibo.com/u/3725737792"));
         findViewById(R.id.rowGithub).setOnClickListener(v ->
                 openUrl("https://github.com/jiangshangwan/ClipboardFix"));
         // 更新日志：打开「最近三版」弹卡（不再直接跳外链）
