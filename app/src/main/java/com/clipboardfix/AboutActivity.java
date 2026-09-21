@@ -371,7 +371,9 @@ public class AboutActivity extends Activity {
                 openUrl("https://github.com/jiangshangwan/ClipboardFix"));
         // 更新日志：打开「最近三版」弹卡（不再直接跳外链）
         findViewById(R.id.rowReleases).setOnClickListener(v -> showChangelog());
-        // 社群讨论暂不开放：UI 占位，不设置跳转
+        // 社群讨论：跳转 QQ 群（universal-share 链接）
+        findViewById(R.id.rowTelegram).setOnClickListener(v ->
+                openUrl("https://qun.qq.com/universal-share/share?ac=1&authKey=n9wFDXy4i20n15nDlUwLTGqI8AnQ%2BiyzC2XPQxpeOs2MxMYDsqRw0MNRPXYvx9WS&busi_data=eyJncm91cENvZGUiOiIxMTI0MTgwNjM1IiwidG9rZW4iOiJTSVhYbUhsYUNnWVYvb2wzVUlRb0J6SDRQMTNCdUxBMUNocUMzeU9taFpvakJRRHhZNDFBeDJIdFVQeTNZVnRmIiwidWluIjoiOTAzNzU1MzQ1In0%3D&data=qWsg9TN3ydud1Rb7MCThG73KtRkUY7UumTdXIsBBKS2W9kcpZ-W8kSgWfZFjkdqqGSxXGkUmeL9Dmb5VYsXf3A&svctype=4&tempid=h5_group_info"));
         // 为爱发电：打开含「向开发者捐赠 / 捐赠名单」的弹卡
         findViewById(R.id.rowDonate).setOnClickListener(v -> showDonateSheet());
         // 开源致谢：打开「致谢名单」弹卡（内含可点击蓝字链接）
@@ -415,9 +417,16 @@ public class AboutActivity extends Activity {
     private void showChangelog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.9",
+                "1、关于页「社群讨论」开放，点击跳转 QQ 群\n" +
+                "2、推荐作用域补充豆包输入法，并修正 QQ 输入法包名（com.tencent.qqpinyin）"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.8",
-                "1、修复开启手势提示线导致输入法被异常抬高的BUG\n" +
-                "2、重构软件界面，全新UI焕然一新"));
+                "1、全新液态玻璃底部导航：按压液滴 + 左右拖动切页（参照 HyperIsland 风格）\n" +
+                "2、关于页改为居中 LOGO + HyperFixClip 品牌名的 HyperIsland 风格\n" +
+                "3、卡片与圆角重做：20dp 圆角卡片、行高亮对齐卡片边缘、深浅色全适配\n" +
+                "4、开发者板块新增微博入口，酷安/微博头像互换\n" +
+                "5、应用名称更名为 HyperFixClip\n" +
+                "6、修复手势提示线（小白条）导致输入法被异常抬高的显示问题"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.7",
                 "1、修复跨设备剪贴板同步BUG，无需通过切换系统输入法进行预热\n" +
                 "2、新增对Gboard键盘的适配\n" +

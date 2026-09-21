@@ -1,6 +1,7 @@
 package com.clipboardfix;
 
 import android.os.Build;
+import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.view.View;
 import android.view.ViewGroup;
@@ -35,15 +36,18 @@ public final class ImeUnlockHook {
     };
 
     /**
-     * 需要启用「键盘抬高」修复的输入法白名单。
+     * 键盘「抬高」修复的适用范围。
      *
-     * <p>抬高修复会强制修改 keyboard view 的 LayoutParams（height=0/weight=1、清 paddingBottom），
-     * 对本身布局正常的输入法（搜狗普通版/小米版、百度等）反而会造成输入框被顶高等异常。
-     * 因此只对实测出现底部空白/抬高问题的输入法启用。
+     * <p>旧实现用一份输入法白名单（仅微信输入法）控制是否启用该修复；但实测发现
+     * 手势提示线（小白条）开启后，其它第三方输入法同样会出现键盘被异常抬高的现象，
+     * 而白名单之外的输入法并未得到修复。
+     *
+     * <p>改为「对所有第三方输入法（非小米定制版）安装修复，运行期再按
+     * {@link #shouldRaiseFix(View)} 判定是否真正需要」：仅在「全面屏手势导航
+     * 且键盘 view 收到非零底部 inset（即小白条注入的避让间距）」时，才强制清掉
+     * 底部 padding / 让键盘撑满父容器。三键导航或没有小白条时不干预，避免误伤
+     * 本就布局正常的输入法。这样不再依赖维护一份易过时的输入法清单。
      */
-    private static final String[] RAISE_FIX_IME_LIST = {
-            "com.tencent.wetype",   // 微信输入法：澎湃 OS4 / 部分机型底部被抬高
-    };
 
     private static volatile Integer navBarColor;
 
@@ -62,13 +66,10 @@ public final class ImeUnlockHook {
                 + ", miui=" + SysProps.get("ro.miui.ui.version.name", "?"));
 
         if (isNonCustomize) {
-            // 抬高修复只针对白名单输入法，避免误伤搜狗等本身布局正常的输入法
-            if (contains(RAISE_FIX_IME_LIST, pkg)) {
-                hookKeyboardRaiseFix();
-                log("raise-fix enabled for " + pkg);
-            } else {
-                log("raise-fix skipped for " + pkg);
-            }
+            // 抬高修复对所有第三方输入法安装；是否真正生效由运行期
+            // shouldRaiseFix() 按「手势导航 + 底部 inset」判定
+            hookKeyboardRaiseFix();
+            log("raise-fix installed for " + pkg);
             Class<?> injector = Reflect.findClassIfExists(
                     "android.inputmethodservice.InputMethodServiceInjector", cl);
             if (injector == null) {
@@ -475,27 +476,66 @@ public final class ImeUnlockHook {
         }
     }
 
+    /**
+     * 是否需要对该 keyboard view 做「抬高」修复。
+     *
+     * <p>判定条件（二者同时满足才修）：
+     * <ol>
+     *   <li>{@link #isGestureNavigation(View)} —— 处于全面屏手势导航（小白条属此）。
+     *       三键导航下键盘本就不会被小白条抬高，且强行清 inset 反而会让键盘顶到导航键，故跳过。</li>
+     *   <li>{@link #hasBottomInset(View)} —— keyboard view 当前收到非零的底部 inset，
+     *       即系统因手势提示线注入的"避让间距"。没有底部 inset（无小白条 / 手势模式不显示提示线）
+     *       时无需修复，保持原样。</li>
+     * </ol>
+     *
+     * <p>这样把"是否修复"从一份静态输入法白名单改为运行期判定，所有第三方输入法
+     * （非小米定制版）都能在真正出现抬高时得到修复，且不会误伤布局正常的输入法。
+     */
+    private static boolean shouldRaiseFix(View v) {
+        return isGestureNavigation(v) && hasBottomInset(v);
+    }
+
+    /** 当前是否处于全面屏手势导航（小白条属此）。三键导航返回 false。 */
+    private static boolean isGestureNavigation(View v) {
+        try {
+            int mode = Settings.Secure.getInt(
+                    v.getContext().getContentResolver(), "navigation_mode", 0);
+            // 0 = 经典导航键（三键）；非 0 = 全面屏手势（含显示/隐藏小白条）
+            return mode != 0;
+        } catch (Throwable t) {
+            log("raise: navigation_mode read failed, assume gesture - " + t);
+            return true; // 读取失败默认按全面屏手势处理（用户环境即此）
+        }
+    }
+
+    /** keyboard view 是否收到非零的底部系统窗口 inset（手势提示线注入的避让间距）。 */
+    private static boolean hasBottomInset(View v) {
+        try {
+            android.view.WindowInsets ins = v.getRootWindowInsets();
+            if (ins == null) return false;
+            return ins.getSystemWindowInsetBottom() > 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private static void fixKeyboardView(final View v) {
         if (v == null) return;
-        dumpKeyboard(v, "setInputView");
-        // 接管 WindowInsets：手势提示线会往 keyboard view 注入底部 inset，
-        // 把键盘顶高。强制底部 padding 恒为 0（参考图三网友方案）。
+        // 安装 WindowInsets 接管（所有第三方输入法都装，是否生效由 shouldRaiseFix 运行期判定）
         applyInsetsFix(v);
-        if (v.isAttachedToWindow()) {
+        if (v.isAttachedToWindow() && shouldRaiseFix(v)) {
             applyFillParent(v, "already-attached");
-            dumpKeyboard(v, "already-attached");
         }
         v.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override
             public void onViewAttachedToWindow(final View vv) {
+                if (!shouldRaiseFix(vv)) return; // 非手势导航 / 无底部 inset 不干预
                 applyFillParent(vv, "attach");
-                dumpKeyboard(vv, "attach");
                 for (final long d : new long[]{300L, 1200L}) {
                     vv.postDelayed(new Runnable() {
                         @Override
                         public void run() {
-                            applyFillParent(vv, "t+" + d);
-                            dumpKeyboard(vv, "t+" + d);
+                            if (shouldRaiseFix(vv)) applyFillParent(vv, "t+" + d);
                         }
                     }, d);
                 }
@@ -503,7 +543,7 @@ public final class ImeUnlockHook {
                     @Override
                     public void onLayoutChange(View v2, int l, int t, int r, int b,
                                                int ol, int ot, int or_, int ob) {
-                        applyFillParent(v2, "layout");
+                        if (shouldRaiseFix(v2)) applyFillParent(v2, "layout");
                     }
                 });
             }
@@ -517,9 +557,10 @@ public final class ImeUnlockHook {
     /**
      * 接管 keyboard view 的 WindowInsets：手势提示线开启时，系统会给 keyboard view
      * 注入底部 navigationBars inset，输入法为了"避让"就会把键盘整体抬高。
-     * 这里强制底部 padding 恒为 0，left/right 保持原 inset 以适配挖孔/刘海边距。
+     * 仅当 {@link #shouldRaiseFix(View)} 为真时，才强制底部 padding 为 0；
+     * 其它情况保留默认避让行为，避免误伤。left/right 始终保持原 inset 以适配挖孔/刘海边距。
      *
-     * <p>与 applyFillParent 双管齐下：insets 监听负责"不要被系统反复加 padding"，
+     * <p>与 applyFillParent 双管齐下：insets 监听负责"不要被系统反复加底部 padding"，
      * applyFillParent 负责"撑满父容器并清掉 bottomMargin"。
      */
     private static void applyInsetsFix(final View v) {
@@ -534,19 +575,24 @@ public final class ImeUnlockHook {
                     if (insets == null) {
                         return null;
                     }
-                    int left = 0, right = 0;
+                    int left = 0, right = 0, bottom = 0;
                     try {
                         left = insets.getSystemWindowInsetLeft();
                         right = insets.getSystemWindowInsetRight();
+                        bottom = insets.getSystemWindowInsetBottom();
                     } catch (Throwable ignored) {
                     }
-                    // 关键：底部 padding 恒为 0，避免手势提示线把键盘顶高
-                    view.setPadding(left, 0, right, 0);
-                    return insets;
+                    if (bottom > 0 && isGestureNavigation(view)) {
+                        // 手势提示线注入了底部 inset：清掉底部 padding，避免键盘被抬高
+                        view.setPadding(left, view.getPaddingTop(), right, 0);
+                        view.post(() -> applyFillParent(view, "inset"));
+                        return insets;
+                    }
+                    // 三键导航 / 无小白条：保留默认避让行为，不干预
+                    return view.onApplyWindowInsets(insets);
                 }
             });
         }
-        v.setPadding(0, 0, 0, 0);
     }
 
     /** 让 keyboard view 撑满父容器并清掉底部多余间距；幂等，仅在需要时才写回。 */

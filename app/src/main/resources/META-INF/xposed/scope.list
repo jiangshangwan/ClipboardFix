@@ -1,7 +1,8 @@
 system
 com.miui.phrase
 com.tencent.wetype
-com.tencent.qqinputmethod
+com.tencent.qqpinyin
+com.bytedance.android.doubaoime
 com.sohu.inputmethod.sogou
 com.iflytek.inputmethod
 com.google.android.inputmethod.latin

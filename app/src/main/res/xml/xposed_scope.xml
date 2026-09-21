@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="scope">com.miui.phrase</string>
-    <string name="scope">com.tencent.qqinputmethod</string>
+    <string name="scope">com.tencent.qqpinyin</string>
+    <string name="scope">com.bytedance.android.doubaoime</string>
 </resources>
