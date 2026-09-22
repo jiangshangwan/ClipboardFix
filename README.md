@@ -1,4 +1,4 @@
-# HyperOS剪贴板功能补全（HyperFixClip）
+# HyperFixClip（HyperOS剪贴板功能补全）
 
 🛠️ 修复 HyperOS 3.0+ 第三方输入法无法使用系统剪贴板历史的问题，并解锁第三方输入法全面屏优化（底部常用语 / 剪贴板入口）
 
@@ -6,8 +6,9 @@
 
 在 HyperOS 3.0（Android 16）+上，系统应用「剪贴板与常用语V4.7.7」应用会阻止第三方输入法（如微信输入法、豆包输入法等）访问剪贴板历史数据，导致第三方输入法无法使用系统剪贴板功能。
 官方内置输入法（搜狗小米定制版、讯飞小米定制版、百度小米定制版、小米小爱输入法）不受影响。
+[QQ群](https://qun.qq.com/universal-share/share?ac=1&authKey=7RA6XALH28j%2BzzCdYaEn5MmfZkkXlo9zoIkwp4hPf5PwMrmNd7SQBh7FCsCa0cAC&busi_data=eyJncm91cENvZGUiOiIxMTI0MTgwNjM1IiwidG9rZW4iOiJXSEJsQi8veExjZkk3c2h5c2h6ZGFXb0hwcTRMUFJrUkd5Vjl4dzRjd3JBTW9VTWpMelo1dXFpenVsRUZnc0xJIiwidWluIjoiOTAzNzU1MzQ1In0%3D&data=8dRN21TZ3TPg67Muu8SeZK2H5364vaqNnSciPEaAOjc8A6qUkZ_GVNTue1XwsXStdd63ICjEw_rbzq0vad0VBQ&svctype=4&tempid=h5_group_info)
 
-## ✏支持的输入法
+## ✏支持的输入法 
 
 <table>
   <tr>
