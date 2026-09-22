@@ -417,16 +417,17 @@ public class AboutActivity extends Activity {
     private void showChangelog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.10",
+                "修复部分输入法开启手势提示线后被异常抬高的bug"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.9",
-                "1、关于页「社群讨论」开放，点击跳转 QQ 群\n" +
-                "2、推荐作用域补充豆包输入法，并修正 QQ 输入法包名（com.tencent.qqpinyin）"));
+                "修复部分输入法因开启手势提示线导致的键盘抬高BUG\n" +
+                "新增对豆包输入法的支持\n" +
+                "社群开放，QQ群：1124180635"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.8",
-                "1、全新液态玻璃底部导航：按压液滴 + 左右拖动切页（参照 HyperIsland 风格）\n" +
-                "2、关于页改为居中 LOGO + HyperFixClip 品牌名的 HyperIsland 风格\n" +
-                "3、卡片与圆角重做：20dp 圆角卡片、行高亮对齐卡片边缘、深浅色全适配\n" +
-                "4、开发者板块新增微博入口，酷安/微博头像互换\n" +
-                "5、应用名称更名为 HyperFixClip\n" +
-                "6、修复手势提示线（小白条）导致输入法被异常抬高的显示问题"));
+                "重构模块UI，模块状态及设备信息一目了然\n" +
+                "模块正式更名为HyperFixClip\n" +
+                "修复因开启手势提示线后导致部分输入法被异常抬高的BUG\n" +
+                "支持豆包输入法（测试）"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.7",
                 "1、修复跨设备剪贴板同步BUG，无需通过切换系统输入法进行预热\n" +
                 "2、新增对Gboard键盘的适配\n" +

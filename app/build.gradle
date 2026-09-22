@@ -10,8 +10,8 @@ android {
         applicationId "com.clipboardfix"
         minSdk 28
         targetSdk 35
-        versionCode 20
-        versionName "1.4.9"
+        versionCode 21
+        versionName "1.4.10"
         // 构建日期：编译时写入，供「关于/主页」展示
         buildConfigField "String", "BUILD_DATE", "\"${new Date().format('yyyy-MM-dd')}\""
         // 小米设备全部为 ARM 架构；剔除 x86 / x86_64 原生库（libdexkit.so），省约 817KB
