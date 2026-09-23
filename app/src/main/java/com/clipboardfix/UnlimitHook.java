@@ -125,6 +125,8 @@ public final class UnlimitHook {
             XposedInit.hook(method, chain -> {
                 List<Object> args = chain.getArgs();
                 if (args == null || args.size() < 4) {
+                    log("clipboard json: unexpected argc="
+                            + (args == null ? -1 : args.size()) + ", passthrough");
                     return chain.proceed();
                 }
                 try {
@@ -135,10 +137,12 @@ public final class UnlimitHook {
                     if (newModel != null) {
                         models.add(newModel);
                     }
+                    int oldCount = 0;
                     if (!TextUtils.isEmpty(oldJson)) {
                         Object oldList = Reflect.callStaticMethod(
                                 mgrCls, "jsonToBeanList", oldJson);
                         if (oldList instanceof List) {
+                            oldCount = ((List<?>) oldList).size();
                             models.addAll((List<?>) oldList);
                         }
                     }
@@ -153,6 +157,8 @@ public final class UnlimitHook {
                             result.put(json);
                         }
                     }
+                    log("clipboard json merge: new=" + (newModel == null ? 0 : 1)
+                            + " old=" + oldCount + " total=" + result.length());
                     return result.toString();
                 } catch (Throwable t) {
                     log("clipboard json rebuild error - " + t);
@@ -182,6 +188,7 @@ public final class UnlimitHook {
                 Object result = chain.proceed();
                 try {
                     Reflect.setStaticField(util, "sPhraseListSize", 0);
+                    log("queryPhrase: count re-zeroed");
                 } catch (Throwable ignored) {
                     // 计数字段清零失败则本次保持原样
                 }
@@ -205,6 +212,7 @@ public final class UnlimitHook {
                         Intent intent = new Intent(activity, addActivity);
                         intent.setAction(PHRASE_ADD_ACTION);
                         activity.startActivityForResult(intent, 0);
+                        log("phrase add intercepted");
                         return null; // 接管成功：跳过原方法里的上限拦截
                     } catch (Throwable t) {
                         log("add phrase launch error - " + t);
@@ -265,6 +273,7 @@ public final class UnlimitHook {
                     if (editText instanceof EditText) {
                         ((EditText) editText).setFilters(new InputFilter[]{
                                 new InputFilter.LengthFilter(Integer.MAX_VALUE)});
+                        log("phrase edit char limit cleared");
                     }
                 } catch (Throwable ignored) {
                     // 清字数限制失败不影响其余功能
