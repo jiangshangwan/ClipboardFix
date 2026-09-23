@@ -98,18 +98,20 @@ public class XposedInit extends XposedModule {
 
     // ---------------- 生命周期回调 ----------------
 
-    /** system_server 启动：放行第三方输入法的「获取应用列表」权限（全面屏优化开关控制）。 */
+    /**
+     * system_server 启动：放行第三方输入法的「获取应用列表」权限。
+     *
+     * <p><b>引导安全</b>：此处无条件安装、不读任何配置——开机早期禁止跨进程调用
+     * （读远程偏好曾导致无法开机）。放行本身无副作用；功能开关在输入法进程内
+     * 决定底栏是否出现（见 {@link ModulePrefs#hookPrefs}）。
+     */
     @Override
     public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
         log("system server starting: v" + BuildConfig.VERSION_NAME);
-        if (!imeBottomSupported()) {
-            log("skip permission hook: " + PROP_MIUI_IME_BOTTOM + " != 1");
-            return;
-        }
-        if (ModulePrefs.isImeUnlockEnabled()) {
+        if (imeBottomSupported()) {
             ImePermissionHook.init(param.getClassLoader());
         } else {
-            log("skip permission hook: ime unlock disabled");
+            log("skip permission hook: " + PROP_MIUI_IME_BOTTOM + " != 1");
         }
     }
 

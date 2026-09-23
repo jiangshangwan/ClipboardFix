@@ -198,18 +198,19 @@ public final class UnlimitHook {
             final Class<?> addActivity = Reflect.findClass(PHRASE_ADD_ACTIVITY, cl);
             Method onClick = Reflect.findMethod(editActivity, "onClick", View.class);
             XposedInit.hook(onClick, chain -> {
-                try {
-                    Object thiz = chain.getThisObject();
-                    if (thiz instanceof Activity) {
+                Object thiz = chain.getThisObject();
+                if (thiz instanceof Activity) {
+                    try {
                         Activity activity = (Activity) thiz;
                         Intent intent = new Intent(activity, addActivity);
                         intent.setAction(PHRASE_ADD_ACTION);
                         activity.startActivityForResult(intent, 0);
+                        return null; // 接管成功：跳过原方法里的上限拦截
+                    } catch (Throwable t) {
+                        log("add phrase launch error - " + t);
                     }
-                } catch (Throwable t) {
-                    log("add phrase launch error - " + t);
                 }
-                return null;
+                return chain.proceed();
             });
             log("OK: phrase add button unlocked");
         } catch (Throwable t) {

@@ -393,6 +393,7 @@ public class AboutActivity extends Activity {
     /**
      * 把功能开关推送到 LSPosed 远程偏好（hook 侧读这里）。
      * 服务未绑定（模块未启用）时静默跳过；绑定后会再推一次，保证最终一致。
+     * 远程写是 binder 调用，放后台线程避免主线程卡顿。
      */
     private void pushFeaturePrefs() {
         XposedService svc = mXposedService;
@@ -404,14 +405,16 @@ public class AboutActivity extends Activity {
                 ModulePrefs.KEY_IME_UNLOCK, ModulePrefs.DEFAULT_IME_UNLOCK);
         boolean unlimit = local.getBoolean(
                 ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT);
-        try {
-            svc.getRemotePreferences(ModulePrefs.GROUP).edit()
-                    .putBoolean(ModulePrefs.KEY_IME_UNLOCK, ime)
-                    .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, unlimit)
-                    .apply();
-        } catch (Throwable t) {
-            // 远程写失败不影响本地开关状态
-        }
+        new Thread(() -> {
+            try {
+                svc.getRemotePreferences(ModulePrefs.GROUP).edit()
+                        .putBoolean(ModulePrefs.KEY_IME_UNLOCK, ime)
+                        .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, unlimit)
+                        .apply();
+            } catch (Throwable t) {
+                // 远程写失败不影响本地开关状态
+            }
+        }, "cf-prefs-push").start();
     }
 
     private void updateHideRow() {

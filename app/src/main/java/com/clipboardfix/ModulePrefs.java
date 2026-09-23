@@ -29,12 +29,30 @@ public final class ModulePrefs {
     private ModulePrefs() {
     }
 
-    /** hook 侧读取远程偏好；不可用时返回 null（调用方回退默认值）。 */
+    /** hook 侧读取远程偏好；不可用时返回 null（调用方回退默认值）。
+     *
+     * <p><b>引导安全</b>：system_server 进程内一律不发起跨进程调用——开机早期
+     * AMS/对端进程可能尚未就绪，阻塞式 binder 调用会卡死引导线程导致无法开机
+     * （已知真实事故），故系统进程永远走默认值；功能开关只在普通应用进程
+     * （输入法 / 剪贴板和常用语）内生效，那里最坏只会崩应用自身，不影响开机。
+     */
     private static SharedPreferences hookPrefs() {
+        if (isSystemServerProcess()) {
+            return null;
+        }
         try {
             return XposedInit.module().getRemotePreferences(GROUP);
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    /** 进程名判定；判定失败按最保守处理（视为系统进程，不发起跨进程调用）。 */
+    private static boolean isSystemServerProcess() {
+        try {
+            return "system_server".equals(android.app.Application.getProcessName());
+        } catch (Throwable t) {
+            return true;
         }
     }
 
