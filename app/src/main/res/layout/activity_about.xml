@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  根布局：内容区铺满整屏，底部液态玻璃导航条悬浮在内容之上（才能折射到背后的页面内容）。
-  注意：fitsSystemWindows 必需——targetSdk 35 在 Android 15+ 会被强制 edge-to-edge。
+  根布局：内容区铺满整屏（顶到状态栏、底到手势线），底部液态玻璃导航条悬浮在内容之上（才能折射到背后的页面内容）。
+  沉浸式：不用 fitsSystemWindows，根布局也不吃 inset——状态栏 inset 由 AboutActivity 分发给
+  三个页面 ScrollView 各自打顶部 padding（clipToPadding=false，滚动时内容从状态栏底下穿过）。
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/bg_surface"
-    android:fitsSystemWindows="true">
+    android:background="@color/bg_surface">
 
     <!-- 内容区：三页叠放，按 Tab 切换可见性（同时作为玻璃条的折射背景） -->
     <FrameLayout
@@ -38,16 +39,21 @@
 
     <!-- 底部导航：居中悬浮液态玻璃胶囊（折射背后的页面内容）。
          按 HyperIsland 比例：wrap_content 宽度、每个 item 最小 76dp、图标 24dp、标签 11sp、
-         条高 64dp / 内高 56dp、左右边距 16dp、底部 16dp。 -->
+         条高 64dp / 内高 56dp。
+         ⚠️ View 实际边界比胶囊大一圈（四周 16dp，对应代码里的 BAR_INSET_DP）：
+         硬件加速下 View 自身绘制会被裁剪到 View 边界，按压后鼓出条外的液滴必须
+         画在更大的 View 里才能「溢出」胶囊（参考项目的 HostLayout 同思路）。
+         高 96dp = 64 + 2×16；padding 20dp = 4dp 内容边距 + 16dp inset；
+         边距归零后胶囊仍距屏幕 16dp（由 inset 提供）。 -->
     <com.clipboardfix.LiquidGlassBarView
         android:id="@+id/bottomNav"
         android:layout_width="wrap_content"
-        android:layout_height="64dp"
+        android:layout_height="96dp"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="16dp"
-        android:padding="4dp">
+        android:layout_marginStart="0dp"
+        android:layout_marginEnd="0dp"
+        android:layout_marginBottom="0dp"
+        android:padding="20dp">
 
         <LinearLayout
             android:layout_width="wrap_content"

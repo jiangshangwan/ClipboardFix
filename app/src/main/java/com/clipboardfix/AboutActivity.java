@@ -9,6 +9,7 @@ import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Build;
@@ -19,6 +20,7 @@ import android.os.Looper;
 import android.provider.MediaStore;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
@@ -69,11 +71,34 @@ public class AboutActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_about);
 
+        // 沉浸式（对齐 HyperIsland）：系统栏全透明且禁用系统自动加的对比度蒙层，
+        // 页面背景直接透到状态栏/手势提示线后面。
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setStatusBarContrastEnforced(false);
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
+
         // 浅色模式下让状态栏/导航栏文字变深，保证可读
         int night = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
         if (night != Configuration.UI_MODE_NIGHT_YES) {
             getWindow().getDecorView().setSystemUiVisibility(
                     View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        }
+
+        // 状态栏 inset 手动处理：根布局不吃 inset（内容区从屏幕最顶铺到最底），
+        // 改为给三个页面 ScrollView 各自打顶部 padding，且 clipToPadding=false——
+        // 初始时标题在状态栏图标下方，滚动后内容从透明状态栏底下穿过（对齐 HyperIsland）。
+        // 底部不打 padding——玻璃条自身的 inset 已让它悬浮在手势提示线上方。
+        ViewGroup content = findViewById(R.id.contentContainer);
+        for (int i = 0; i < content.getChildCount(); i++) {
+            View page = content.getChildAt(i);
+            page.setOnApplyWindowInsetsListener((v, insets) -> {
+                v.setPadding(v.getPaddingLeft(), insets.getSystemWindowInsetTop(),
+                        v.getPaddingRight(), v.getPaddingBottom());
+                return insets;
+            });
         }
 
         bindViews();
@@ -117,6 +142,8 @@ public class AboutActivity extends Activity {
     private void setupBottomNav() {
         // 玻璃条自己接管触摸：点击切换 + 按住左右拖动切换。
         // 子 item 不再设置 OnClickListener，避免与拖动冲突。
+        bottomNav.setItems(navHome, navFeature, navAbout);
+        bottomNav.setAccentColor(getColor(R.color.accent));
         bottomNav.setOnItemSelectedListener(this::selectTab);
     }
 
@@ -136,9 +163,9 @@ public class AboutActivity extends Activity {
         applyStatusBarForTab(idx);
     }
 
-    /** 根据当前 Tab 设置状态栏颜色（关于页已无渐变，统一用页面底色）。 */
+    /** 状态栏保持透明（沉浸式），各 Tab 不再单独染色。 */
     private void applyStatusBarForTab(int idx) {
-        getWindow().setStatusBarColor(getColor(R.color.bg_surface));
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
     }
 
     private void applyNavItem(ImageView icon, TextView label, boolean selected) {
