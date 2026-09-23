@@ -26,6 +26,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -51,6 +52,7 @@ public class AboutActivity extends Activity {
     private int currentTab = 0;
 
     private TextView tvHideIcon, tvHideIconSub;
+    private Switch mSwImeUnlock, mSwUnlimitCount;
     private TextView mSnackView;
 
     // 模块启用状态（通过 libxposed:service 实时查询 LSPosed）
@@ -216,6 +218,7 @@ public class AboutActivity extends Activity {
                 public void onServiceBind(XposedService service) {
                     mXposedService = service;
                     mModuleBound = true;
+                    pushFeaturePrefs();
                     refreshModuleStatus();
                 }
 
@@ -357,6 +360,58 @@ public class AboutActivity extends Activity {
 
         findViewById(R.id.rowHideIcon).setOnClickListener(v -> toggleLauncherIcon());
         findViewById(R.id.rowReboot).setOnClickListener(v -> rebootDevice());
+        setupFeatureSwitches();
+    }
+
+    /** 功能开关：本地镜像立即生效于 UI，同时推送到 LSPosed 远程偏好供 hook 侧读取。 */
+    private void setupFeatureSwitches() {
+        mSwImeUnlock = findViewById(R.id.switchImeUnlock);
+        mSwUnlimitCount = findViewById(R.id.switchUnlimitCount);
+
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        mSwImeUnlock.setChecked(prefs.getBoolean(
+                ModulePrefs.KEY_IME_UNLOCK, ModulePrefs.DEFAULT_IME_UNLOCK));
+        mSwUnlimitCount.setChecked(prefs.getBoolean(
+                ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT));
+
+        mSwImeUnlock.setOnCheckedChangeListener((v, checked) -> saveFeaturePrefs());
+        mSwUnlimitCount.setOnCheckedChangeListener((v, checked) -> saveFeaturePrefs());
+        // 整行可点，与点开关等效
+        findViewById(R.id.rowImeUnlock).setOnClickListener(v -> mSwImeUnlock.toggle());
+        findViewById(R.id.rowUnlimitCount).setOnClickListener(v -> mSwUnlimitCount.toggle());
+    }
+
+    private void saveFeaturePrefs() {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putBoolean(ModulePrefs.KEY_IME_UNLOCK, mSwImeUnlock.isChecked())
+                .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, mSwUnlimitCount.isChecked())
+                .apply();
+        pushFeaturePrefs();
+        showSnack("已保存，重启手机后生效");
+    }
+
+    /**
+     * 把功能开关推送到 LSPosed 远程偏好（hook 侧读这里）。
+     * 服务未绑定（模块未启用）时静默跳过；绑定后会再推一次，保证最终一致。
+     */
+    private void pushFeaturePrefs() {
+        XposedService svc = mXposedService;
+        if (svc == null) {
+            return;
+        }
+        SharedPreferences local = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        boolean ime = local.getBoolean(
+                ModulePrefs.KEY_IME_UNLOCK, ModulePrefs.DEFAULT_IME_UNLOCK);
+        boolean unlimit = local.getBoolean(
+                ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT);
+        try {
+            svc.getRemotePreferences(ModulePrefs.GROUP).edit()
+                    .putBoolean(ModulePrefs.KEY_IME_UNLOCK, ime)
+                    .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, unlimit)
+                    .apply();
+        } catch (Throwable t) {
+            // 远程写失败不影响本地开关状态
+        }
     }
 
     private void updateHideRow() {

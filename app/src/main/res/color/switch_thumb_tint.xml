@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 开关滑块：开启强调蓝，关闭卡片白（夜间自动跟随主题色） -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@color/accent" android:state_checked="true" />
+    <item android:color="@color/card_bg" />
+</selector>

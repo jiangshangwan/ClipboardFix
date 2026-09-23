@@ -88,7 +88,7 @@ public class XposedInit extends XposedModule {
         }
     }
 
-    private static XposedInit module() {
+    static XposedInit module() {
         XposedInit inst = instance;
         if (inst == null) {
             throw new IllegalStateException("XposedInit not initialized yet");
@@ -98,14 +98,18 @@ public class XposedInit extends XposedModule {
 
     // ---------------- 生命周期回调 ----------------
 
-    /** system_server 启动：放行第三方输入法的「获取应用列表」权限。 */
+    /** system_server 启动：放行第三方输入法的「获取应用列表」权限（全面屏优化开关控制）。 */
     @Override
     public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
         log("system server starting: v" + BuildConfig.VERSION_NAME);
-        if (imeBottomSupported()) {
+        if (!imeBottomSupported()) {
+            log("skip permission hook: " + PROP_MIUI_IME_BOTTOM + " != 1");
+            return;
+        }
+        if (ModulePrefs.isImeUnlockEnabled()) {
             ImePermissionHook.init(param.getClassLoader());
         } else {
-            log("skip permission hook: " + PROP_MIUI_IME_BOTTOM + " != 1");
+            log("skip permission hook: ime unlock disabled");
         }
     }
 
@@ -122,6 +126,10 @@ public class XposedInit extends XposedModule {
             // 保证剪贴板相关的 hook 已经装好，不会拖慢 com.miui.phrase 启动。
             PackageValidationHook.init(param);
             CrossDeviceClipboardHook.init(param);
+            // 解除常用语/剪贴板条数、时间与字数限制（功能开关控制，默认关）
+            if (ModulePrefs.isUnlimitCountEnabled()) {
+                UnlimitHook.init(param);
+            }
             return;
         }
 
@@ -138,8 +146,10 @@ public class XposedInit extends XposedModule {
             log(pkg + " skip: no classloader - " + t);
             return;
         }
-        // 全面屏优化：默认开启（还原到加入开关之前的行为）
-        ImeUnlockHook.init(pkg, cl);
+        // 全面屏优化：由功能开关控制，默认开启（还原到加入开关之前的行为）
+        if (ModulePrefs.isImeUnlockEnabled()) {
+            ImeUnlockHook.init(pkg, cl);
+        }
     }
 
     private static boolean imeBottomSupported() {
