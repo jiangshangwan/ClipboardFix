@@ -503,7 +503,9 @@ public class AboutActivity extends Activity {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.10",
-                "修复部分输入法开启手势提示线后被异常抬高的bug"));
+                "修复部分输入法开启手势提示线后被异常抬高的bug\n" +
+                "新增启用全面屏优化功能开关\n" +
+                "新增解锁剪贴板数量限制上限"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.9",
                 "修复部分输入法因开启手势提示线导致的键盘抬高BUG\n" +
                 "新增对豆包输入法的支持\n" +
