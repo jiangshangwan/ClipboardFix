@@ -35,6 +35,7 @@ import io.github.libxposed.service.XposedServiceHelper;
 
 import java.io.DataOutputStream;
 import java.io.OutputStream;
+import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -527,6 +528,8 @@ public class AboutActivity extends Activity {
     private void showChangelog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.11",
+                "修复部分错误"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.10",
                 "修复部分输入法开启手势提示线后被异常抬高的bug\n" +
                 "新增启用全面屏优化功能开关\n" +
@@ -599,7 +602,8 @@ public class AboutActivity extends Activity {
                 "酷安 / 匿名网友 — 5 元",
                 "酷安 / 匿名网友 — 10 元",
                 "酷安 / 热心用户 — 20 元",
-                "微博 / 小江 — 6.6 元"
+                "微博 / 小江 — 6.6 元",
+                "酷安 / 杨旻昊 — 0.82 元"
         };
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
