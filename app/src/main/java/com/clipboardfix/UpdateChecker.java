@@ -1,5 +1,6 @@
 package com.clipboardfix;
 
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
 import android.content.Context;
@@ -11,6 +12,9 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.view.View;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
@@ -109,15 +113,45 @@ public class UpdateChecker {
             showMessage("当前已是最新版本 v" + release.currentVersion);
         }
     }
+    /** 更新提醒：改为与「更新日志 / 您需了解」一致的 BottomSheet 居中圆角卡片风格。 */
     private void showUpdateDialog(ReleaseInfo release) {
-        new AlertDialog.Builder(context)
-                .setTitle("发现新版本 " + release.tagName)
-                .setMessage("当前版本: v" + release.currentVersion
-                        + "\n\n更新内容:\n" + stripMarkdown(release.body))
-                .setPositiveButton("立即更新", (d, w) -> downloadAndInstall(release))
-                .setNegativeButton("稍后", null)
-                .setCancelable(true)
-                .show();
+        // 兜底：理论上 UpdateChecker 仅由 Activity 构造；若上下文非 Activity 仍用系统弹窗
+        if (!(context instanceof Activity)) {
+            new AlertDialog.Builder(context)
+                    .setTitle("发现新版本 " + release.tagName)
+                    .setMessage("当前版本: v" + release.currentVersion
+                            + "\n\n更新内容:\n" + stripMarkdown(release.body))
+                    .setPositiveButton("立即更新", (d, w) -> downloadAndInstall(release))
+                    .setNegativeButton("稍后", null)
+                    .setCancelable(true)
+                    .show();
+            return;
+        }
+        Activity activity = (Activity) context;
+        float density = activity.getResources().getDisplayMetrics().density;
+
+        LinearLayout content = new LinearLayout(activity);
+        content.setOrientation(LinearLayout.VERTICAL);
+
+        TextView tvCurrent = new TextView(activity);
+        tvCurrent.setText("当前版本: v" + release.currentVersion);
+        tvCurrent.setTextColor(activity.getColor(R.color.text_tertiary));
+        tvCurrent.setTextSize(14f);
+        tvCurrent.setPadding(0, 0, 0, Math.round(8 * density));
+        content.addView(tvCurrent);
+
+        TextView tvBody = new TextView(activity);
+        tvBody.setText("更新内容:\n" + stripMarkdown(release.body));
+        tvBody.setTextColor(activity.getColor(R.color.text_primary));
+        tvBody.setTextSize(15f);
+        tvBody.setLineSpacing(4 * density, 1f);
+        content.addView(tvBody);
+
+        View actions = BottomSheet.buildTwoButtonRow(activity,
+                "稍后", null,
+                "立即更新", () -> downloadAndInstall(release));
+
+        BottomSheet.show(activity, "发现新版本 " + release.tagName, content, true, actions);
     }
 
     private void downloadAndInstall(ReleaseInfo release) {

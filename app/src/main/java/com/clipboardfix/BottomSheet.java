@@ -47,6 +47,8 @@ public final class BottomSheet {
     }
 
     /**
+     * 单按钮弹卡（兼容旧调用）：actionText 非空时底部显示强调蓝填充按钮。
+     *
      * @param title      标题
      * @param content    内容视图（会被放进统一滚动区）
      * @param cancelable 是否允许点击遮罩关闭
@@ -55,6 +57,28 @@ public final class BottomSheet {
      */
     public static void show(Activity activity, String title, View content,
                             boolean cancelable, String actionText, Runnable onAction) {
+        View actionsView = null;
+        if (actionText != null && onAction != null) {
+            actionsView = buildSingleActionButton(activity, actionText, onAction);
+        }
+        showWithActions(activity, title, content, cancelable, actionsView);
+    }
+
+    /**
+     * 自定义操作区弹卡：把任意视图放进底部操作区（如双按钮行）。
+     *
+     * @param title       标题
+     * @param content     内容视图（会被放进统一滚动区）
+     * @param cancelable  是否允许点击遮罩关闭
+     * @param actionsView 底部操作区视图（null 表示不显示）
+     */
+    public static void show(Activity activity, String title, View content,
+                            boolean cancelable, View actionsView) {
+        showWithActions(activity, title, content, cancelable, actionsView);
+    }
+
+    private static void showWithActions(Activity activity, String title, View content,
+                                        boolean cancelable, View actionsView) {
         FrameLayout contentRoot = (FrameLayout) activity.findViewById(android.R.id.content);
         LayoutInflater inf = LayoutInflater.from(activity);
         FrameLayout root = (FrameLayout) inf.inflate(R.layout.bottom_sheet, contentRoot, false);
@@ -66,27 +90,11 @@ public final class BottomSheet {
         LinearLayout actions = root.findViewById(R.id.sheetActions);
         final ScrollView scroll = root.findViewById(R.id.sheetScroll);
 
-        float density = activity.getResources().getDisplayMetrics().density;
         tvTitle.setText(title);
         body.addView(content);
 
-        if (actionText != null && onAction != null) {
-            TextView btn = new TextView(activity);
-            btn.setText(actionText);
-            btn.setTextColor(0xFFFFFFFF);
-            btn.setTextSize(16f);
-            btn.setGravity(Gravity.CENTER);
-            int padV = Math.round(14 * density);
-            btn.setPadding(0, padV, 0, padV);
-            btn.setBackgroundResource(R.drawable.btn_accent_bg);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            btn.setLayoutParams(lp);
-            btn.setOnClickListener(v -> {
-                onAction.run();
-                dismissTop();
-            });
-            actions.addView(btn);
+        if (actionsView != null) {
+            actions.addView(actionsView);
             actions.setVisibility(View.VISIBLE);
         }
 
@@ -117,6 +125,80 @@ public final class BottomSheet {
             scrim.animate().alpha(1f).setDuration(200).start();
             card.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(220).start();
         });
+    }
+
+    /** 单按钮（强调蓝填充，点按后自动关闭）。 */
+    private static View buildSingleActionButton(Activity activity, String actionText, Runnable onAction) {
+        float density = activity.getResources().getDisplayMetrics().density;
+        TextView btn = new TextView(activity);
+        btn.setText(actionText);
+        btn.setTextColor(0xFFFFFFFF);
+        btn.setTextSize(16f);
+        btn.setGravity(Gravity.CENTER);
+        int padV = Math.round(14 * density);
+        btn.setPadding(0, padV, 0, padV);
+        btn.setBackgroundResource(R.drawable.btn_accent_bg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        btn.setLayoutParams(lp);
+        btn.setOnClickListener(v -> {
+            onAction.run();
+            dismissTop();
+        });
+        return btn;
+    }
+
+    /**
+     * 双按钮操作行（如更新提醒的「稍后 / 立即更新」）：左侧次要纯文字、右侧强调蓝填充，
+     * 等宽并排；点击后均自动关闭弹卡。leftAction 可为 null（仅关闭）。
+     */
+    public static View buildTwoButtonRow(Activity activity,
+                                         String leftText, Runnable leftAction,
+                                         String rightText, Runnable rightAction) {
+        float density = activity.getResources().getDisplayMetrics().density;
+        LinearLayout row = new LinearLayout(activity);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+
+        int padV = Math.round(14 * density);
+        int gap = Math.round(8 * density);
+
+        // 左：次要纯文字按钮
+        TextView left = new TextView(activity);
+        left.setText(leftText);
+        left.setTextColor(activity.getColor(R.color.text_tertiary));
+        left.setTextSize(16f);
+        left.setGravity(Gravity.CENTER);
+        left.setPadding(0, padV, 0, padV);
+        LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        leftLp.setMargins(0, 0, gap, 0);
+        left.setLayoutParams(leftLp);
+        left.setOnClickListener(v -> {
+            if (leftAction != null) leftAction.run();
+            dismissTop();
+        });
+
+        // 右：强调蓝填充按钮
+        TextView right = new TextView(activity);
+        right.setText(rightText);
+        right.setTextColor(0xFFFFFFFF);
+        right.setTextSize(16f);
+        right.setGravity(Gravity.CENTER);
+        right.setPadding(0, padV, 0, padV);
+        right.setBackgroundResource(R.drawable.btn_accent_bg);
+        LinearLayout.LayoutParams rightLp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        rightLp.setMargins(gap, 0, 0, 0);
+        right.setLayoutParams(rightLp);
+        right.setOnClickListener(v -> {
+            if (rightAction != null) rightAction.run();
+            dismissTop();
+        });
+
+        row.addView(left);
+        row.addView(right);
+        return row;
     }
 
     /** 便捷：构建一个「版本 + 日志」块（用于更新日志弹卡）。 */
