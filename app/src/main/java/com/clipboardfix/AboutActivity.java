@@ -62,11 +62,46 @@ public class AboutActivity extends Activity {
     };
     private TextView tvStatus, tvImeCount;
     private ImageView ivStatusMark;
-    private XposedServiceHelper.OnServiceListener mXposedListener;
-    private XposedService mXposedService;
-    private boolean mModuleBound = false;
-    private boolean mListenerRegistered = false;
     private final Handler mStatusHandler = new Handler(Looper.getMainLooper());
+
+    // ---- 模块状态（进程级）----
+    // 根因：LSPosed 的 binder 在进程存活期间只推送一次（经 XposedProvider.call 推给进程），
+    // 且 registerListener 是静态单订阅（覆盖式）、binder 先于首次订阅到达时暂存 mCache、
+    // 首次订阅即消费并清空 mCache。深浅色切换会销毁重建 Activity，旧实现把监听器/服务/
+    // 绑定标志放实例字段里，重建后重挂新监听器却永远等不到 onServiceBind，2.5s 兜底即误报「未启用」。
+    // 修正：服务与绑定状态提升为进程级，监听器为进程级单例（只注册一次，永不注销）；
+    // Activity 重建时直接读静态状态恢复显示，不重新检测。
+    private static XposedService sXposedService;
+    private static boolean sModuleBound = false;
+    private static boolean sListenerRegistered = false;
+
+    /** 进程内当前前台实例（弱引用：静态作用域不得强持有 Activity）。 */
+    private static WeakReference<AboutActivity> sCurrent = new WeakReference<>(null);
+
+    /** 进程级监听器：回调只更新静态状态，并驱动当前前台实例刷新 UI。 */
+    private static final XposedServiceHelper.OnServiceListener sXposedListener =
+            new XposedServiceHelper.OnServiceListener() {
+                @Override
+                public void onServiceBind(XposedService service) {
+                    sXposedService = service;
+                    sModuleBound = true;
+                    AboutActivity a = sCurrent.get();
+                    if (a != null) {
+                        a.pushFeaturePrefs();
+                        a.refreshModuleStatus();
+                    }
+                }
+
+                @Override
+                public void onServiceDied(XposedService service) {
+                    sXposedService = null;
+                    sModuleBound = false;
+                    AboutActivity a = sCurrent.get();
+                    if (a != null) {
+                        a.mStatusHandler.post(() -> a.applyModuleDisabled("未启用"));
+                    }
+                }
+            };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -203,46 +238,36 @@ public class AboutActivity extends Activity {
         findViewById(R.id.rowMustKnow).setOnClickListener(v -> showMustKnow(false));
     }
 
-    // ---------------- 模块启用状态（libxposed:service 实时查询） ----------------
+    // ---------------- 模块启用状态（libxposed:service 实时查询，进程级状态） ----------------
     /**
-     * 通过 libxposed:service 的 XposedServiceHelper 查询本模块在 LSPosed 中的启用状态。
-     * 能拿到 XposedService binder 即代表模块已启用（LSPosed 仅对启用模块回传 binder）；
-     * getScope() 返回本模块作用域包名，过滤出输入法即「已启用输入法数量」。
-     * 回调 onServiceBind/onServiceDied 提供了「实时」刷新：在 LSPosed 内开关模块后，
-     * binder 会随之建立/断开，主页状态即时更新；onResume 时重新订阅以捕获后台切换。
+     * 模块启用状态（libxposed:service 实时查询）。
+     * LSPosed 仅对已启用模块回传 binder：能拿到 XposedService 即代表已启用；
+     * getScope() 返回作用域包名，过滤出输入法即「已启用输入法数量」。
+     * 监听器为进程级单例（只注册一次）：binder 回调只更新静态状态并驱动前台实例刷新，
+     * 捕获「在 LSPosed 内开关模块」的实时变化。
+     * Activity 因深浅色切换等原因销毁重建时，直接从进程级状态恢复显示——
+     * 已绑定则立即「已启用」，不重新检测，也不受超时兜底误报影响。
      */
     private void initModuleStatus() {
-        if (mXposedListener == null) {
-            mXposedListener = new XposedServiceHelper.OnServiceListener() {
-                @Override
-                public void onServiceBind(XposedService service) {
-                    mXposedService = service;
-                    mModuleBound = true;
-                    pushFeaturePrefs();
-                    refreshModuleStatus();
-                }
-
-                @Override
-                public void onServiceDied(XposedService service) {
-                    mXposedService = null;
-                    mModuleBound = false;
-                    mStatusHandler.post(() -> applyModuleDisabled("未启用"));
-                }
-            };
+        sCurrent = new WeakReference<>(this);
+        if (!sListenerRegistered) {
+            XposedServiceHelper.registerListener(sXposedListener);
+            sListenerRegistered = true;
         }
-        // registerListener 是静态订阅；重复调用为幂等（同一监听器实例），可安全在 onResume 重订阅
-        XposedServiceHelper.registerListener(mXposedListener);
-        mListenerRegistered = true;
-
-        // 兜底：若 2.5s 内未拿到 binder，说明模块未启用或 LSPosed 未安装，给出明确状态
-        scheduleStatusFallback();
+        if (sModuleBound) {
+            // 进程内早已拿到 binder（Activity 重建路径，如深浅色切换）：立即恢复显示
+            refreshModuleStatus();
+        } else {
+            // 冷启动：等待 onServiceBind；超时未绑定则给出明确结论
+            scheduleStatusFallback();
+        }
     }
 
     /** 延迟确认状态：超时仍未绑定则给出「未启用 / 未检测」结论（每次订阅都重置计时）。 */
     private void scheduleStatusFallback() {
         mStatusHandler.removeCallbacksAndMessages(null);
         mStatusHandler.postDelayed(() -> {
-            if (!mModuleBound) {
+            if (!sModuleBound) {
                 applyModuleDisabled(isLsposedInstalled() ? "未启用" : "未检测");
             }
         }, 2500);
@@ -250,11 +275,11 @@ public class AboutActivity extends Activity {
 
     /** 从 XposedService 读取本模块作用域并刷新 UI（binder 线程或主线程均可调用）。 */
     private void refreshModuleStatus() {
-        if (mXposedService == null) {
+        if (sXposedService == null) {
             mStatusHandler.post(() -> applyModuleDisabled("未启用"));
             return;
         }
-        final XposedService svc = mXposedService;
+        final XposedService svc = sXposedService;
         int imeCount;
         try {
             List<String> scope = svc.getScope();
@@ -396,7 +421,7 @@ public class AboutActivity extends Activity {
      * 远程写是 binder 调用，放后台线程避免主线程卡顿。
      */
     private void pushFeaturePrefs() {
-        XposedService svc = mXposedService;
+        XposedService svc = sXposedService;
         if (svc == null) {
             return;
         }
@@ -674,12 +699,26 @@ public class AboutActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // 从 LSPosed 返回时重新订阅，捕获后台切换的启用/未启用变化；已绑定时刷新输入法计数
-        if (mListenerRegistered) {
-            XposedServiceHelper.registerListener(mXposedListener);
-            scheduleStatusFallback();
-            if (mModuleBound) refreshModuleStatus();
+        // 回前台时按进程级状态恢复：binder 存活（含后台期间 LSPosed 重推）直接刷新；
+        // 未绑定（后台期间模块被关 / binder 死亡）等待重推 + 超时兜底。
+        sCurrent = new WeakReference<>(this);
+        if (sListenerRegistered) {
+            if (sModuleBound) {
+                refreshModuleStatus();
+            } else {
+                scheduleStatusFallback();
+            }
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        // 进程级弱引用不指向已销毁实例；清掉本实例的延迟任务，防泄漏与旧实例误刷 UI
+        if (sCurrent.get() == this) {
+            sCurrent.clear();
+        }
+        mStatusHandler.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     @Override
