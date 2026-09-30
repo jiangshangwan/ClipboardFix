@@ -2,6 +2,9 @@ package com.clipboardfix;
 
 import android.app.Activity;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -13,6 +16,7 @@ import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 通用居中弹卡：全屏遮罩 + 中间圆角卡片。
@@ -199,6 +203,171 @@ public final class BottomSheet {
         row.addView(left);
         row.addView(right);
         return row;
+    }
+
+    // ---------------- 进度型弹卡（下载更新等） ----------------
+
+    /**
+     * 进度型弹卡句柄：标题 + 副标题 + 大百分比 + MB 明细 + 强调蓝进度条。
+     * 所有方法可在任意线程调用（内部切主线程），关闭后调用自动忽略。
+     */
+    public static final class ProgressSheet {
+        private final Handler handler = new Handler(Looper.getMainLooper());
+        private final TextView tvTitle, tvSub, tvPercent, tvBytes;
+        private final View fill, spacer;
+        private volatile boolean dismissed;
+
+        private ProgressSheet(TextView title, TextView sub, TextView percent,
+                              TextView bytes, View fill, View spacer) {
+            this.tvTitle = title;
+            this.tvSub = sub;
+            this.tvPercent = percent;
+            this.tvBytes = bytes;
+            this.fill = fill;
+            this.spacer = spacer;
+        }
+
+        /** 刷新进度（percent 0-100；total<=0 表示总大小未知，显示已下载量）。 */
+        public void setProgress(final int percent, final long read, final long total) {
+            handler.post(() -> {
+                if (dismissed) return;
+                int p = Math.max(0, Math.min(100, percent));
+                tvPercent.setText(total > 0 ? (p + "%") : "…");
+                tvBytes.setText(total > 0
+                        ? formatMb(read) + " / " + formatMb(total)
+                        : "已下载 " + formatMb(read));
+                setWeight(fill, p);
+                setWeight(spacer, 100 - p);
+            });
+        }
+
+        public void setSubTitle(final CharSequence s) {
+            handler.post(() -> { if (!dismissed) tvSub.setText(s); });
+        }
+
+        public void setTitle(final CharSequence s) {
+            handler.post(() -> { if (!dismissed) tvTitle.setText(s); });
+        }
+
+        /** 下载完成态：满进度 + 标题切换为调起安装提示。 */
+        public void showCompleted() {
+            handler.post(() -> {
+                if (dismissed) return;
+                tvTitle.setText("下载完成，正在调起安装…");
+                tvPercent.setText("100%");
+                setWeight(fill, 100);
+                setWeight(spacer, 0);
+            });
+        }
+
+        /** 关闭弹卡（幂等；仅当本卡在最上层时生效）。 */
+        public void dismiss() {
+            handler.post(() -> {
+                if (dismissed) return;
+                dismissed = true;
+                dismissTop();
+            });
+        }
+
+        private static void setWeight(View v, float w) {
+            LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) v.getLayoutParams();
+            if (lp.weight != w) {
+                lp.weight = w;
+                v.setLayoutParams(lp);
+            }
+        }
+
+        private static String formatMb(long bytes) {
+            return String.format(Locale.US, "%.2f MB", bytes / 1048576.0);
+        }
+    }
+
+    /**
+     * 弹出进度型弹卡：不可点遮罩关闭；底部「取消下载」触发 onCancel 并关闭卡片。
+     * 进度条颜色走 @color/accent、轨道走 @color/divider，深浅色自动切换。
+     */
+    public static ProgressSheet showProgress(final Activity activity, String title, String subTitle,
+                                             final Runnable onCancel) {
+        float density = activity.getResources().getDisplayMetrics().density;
+
+        LinearLayout content = new LinearLayout(activity);
+        content.setOrientation(LinearLayout.VERTICAL);
+
+        // 副标题（版本 / 文件大小）
+        TextView tvSub = new TextView(activity);
+        tvSub.setText(subTitle);
+        tvSub.setTextColor(activity.getColor(R.color.text_secondary));
+        tvSub.setTextSize(13f);
+        tvSub.setPadding(0, 0, 0, Math.round(14 * density));
+        content.addView(tvSub);
+
+        // 百分比 + MB 明细行（基线对齐：左大百分比、右小字明细）
+        LinearLayout numRow = new LinearLayout(activity);
+        numRow.setOrientation(LinearLayout.HORIZONTAL);
+        numRow.setGravity(Gravity.BOTTOM);
+        TextView tvPercent = new TextView(activity);
+        tvPercent.setText("0%");
+        tvPercent.setTextColor(activity.getColor(R.color.accent));
+        tvPercent.setTextSize(26f);
+        tvPercent.setTypeface(null, Typeface.BOLD);
+        numRow.addView(tvPercent);
+        TextView tvBytes = new TextView(activity);
+        tvBytes.setTextColor(activity.getColor(R.color.text_tertiary));
+        tvBytes.setTextSize(12f);
+        tvBytes.setGravity(Gravity.END);
+        tvBytes.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        numRow.addView(tvBytes);
+        content.addView(numRow);
+
+        // 进度条：圆角轨道 + 权重式填充，clipToOutline 裁出右端圆角
+        LinearLayout track = new LinearLayout(activity);
+        track.setOrientation(LinearLayout.HORIZONTAL);
+        GradientDrawable trackBg = new GradientDrawable();
+        trackBg.setColor(activity.getColor(R.color.divider));
+        trackBg.setCornerRadius(3 * density);
+        track.setBackground(trackBg);
+        track.setClipToOutline(true);
+        LinearLayout.LayoutParams trackLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, Math.round(6 * density));
+        trackLp.topMargin = Math.round(12 * density);
+        track.setLayoutParams(trackLp);
+
+        View fill = new View(activity);
+        GradientDrawable fillBg = new GradientDrawable();
+        fillBg.setColor(activity.getColor(R.color.accent));
+        fillBg.setCornerRadius(3 * density);
+        fill.setBackground(fillBg);
+        fill.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.MATCH_PARENT, 0f));
+        track.addView(fill);
+
+        View spacer = new View(activity);
+        spacer.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.MATCH_PARENT, 100f));
+        track.addView(spacer);
+        content.addView(track);
+
+        // 取消按钮（次级文字按钮，居中）
+        TextView btnCancel = new TextView(activity);
+        btnCancel.setText("取消下载");
+        btnCancel.setTextColor(activity.getColor(R.color.text_secondary));
+        btnCancel.setTextSize(15f);
+        btnCancel.setGravity(Gravity.CENTER);
+        int padV = Math.round(12 * density);
+        btnCancel.setPadding(0, padV, 0, padV);
+
+        show(activity, title, content, false, btnCancel);
+
+        // show() 已把本卡压栈，取回标题视图构造句柄
+        FrameLayout root = STACK.get(STACK.size() - 1);
+        TextView tvTitle = root.findViewById(R.id.sheetTitle);
+        final ProgressSheet sheet = new ProgressSheet(tvTitle, tvSub, tvPercent, tvBytes, fill, spacer);
+        btnCancel.setOnClickListener(v -> {
+            if (onCancel != null) onCancel.run();
+            sheet.dismiss();
+        });
+        return sheet;
     }
 
     /** 便捷：构建一个「版本 + 日志」块（用于更新日志弹卡）。 */

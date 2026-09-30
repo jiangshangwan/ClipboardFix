@@ -155,7 +155,57 @@ public class UpdateChecker {
     }
 
     private void downloadAndInstall(ReleaseInfo release) {
-        ProgressDialog dialog = new ProgressDialog(context);
+        // 兜底：理论上 UpdateChecker 仅由 Activity 构造；非 Activity 上下文仍用系统弹窗
+        if (!(context instanceof Activity)) {
+            legacyDownloadAndInstall(release);
+            return;
+        }
+        final Activity activity = (Activity) context;
+        final CancelToken token = new CancelToken();
+        final BottomSheet.ProgressSheet sheet = BottomSheet.showProgress(
+                activity, "正在下载更新", "HyperFixClip " + release.tagName, () -> {
+                    token.cancelled = true;
+                    java.net.HttpURLConnection c = token.conn;
+                    if (c != null) c.disconnect();
+                });
+
+        new Thread(() -> {
+            File apkFile = new File(context.getCacheDir(), "clipboardfix_update.apk");
+            try {
+                final boolean[] sizeKnown = {false};
+                downloadFile(release.downloadUrl, apkFile, token, (read, total) -> {
+                    if (total > 0 && !sizeKnown[0]) {
+                        sizeKnown[0] = true;
+                        sheet.setSubTitle("HyperFixClip " + release.tagName + " · 共 " + formatMb(total));
+                    }
+                    sheet.setProgress(total > 0 ? (int) (read * 100 / total) : 0, read, total);
+                });
+                if (token.cancelled) {
+                    apkFile.delete();
+                    return;
+                }
+                handler.post(() -> {
+                    sheet.showCompleted();
+                    handler.postDelayed(() -> {
+                        sheet.dismiss();
+                        installApk(apkFile);
+                    }, 800);
+                });
+            } catch (Exception e) {
+                apkFile.delete();
+                if (token.cancelled) return; // 用户主动取消：静默收尾（弹卡已随取消关闭）
+                android.util.Log.e("ClipboardFix", "downloadAndInstall failed", e);
+                handler.post(() -> {
+                    sheet.dismiss();
+                    showMessage("下载失败: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                });
+            }
+        }, "cf-apk-download").start();
+    }
+
+    /** 非 Activity 上下文的兜底下载（保留系统 ProgressDialog）。 */
+    private void legacyDownloadAndInstall(ReleaseInfo release) {
+        final ProgressDialog dialog = new ProgressDialog(context);
         dialog.setMessage("正在下载更新...");
         dialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
         dialog.setMax(100);
@@ -164,30 +214,44 @@ public class UpdateChecker {
 
         new Thread(() -> {
             try {
-                String apkName = "clipboardfix_update.apk";
-                File apkFile = new File(context.getCacheDir(), apkName);
-                downloadFile(release.downloadUrl, apkFile, dialog);
+                File apkFile = new File(context.getCacheDir(), "clipboardfix_update.apk");
+                downloadFile(release.downloadUrl, apkFile, new CancelToken(), (read, total) ->
+                        handler.post(() -> {
+                            if (total > 0) dialog.setProgress((int) (read * 100 / total));
+                        }));
                 handler.post(() -> {
                     dialog.dismiss();
                     installApk(apkFile);
                 });
             } catch (Exception e) {
-                android.util.Log.e("ClipboardFix", "downloadAndInstall failed", e);
+                android.util.Log.e("ClipboardFix", "legacyDownloadAndInstall failed", e);
                 handler.post(() -> {
                     dialog.dismiss();
                     showMessage("下载失败: " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 });
             }
-        }).start();
+        }, "cf-apk-download").start();
     }
 
-    private void downloadFile(String urlStr, File outputFile, ProgressDialog dialog) throws Exception {
+    /** 下载取消令牌：标志位 + 连接引用（取消时 disconnect 让读循环立刻抛错退出）。 */
+    private static final class CancelToken {
+        volatile boolean cancelled;
+        volatile HttpURLConnection conn;
+    }
+
+    /** 进度回调（下载线程触发；UI 刷新由调用方自行切主线程）。 */
+    private interface ProgressSink {
+        void onProgress(long read, long total);
+    }
+
+    private void downloadFile(String urlStr, File outputFile, CancelToken token, ProgressSink sink) throws Exception {
         android.util.Log.d("ClipboardFix", "downloadFile URL: " + urlStr);
         if (urlStr == null || urlStr.isEmpty()) {
             throw new Exception("下载链接为空");
         }
         // 让 HttpURLConnection 自动跟重定向（GitHub → Azure blob → 最终文件）
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        token.conn = conn;
         conn.setRequestProperty("User-Agent", "ClipboardFix-Updater");
         conn.setInstanceFollowRedirects(true);
         conn.setConnectTimeout(15000);
@@ -205,21 +269,30 @@ public class UpdateChecker {
         FileOutputStream fos = new FileOutputStream(outputFile);
 
         byte[] buffer = new byte[8192];
-        int bytesRead, totalRead = 0;
+        int bytesRead;
+        long totalRead = 0;
 
         while ((bytesRead = is.read(buffer)) != -1) {
+            if (token.cancelled) {
+                fos.close();
+                is.close();
+                conn.disconnect();
+                throw new Exception("cancelled");
+            }
             fos.write(buffer, 0, bytesRead);
             totalRead += bytesRead;
-            if (contentLength > 0) {
-                final int progress = (int) (totalRead * 100.0 / contentLength);
-                handler.post(() -> dialog.setProgress(progress));
-            }
+            final long read = totalRead;
+            sink.onProgress(read, contentLength);
         }
 
         fos.flush();
         fos.close();
         is.close();
         conn.disconnect();
+    }
+
+    private static String formatMb(long bytes) {
+        return String.format(java.util.Locale.US, "%.2f MB", bytes / 1048576.0);
     }
 
     private void installApk(File apkFile) {
