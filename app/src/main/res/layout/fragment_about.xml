@@ -1,67 +1,121 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 关于页：顶部渐变 LOGO 区 + 下方卡片内容区（可滚动） -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  关于页（顶部极光 + 固定 LOGO 层 + 顶层滚动内容的三层结构）：
+   ① AboutBgView —— 顶部流体极光渐变（仅限「状态栏 + 头部高(480dp)」一段，由 uBound 约束）；
+        其下即页面底色，无统一白板；滚动时整体淡出。
+   ② aboutLogoLayer —— 固定 LOGO 层（不进入滚动容器，故不随页面滚动）；层高 = 头部高(480dp)，
+       顶到屏幕最顶（透明状态栏叠于其上）；内部 logoBlock 距层顶 about_logo_margin_top(190dp)、
+       水平居中 → LOGO 顶边落在距屏顶 ~191dp（按设计稿截图实测：403px ÷ 2.1px/dp）；
+       滚动时 logoBlock 淡出 + 轻微缩放（对齐 AboutAnimationController）。
+   ③ aboutScroll —— 顶层滚动内容（透明容器）：首项 aboutTopSpacer 透明占位（高度 = 头部高），
+       初始把 LOGO 透出来；其后是各张卡片（各自 card_bg，无统一白板），滚动后升起覆盖 LOGO 区。
+  运行时不设 ScrollView paddingTop（由 spacer 承担），keep clipToPadding=false：滚动到顶时卡片可探入状态栏下方。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/bg_surface"
-    android:clipToPadding="false"
-    android:fillViewport="true"
-    android:paddingBottom="96dp">
+    android:background="@color/bg_surface">
 
-    <LinearLayout
+    <!-- ① 顶部流体极光渐变背景（全屏 view，仅顶栏一段有内容，其下透明露页面底色） -->
+    <com.clipboardfix.AboutBgView
+        android:id="@+id/aboutBg"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:layout_height="match_parent" />
 
-        <!-- 头部：LOGO/名称/版本区域（无渐变，使用页面底色） -->
+    <!-- ② 固定 LOGO 层（不滚动；层高 = 头部高，顶部偏移 = 状态栏；透明背景透出渐变） -->
+    <FrameLayout
+        android:id="@+id/aboutLogoLayer"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/about_header_height"
+        android:layout_gravity="top"
+        android:background="@android:color/transparent">
+
         <LinearLayout
-            android:layout_width="match_parent"
+            android:id="@+id/logoBlock"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:gravity="center_horizontal"
-            android:orientation="vertical"
-            android:paddingStart="22dp"
-            android:paddingTop="42dp"
-            android:paddingEnd="22dp"
-            android:paddingBottom="48dp">
+            android:layout_centerHorizontal="true"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/about_logo_margin_top"
+            android:gravity="center"
+            android:orientation="vertical">
 
-            <!-- LOGO：圆角矩形裁切 -->
-            <ImageView
+            <!-- LOGO：圆角方形底板 + 纯白图形（对齐设计稿 78dp 方形图标）
+                 底板：圆角方形，由 AboutLogoView 用它正后方背景的极光着色器填充，
+                       饱和度/明度拉向设计稿实测紫（HSV S≈0.74 / V≈0.49），
+                       于是随流光一起呼吸变色。
+                 图形：ic_logo_glyph.png —— 纯白透明 PNG，几何重建，边缘干净无毛刺。 -->
+            <com.clipboardfix.AboutLogoView
                 android:id="@+id/ivLogo"
                 android:layout_width="96dp"
                 android:layout_height="96dp"
-                android:background="@drawable/logo_bg"
-                android:clipToOutline="true"
-                android:scaleType="centerCrop"
-                android:src="@drawable/ic_logo" />
+                android:src="@drawable/ic_logo_glyph" />
 
+            <!-- 模块名：
+
+                 设计稿的模块名是一张 280x40dp 的「字图」——我们改用真实文字 + MiSans Semibold
+                 预渲染成图片，再经 MiuiBlurUtils.addBackgroundBlenderColor(mode 18/19) 取背景色混色。
+                 混色依赖 MIUI 私有模糊接口（需「背后的像素」，app 拿不到），无法照搬；
+                 但**字形本身可以照搬**：此处改为内置 MiSans Latin 字体 + 真 TextView 渲染 ——
+                 视觉与字图一致，且文字可缩放、不失真（避免字图的死图缺点）。
+
+                 字体：从设备 /system/fonts/MiSansLatinVF.ttf（可变字体，wght 150-700）在 wght=600
+                 （其 Semibold 命名实例，介于 Demibold 与 Bold 之间，比默认 Demibold 更粗，
+                 契合「模块名再粗一点」诉求）处**实例化为静态 TTF**（229KB，仅拉丁；
+                 标题为纯拉丁故足够），置于 res/font/misans_semibold.ttf。
+                 实例化原因：android:fontVariationSettings 需 API 31+，而本模块 minSdk=28，
+                 可变字体在低版本会回退默认字重 330（偏细）。
+
+                 字号取 38sp（按设计稿字图整体高 80px ÷ 2.1px/dp ≈ 38dp）。
+                 不设 textStyle="bold"——避免系统再叠加合成加粗（faux bold），直接用真实更重的字重。
+                 「随调色板流动变色」由 AboutBgView.setOnTitleColorListener 承担。 -->
             <TextView
+                android:id="@+id/tvAppTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="20dp"
+                android:fontFamily="@font/misans_semibold"
                 android:text="HyperFixClip"
-                android:textColor="@color/text_brand"
-                android:textSize="32sp"
-                android:textStyle="bold" />
+                android:textColor="@color/about_title_1"
+                android:textSize="38sp" />
 
+            <!-- 版本号：对齐设计稿 version_layout 的 marginTop=20dp / 版本文字 14sp
+                 （实测标题底 → 版本顶间距 ~24.7dp，由 20dp margin + 字体 descent padding 构成） -->
             <TextView
                 android:id="@+id/tvVersion"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="20dp"
                 android:text="V1.4.8"
                 android:textColor="@color/text_secondary"
-                android:textSize="15sp" />
+                android:textSize="14sp" />
         </LinearLayout>
+    </FrameLayout>
 
-        <!-- 内容区：卡片列表，正常页面背景 -->
+    <!-- ③ 滚动内容（顶层，透明容器；首部透明占位透出 LOGO，之后为各卡片） -->
+    <ScrollView
+        android:id="@+id/aboutScroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/transparent"
+        android:clipToPadding="false"
+        android:fillViewport="true"
+        android:paddingBottom="96dp"
+        android:scrollbars="none">
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:paddingStart="22dp"
-            android:paddingTop="8dp"
-            android:paddingEnd="22dp"
-            android:paddingBottom="24dp">
+            android:paddingEnd="22dp">
+
+            <!-- 透明占位：高度运行时设为「头部高」，初始露出背后 LOGO；滚动后卡片升起盖住 -->
+            <View
+                android:id="@+id/aboutTopSpacer"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:background="@android:color/transparent" />
 
             <!-- 开发者 -->
             <TextView
@@ -95,7 +149,6 @@
                     android:paddingEnd="16dp"
                     android:paddingBottom="18dp">
 
-                    <!-- 真实头像：圆形裁切 -->
                     <ImageView
                         android:layout_width="56dp"
                         android:layout_height="56dp"
@@ -155,7 +208,6 @@
                     android:paddingEnd="16dp"
                     android:paddingBottom="18dp">
 
-                    <!-- 真实头像：圆形裁切 -->
                     <ImageView
                         android:layout_width="56dp"
                         android:layout_height="56dp"
@@ -436,5 +488,5 @@
                     android:tint="@color/text_secondary" />
             </LinearLayout>
         </LinearLayout>
-    </LinearLayout>
-</ScrollView>
+    </ScrollView>
+</FrameLayout>

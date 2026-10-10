@@ -33,4 +33,12 @@
     <color name="status_green_fill">#B1E8B0</color>
     <color name="status_green_solid">#00B050</color>
     <color name="status_red">#C00000</color>
+
+    <!-- 关于页动态渐变背景（浅色：柔和蓝紫极光）。AGSL 取前三色做竖向基底 + 流动色斑，向下渐变收尾到 bg_surface -->
+    <color name="about_aurora_1">#A9C2FF</color>
+    <color name="about_aurora_2">#C7B6FF</color>
+    <color name="about_aurora_3">#86D8FF</color>
+    <!-- 关于页模块名（随渐变流动而缓慢变色的两种文字色，均保证浅色下可读） -->
+    <color name="about_title_1">#1A1A2E</color>
+    <color name="about_title_2">#3346A8</color>
 </resources>

@@ -31,4 +31,12 @@
     <color name="status_green_fill">#B1E8B0</color>
     <color name="status_green_solid">#00B050</color>
     <color name="status_red">#C00000</color>
+
+    <!-- 关于页动态渐变背景（深色：深蓝紫极光） -->
+    <color name="about_aurora_1">#2E3A80</color>
+    <color name="about_aurora_2">#432C7E</color>
+    <color name="about_aurora_3">#1E5BB0</color>
+    <!-- 关于页模块名（随渐变流动而缓慢变色，深色调浅色，保证深色极光上可读） -->
+    <color name="about_title_1">#E8E0FF</color>
+    <color name="about_title_2">#9FC0FF</color>
 </resources>

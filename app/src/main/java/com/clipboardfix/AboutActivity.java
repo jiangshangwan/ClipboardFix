@@ -65,6 +65,9 @@ public class AboutActivity extends Activity {
     private ImageView ivStatusMark;
     private final Handler mStatusHandler = new Handler(Looper.getMainLooper());
 
+    // 关于页：头部区高度（运行时按 @dimen/about_header_height 设置给占位与渐变带）
+    private int mAboutSpacerPx = 0;
+
     // ---- 模块状态（进程级）----
     // 根因：LSPosed 的 binder 在进程存活期间只推送一次（经 XposedProvider.call 推给进程），
     // 且 registerListener 是静态单订阅（覆盖式）、binder 先于首次订阅到达时暂存 mCache、
@@ -132,6 +135,10 @@ public class AboutActivity extends Activity {
         ViewGroup content = findViewById(R.id.contentContainer);
         for (int i = 0; i < content.getChildCount(); i++) {
             View page = content.getChildAt(i);
+            // 关于页单独处理：其动态渐变背景要全屏出血（顶到状态栏），页面根不能整体吃 inset。
+            if (page.getId() == R.id.pageAbout) {
+                continue;
+            }
             page.setOnApplyWindowInsetsListener((v, insets) -> {
                 v.setPadding(v.getPaddingLeft(), insets.getSystemWindowInsetTop(),
                         v.getPaddingRight(), v.getPaddingBottom());
@@ -199,6 +206,14 @@ public class AboutActivity extends Activity {
 
         // 切到关于页时状态栏染成渐变顶部色，与头部背景无缝衔接；其他页用页面背景色
         applyStatusBarForTab(idx);
+
+        // 切到「关于」页后页面已可见、完成布局，重算占位/渐变带高度（用真实测量高度，居中更准）
+        if (idx == 2) {
+            final View aboutPage = findViewById(R.id.pageAbout);
+            if (aboutPage != null) {
+                aboutPage.post(() -> applyAboutInsets(statusBarTop(aboutPage)));
+            }
+        }
     }
 
     /** 状态栏保持透明（沉浸式），各 Tab 不再单独染色。 */
@@ -474,6 +489,70 @@ public class AboutActivity extends Activity {
     private void setupAbout() {
         ((TextView) findViewById(R.id.tvVersion)).setText("V" + BuildConfig.VERSION_NAME);
 
+        // 「关于」页视觉：
+        //  ① AboutBgView —— 仅限顶部头部区的流体极光（下接页面底色，无统一白板）；
+        //  ② aboutLogoLayer —— 固定 LOGO 层（不进入滚动容器，不随页面位移），落在屏幕上部约 1/5 处；
+        //  ③ aboutScroll —— 透明滚动内容，首项透明占位透出 LOGO/极光，滚动后卡片升起覆盖。
+        final AboutBgView aboutBg = findViewById(R.id.aboutBg);
+        final View aboutScroll = findViewById(R.id.aboutScroll);
+
+        final TextView tvAppTitle = findViewById(R.id.tvAppTitle);
+        final View logoBlock = findViewById(R.id.logoBlock);
+
+        // 模块名「跟随流光照射变色」：把同一段极光 AGSL 挂到标题的 Paint 上，
+        // 每个文字像素取到「它正下方背景极光」的颜色（而非整行一个纯色自己循环）。
+        // API 33 以下无 RuntimeShader 时，AboutBgView 内部自动退回单色循环。
+        if (aboutBg != null && tvAppTitle != null) {
+            aboutBg.setTitleView(tvAppTitle);
+        }
+
+        // LOGO 图标同样「跟随流光」（图标与标题用同一套背景混色）：
+        // 图标素材为单色剪影，由 AboutLogoView 用背景同源的极光着色器染色。
+        final AboutLogoView ivLogo = findViewById(R.id.ivLogo);
+        if (aboutBg != null && ivLogo != null) {
+            aboutBg.setLogoView(ivLogo);
+        }
+
+        // 滚动动画（按设计稿阈值，按 dp 缩放）：
+        //  · 极光整带：滚动 0 → 头部高(480dp) 由全亮淡到 0——极光在整段头部区内渐隐，
+        //    卡片升满时恰好收进页面底色（对应其「actionBarPadding 全段淡出」）；
+        //  · LOGO 块：190dp 起淡出、230dp 完全消失，同时轻微缩小
+        //    （对应其 logoPadding=190dp、logoHeight=40dp，即 190→230dp）。
+        // LOGO 层为固定层，不随页面位移，仅做透明度/缩放过渡。
+        if (aboutScroll instanceof android.widget.ScrollView) {
+            final float dp = getResources().getDisplayMetrics().density;
+            // 极光淡出区间 = 整个头部区（与占位/渐变带同高，改 @dimen/about_header_height 即自动同步）
+            final int gradFadeEnd = getResources().getDimensionPixelSize(R.dimen.about_header_height);
+            final int logoFadeStart = Math.round(190f * dp);
+            final int logoFadeEnd = Math.round(230f * dp);
+            ((android.widget.ScrollView) aboutScroll).setOnScrollChangeListener(
+                    (v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+                        float ga = 1f - clamp01((float) scrollY / (float) gradFadeEnd);
+                        if (aboutBg != null) aboutBg.setGradientAlpha(ga);
+
+                        float lt = clamp01((float) (scrollY - logoFadeStart)
+                                / (float) (logoFadeEnd - logoFadeStart));
+                        if (logoBlock != null) {
+                            logoBlock.setAlpha(1f - lt);
+                            float scale = 1f - 0.15f * lt;
+                            logoBlock.setScaleX(scale);
+                            logoBlock.setScaleY(scale);
+                        }
+                    });
+        }
+
+        // 关于页 inset 处理：状态栏透明、页面根不吃 inset（极光与 LOGO 直接顶到屏幕最顶，
+        // 状态栏图标叠于其上）；头部度量与渐变带由 applyAboutInsets 按 @dimen/about_header_height 统一设置。
+        final View aboutPage = findViewById(R.id.pageAbout);
+        if (aboutPage != null) {
+            aboutPage.setOnApplyWindowInsetsListener((v, insets) -> {
+                applyAboutInsets(insets.getSystemWindowInsetTop());
+                return insets;
+            });
+            // 兜底：切到「关于」页时若 inset 回调未及时触发，post 一次直接读取根窗口 inset 应用。
+            aboutPage.post(() -> applyAboutInsets(statusBarTop(aboutPage)));
+        }
+
         findViewById(R.id.rowCoolapk).setOnClickListener(v ->
                 openUrl("https://www.coolapk.com/u/3019478"));
         findViewById(R.id.rowWeibo).setOnClickListener(v ->
@@ -489,6 +568,62 @@ public class AboutActivity extends Activity {
         findViewById(R.id.rowDonate).setOnClickListener(v -> showDonateSheet());
         // 开源致谢：打开「致谢名单」弹卡（内含可点击蓝字链接）
         findViewById(R.id.rowUpstream).setOnClickListener(v -> showThanksSheet());
+    }
+
+    /**
+     * 应用「关于」页布局度量（极光/LOGO 仅限顶部头部区，其余为页面底色）：
+     *  · 透明占位 aboutTopSpacer 高度 = 头部高（480dp）→ 卡片从此处起，初始在头部区之下露出 LOGO/极光；
+     *  · 渐变带底 = 头部高 → 极光恰好在头部区底收进页面底色，与卡片起始位对齐，无突兀接缝；
+     *  · LOGO 层（layout_gravity=top、高=头部高）顶到屏幕最顶（状态栏透明叠于其上），无需额外偏移。
+     * 头部高统一取自 @dimen/about_header_height（不依赖屏幕高度）；LOGO 纵向位置由
+     * @dimen/about_logo_margin_top(190dp) 决定——按设计稿截图实测 LOGO 顶边距屏顶 191dp，一致。
+     */
+    private void applyAboutInsets(int top) {
+        int header = getResources().getDimensionPixelSize(R.dimen.about_header_height);
+        mAboutSpacerPx = header;
+
+        View spacerView = findViewById(R.id.aboutTopSpacer);
+        if (spacerView != null) {
+            ViewGroup.LayoutParams lp = spacerView.getLayoutParams();
+            if (lp.height != header) {
+                lp.height = header;
+                spacerView.setLayoutParams(lp);
+            }
+        }
+
+        AboutBgView bg = findViewById(R.id.aboutBg);
+        if (bg != null) {
+            // 极光仅覆盖顶部头部区（与 LOGO 层同高），其下即页面底色，卡片从头部区底升起。
+            bg.setBandBottom(header);
+        }
+
+        // LOGO 层已 layout_gravity=top 且高=头部高，顶到屏幕最顶（透明状态栏叠于其上），
+        // 内部 logoBlock 以 about_logo_margin_top(190dp) 落入屏幕上部，无需额外偏移。
+        View logoLayer = findViewById(R.id.aboutLogoLayer);
+        if (logoLayer != null && logoLayer.getLayoutParams() instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams llp = (FrameLayout.LayoutParams) logoLayer.getLayoutParams();
+            if (llp.topMargin != 0) {
+                llp.topMargin = 0;
+                logoLayer.setLayoutParams(llp);
+            }
+        }
+    }
+
+    /** 把浮点值限制在 [0,1]（用于滚动进度归一化）。 */
+    private static float clamp01(float v) {
+        if (v < 0f) return 0f;
+        if (v > 1f) return 1f;
+        return v;
+    }
+
+    /** 读取状态栏高度：优先取根窗口 inset，缺失时退回系统 status_bar_height 资源。 */
+    private int statusBarTop(View v) {
+        android.view.WindowInsets wi = v.getRootWindowInsets();
+        if (wi != null) {
+            return wi.getSystemWindowInsetTop();
+        }
+        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        return id > 0 ? getResources().getDimensionPixelSize(id) : 0;
     }
 
     // ---------------- 弹卡：您需了解（特别说明） ----------------

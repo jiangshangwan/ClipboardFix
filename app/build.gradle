@@ -8,7 +8,8 @@ android {
 
     defaultConfig {
         applicationId "com.clipboardfix"
-        minSdk 28
+        // minSdk 抬到 33：HyperOS 即 Android 13+；借此可直接用标准 AGSL（RuntimeShader）实现「关于」页动态渐变。
+        minSdk 33
         targetSdk 35
         versionCode 22
         versionName "1.4.11"

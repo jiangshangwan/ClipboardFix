@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 关于页头部区高度（渐变带 / 固定 LOGO 层 / 透明占位 aboutTopSpacer 三处同高）。
+         取设计稿顶部带头区高 480dp：极光只覆盖顶部这一段，
+         其下即页面底色（无统一白板），卡片从头部区底升起。
+         注：设计稿中「版本卡」自身高 389dp，而极光带更高，
+         故这里按更大的 480dp 让版本号下方仍留出极光空间（对齐截图观感）。 -->
+    <dimen name="about_header_height">480dp</dimen>
+    <!-- LOGO 块距屏幕顶的偏移（LOGO 层顶到屏幕最顶、透明状态栏叠于其上）。
+         按设计稿截图实测（864x1920）：以其 90dp 见方的 LOGO 作像素尺子 → 189px / 90dp = 2.1 px/dp，
+         量得 LOGO 顶边 y=403px → 403 / 2.1 ≈ 191.9dp（校验：LOGO 高 188px / 2.1 = 89.5dp ≈ 90dp ✓）。
+         故这里取 190dp。 -->
+    <dimen name="about_logo_margin_top">190dp</dimen>
+</resources>
