@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应启动器图标：浅蓝渐变底板 + 居中的白色圆角卡片。
+  background 是一条 45° 线性渐变（填满系统形状遮罩），foreground 是白色卡片与投影。
+  foreground 按密度归档（108dp 对应 mdpi 108px / xxxhdpi 432px），卡片宽占图层画布
+  50%：启动器会把图层整体放大后再按形状遮罩，图层内 50% 在典型设备上约合可见宽 75%，
+  与同屏其他方形+居中图形的图标观感一致。
+  roundIcon 与普通 icon 指向同一份图层，由系统按设备形状裁切，避免圆形遮罩设备出现空白。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

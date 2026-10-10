@@ -663,6 +663,11 @@ public class AboutActivity extends Activity {
     private void showChangelog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.12",
+                "更换全新的应用图标（浅蓝渐变底 + 白色卡片）\n" +
+                "修复部分设备上桌面图标显示异常（圆形图标为空）\n" +
+                "深色模式下图标与模块名提亮，不再与背景融为一体\n" +
+                "关于页 LOGO 放大，模块名字体加粗"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.11",
                 "修复部分错误"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.10",
@@ -682,9 +687,6 @@ public class AboutActivity extends Activity {
                 "1、修复跨设备剪贴板同步BUG，无需通过切换系统输入法进行预热\n" +
                 "2、新增对Gboard键盘的适配\n" +
                 "3、使用中如果出现键盘异常抬高的问题请尝试关闭小白条"));
-        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.6",
-                "1、修复搜狗输入法输入框被异常抬高的BUG\n" +
-                "2、优化模块自动更新检测逻辑"));
         BottomSheet.show(this, "更新日志", content, true, null, null);
     }
 

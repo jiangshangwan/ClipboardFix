@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  启动器图标底板：浅蓝 45° 线性渐变（左上 -> 右下）。
+  色值由成品图标图四周环带（剔除卡片与投影区）逐通道最小二乘拟合得出：
+      左上 #CFDCF5  ->  右下 #8DB0E5
+  foreground（白色圆角卡片 + 投影）见各密度 drawable-*/ic_launcher_foreground.png。
+  background 由系统形状遮罩填满，故此处用纯 shape，不带尺寸与内边距。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="315"
+        android:endColor="#8DB0E5"
+        android:startColor="#CFDCF5"
+        android:type="linear" />
+</shape>
