@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  开关轨道：胶囊形（圆角 = 高度一半），开启为实心蓝、关闭为中性灰。
+  尺寸固定 52x28dp，交由 Switch 的 switchMinWidth 对齐，避免状态切换时测量抖动。
+  颜色用颜色选择器控制（而不是 android:trackTint），这样 drawable 的固有尺寸恒定。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <size
+        android:width="52dp"
+        android:height="28dp" />
+    <corners android:radius="14dp" />
+    <solid android:color="@color/switch_track_color" />
+</shape>

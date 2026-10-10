@@ -58,9 +58,6 @@ public class AboutActivity extends Activity {
 
     // 模块启用状态（通过 libxposed:service 实时查询 LSPosed）
     private static final String MODULE_PKG = "com.clipboardfix";
-    private static final String[] LSPOSED_PKGS = {
-            "org.lsposed.manager", "org.lsposed.manager.debug"
-    };
     private TextView tvStatus, tvImeCount;
     private ImageView ivStatusMark;
     private final Handler mStatusHandler = new Handler(Looper.getMainLooper());
@@ -279,12 +276,12 @@ public class AboutActivity extends Activity {
         }
     }
 
-    /** 延迟确认状态：超时仍未绑定则给出「未启用 / 未检测」结论（每次订阅都重置计时）。 */
+    /** 延迟确认状态：超时仍未绑定即判定为未启用（每次订阅都重置计时）。 */
     private void scheduleStatusFallback() {
         mStatusHandler.removeCallbacksAndMessages(null);
         mStatusHandler.postDelayed(() -> {
             if (!sModuleBound) {
-                applyModuleDisabled(isLsposedInstalled() ? "未启用" : "未检测");
+                applyModuleDisabled("未启用");
             }
         }, 2500);
     }
@@ -339,20 +336,6 @@ public class AboutActivity extends Activity {
         tvStatus.setTextColor(getColor(R.color.status_red));
         ivStatusMark.setImageResource(R.drawable.ic_status_disabled);
         tvImeCount.setText("已启用输入法：—");
-    }
-
-    /** LSPosed 管理器是否已安装（用于区分「未启用」与「未检测」）。 */
-    private boolean isLsposedInstalled() {
-        PackageManager pm = getPackageManager();
-        for (String p : LSPOSED_PKGS) {
-            try {
-                pm.getPackageInfo(p, 0);
-                return true;
-            } catch (Exception ignored) {
-                // 继续尝试下一个包名
-            }
-        }
-        return false;
     }
 
     /**
@@ -642,10 +625,10 @@ public class AboutActivity extends Activity {
         float density = getResources().getDisplayMetrics().density;
         TextView tv = new TextView(this);
         tv.setText("💕 特别说明\n\n" +
-                "感谢您使用【HyperOS剪贴板功能补全】模块，本模块免费使用，请勿二改及盗卖！以下信息还请仔细阅读：\n\n" +
+                "感谢您使用【HyperFixClip】模块，本模块免费使用，请勿二改及盗卖！以下信息还请仔细阅读：\n\n" +
                 "1、本模块仅修改剪贴板和常用语验证逻辑，不影响数据内容，请放心使用。如果您的系统剪贴板功能正常请勿安装本模块！\n" +
                 "2、从1.3版本起模块内置解锁MIUI键盘全面屏优化限制并适配HyperOS4，可能在OS3版本上存在部分异常问题，具体请自测。\n" +
-                "3、本模块已适配微信输入法、搜狗输入法、讯飞输入法、QQ输入法、Gboard输入法\n" +
+                "3、本模块已适配微信输入法、搜狗输入法、讯飞输入法、QQ输入法、豆包输入法、Gboard输入法\n" +
                 "4、本模块需LSPosed支持libxposed新版API（API 102）\n" +
                 "5、请在LSPosed框架内勾选推荐作用域，完成后务必重启手机，否则不生效\n\n" +
                 "最后温馨提醒：玩机有风险，请及时备份您的手机数据，造成损失本人不承担任何责任！");
@@ -664,10 +647,7 @@ public class AboutActivity extends Activity {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.12",
-                "更换全新的应用图标（浅蓝渐变底 + 白色卡片）\n" +
-                "修复部分设备上桌面图标显示异常（圆形图标为空）\n" +
-                "深色模式下图标与模块名提亮，不再与背景融为一体\n" +
-                "关于页 LOGO 放大，模块名字体加粗"));
+                "优化界面显示效果，修复部分错误"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.11",
                 "修复部分错误"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.10",

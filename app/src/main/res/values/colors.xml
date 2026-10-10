@@ -41,4 +41,9 @@
     <!-- 关于页模块名（随渐变流动而缓慢变色的两种文字色，均保证浅色下可读） -->
     <color name="about_title_1">#1A1A2E</color>
     <color name="about_title_2">#3346A8</color>
+
+    <!-- 功能页开关：轨道开启蓝 / 关闭灰，滑块恒为纯白 -->
+    <color name="switch_track_on">#4078EF</color>
+    <color name="switch_track_off">#E3E3E8</color>
+    <color name="switch_thumb_solid">#FFFFFF</color>
 </resources>

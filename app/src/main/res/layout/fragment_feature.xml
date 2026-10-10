@@ -203,10 +203,12 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="true"
+                    android:switchMinWidth="52dp"
                     android:textOff=""
                     android:textOn=""
-                    android:thumbTint="@color/switch_thumb_tint"
-                    android:trackTint="@color/switch_track_tint" />
+                    android:thumb="@drawable/switch_thumb"
+                    android:thumbTextPadding="0dp"
+                    android:track="@drawable/switch_track" />
             </LinearLayout>
 
             <View
@@ -240,10 +242,12 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="false"
+                    android:switchMinWidth="52dp"
                     android:textOff=""
                     android:textOn=""
-                    android:thumbTint="@color/switch_thumb_tint"
-                    android:trackTint="@color/switch_track_tint" />
+                    android:thumb="@drawable/switch_thumb"
+                    android:thumbTextPadding="0dp"
+                    android:track="@drawable/switch_track" />
             </LinearLayout>
         </LinearLayout>
 

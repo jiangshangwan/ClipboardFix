@@ -38,7 +38,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="HyperOS 剪贴板功能补全"
+                android:text="HyperFixClip"
                 android:textColor="@color/text_tertiary"
                 android:textSize="14sp" />
         </LinearLayout>

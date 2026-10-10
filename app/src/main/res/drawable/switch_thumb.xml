@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  开关滑块：纯白圆形，恒定白色（开启/关闭同色）。
+  外层尺寸 = 轨道高度 28dp，内部圆形 22dp 并四周内缩 3dp —— 
+  这样无论 Switch 把滑块摆在轨道两端中的哪一端，圆与轨道边缘都保持 3dp 内边距，
+  与轨道端的圆角弧度对齐。
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:bottom="3dp"
+        android:left="3dp"
+        android:right="3dp"
+        android:top="3dp">
+        <shape android:shape="oval">
+            <size
+                android:width="22dp"
+                android:height="22dp" />
+            <solid android:color="@color/switch_thumb_color" />
+        </shape>
+    </item>
+</layer-list>

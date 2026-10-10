@@ -39,4 +39,9 @@
     <!-- 关于页模块名（随渐变流动而缓慢变色，深色调浅色，保证深色极光上可读） -->
     <color name="about_title_1">#E8E0FF</color>
     <color name="about_title_2">#9FC0FF</color>
+
+    <!-- 功能页开关：轨道开启蓝 / 关闭灰，滑块恒为纯白 -->
+    <color name="switch_track_on">#4078EF</color>
+    <color name="switch_track_off">#4C4C52</color>
+    <color name="switch_thumb_solid">#FFFFFF</color>
 </resources>
