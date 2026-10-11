@@ -121,11 +121,14 @@ public class XposedInit extends XposedModule {
         String pkg = param.getPackageName();
         if (pkg == null) return;
 
+        // 剪贴板面板背景跟随底部功能栏配色：面板实际运行在输入法进程（如微信输入法 :hld、
+        // 系统 MIUI 输入法），与 com.miui.phrase 不是同一进程。故凡是能加载到该面板类的进程
+        // 都要挂（用类存在性自检兜底），不再限定 com.miui.phrase。
+        PanelColorHook.init(param);
+
         if (PKG_PHRASE.equals(pkg)) {
             log("phrase: v" + BuildConfig.VERSION_NAME);
             ClipboardHook.init();
-            // 剪贴板面板背景跟随底部功能栏配色（深浅色一致）
-            PanelColorHook.init(param);
             // DexKit 需要扫描 dex，耗时较长，放到最后执行，
             // 保证剪贴板相关的 hook 已经装好，不会拖慢 com.miui.phrase 启动。
             PackageValidationHook.init(param);
