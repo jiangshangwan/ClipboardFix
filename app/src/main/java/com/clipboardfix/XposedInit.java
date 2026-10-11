@@ -124,6 +124,8 @@ public class XposedInit extends XposedModule {
         if (PKG_PHRASE.equals(pkg)) {
             log("phrase: v" + BuildConfig.VERSION_NAME);
             ClipboardHook.init();
+            // 剪贴板面板背景跟随底部功能栏配色（深浅色一致）
+            PanelColorHook.init(param);
             // DexKit 需要扫描 dex，耗时较长，放到最后执行，
             // 保证剪贴板相关的 hook 已经装好，不会拖慢 com.miui.phrase 启动。
             PackageValidationHook.init(param);
