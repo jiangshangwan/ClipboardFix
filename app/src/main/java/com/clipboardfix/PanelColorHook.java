@@ -1,8 +1,10 @@
 package com.clipboardfix;
 
+import android.graphics.PorterDuff;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.PopupWindow;
@@ -15,15 +17,16 @@ import io.github.libxposed.api.XposedModuleInterface;
  * 让剪贴板面板（{@code InputMethodClipboardPhrasePopupView}）的背景色与底部输入法功能栏
  * （{@code InputMethodBottomManager.sBottomView}）保持一致。
  *
- * <p>默认情况下，面板内容区使用一张固定主题色的「顶部圆角实心」drawable，与底部功能栏的实际颜色
- * 在深色 / 浅色模式下都存在差异（深色面板偏暗、浅色面板偏亮）。本 Hook 在面板创建
- * （{@code initPopupWindow}）后，把面板「顶部圆角实心」背景重绘成底部功能栏当前的实色，
- * 并完整保留原来的圆角形状；同时监听底部栏换色（{@code setBottomColor}），面板处于显示状态时同步刷新。
+ * <p>面板内容容器（布局 {@code clipboard_pop_view} 里的 {@code @id/inside_view}）默认背景是
+ * 固定主题色的实心 shape（{@code pad_floating_clipboard_bg} / {@code _gray}），深浅色下都与
+ * 底部功能栏的实际配色存在差异。本 Hook 在面板创建（{@code initPopupWindow}）后，把这个容器的
+ * 背景着色成底部功能栏当前实色，并监听底部栏换色（{@code setBottomColor}）做同步刷新。
  *
- * <p>定位方式：{@code com.miui.inputmethod.InputMethodClipboardPhrasePopupView} 与
- * {@code com.miui.inputmethod.InputMethodBottomManager} 类名在 MIUI/HyperOS 系统应用里保持稳定，
- * 直接按名反射（与项目内其它 Hook 一致）。颜色来源优先取底部栏背景的 {@link ColorDrawable} 实色，
- * 失败再退回静态字段 {@code currentBottomViewColor}，两者皆不可得则跳过（保持原样，绝不写非法色值）。
+ * <p>定位方式：{@code com.miui.inputmethod.InputMethodClipboardPhrasePopupView} /
+ * {@code InputMethodBottomManager} 类名在 MIUI/HyperOS 系统应用里保持稳定，按名反射（与项目内
+ * 其它 Hook 一致）。面板容器优先按 id 名 {@code inside_view} 找（跨版本稳），退回内容根首个带背景
+ * 的子视图、再退回视图树扫描。颜色优先取底部栏背景的 {@link ColorDrawable} 实色，退回静态字段
+ * {@code currentBottomViewColor}，两者皆不可得则跳过（保持原样，绝不写非法色值）。
  */
 public final class PanelColorHook {
 
@@ -31,8 +34,9 @@ public final class PanelColorHook {
             "com.miui.inputmethod.InputMethodClipboardPhrasePopupView";
     private static final String BOTTOM_MANAGER =
             "com.miui.inputmethod.InputMethodBottomManager";
+    private static final String ID_INSIDE_VIEW = "inside_view";
 
-    /** 当前显示的面板「顶部圆角」内容容器，供换色时同步刷新（面板消失即被回收）。 */
+    /** 当前显示的面板内容容器，供换色时同步刷新（面板消失即被回收）。 */
     private static volatile WeakReference<View> sPanelBodyRef = new WeakReference<>(null);
 
     private PanelColorHook() {
@@ -47,7 +51,7 @@ public final class PanelColorHook {
             return;
         }
 
-        // 1) 面板创建点：initPopupWindow(IIIII)V（PUBLIC 实例方法）
+        // 1) 面板创建 / 显示点：initPopupWindow(IIIII)V（PUBLIC 实例方法）
         try {
             Class<?> popupCls = Reflect.findClass(PHRASE_POPUP, cl);
             java.lang.reflect.Method initPopup = Reflect.findMethod(
@@ -76,9 +80,8 @@ public final class PanelColorHook {
                 if (body != null) {
                     int color = getBottomBarColor(cl);
                     if (color != -1) {
-                        recolor(body, color);
-                        log("panel color synced on setBottomColor -> #"
-                                + Integer.toHexString(color));
+                        tint(body, color);
+                        log("synced on setBottomColor -> #" + Integer.toHexString(color));
                     }
                 }
                 return result;
@@ -89,46 +92,92 @@ public final class PanelColorHook {
         }
     }
 
-    /** 从面板实例取到内容视图，定位顶部圆角容器并重绘成底部栏颜色。 */
+    /** 从面板实例取到内容视图，定位内容容器并着色成底部栏颜色。 */
     private static void applyPanelColor(Object popupObj) {
         try {
             if (!(popupObj instanceof PopupWindow)) return;
-            PopupWindow popup = (PopupWindow) popupObj;
-            View content = popup.getContentView();
-            if (content == null) return;
-
-            int color = getBottomBarColor(content.getClass().getClassLoader());
-            if (color == -1) {
-                log("skip: bottom bar color unavailable");
+            View content = ((PopupWindow) popupObj).getContentView();
+            if (content == null) {
+                log("WARN: contentView null");
                 return;
             }
-
-            View body = findTopRoundedBody(content);
+            View body = findBody(content);
             if (body == null) {
-                log("WARN: panel top-rounded body not found");
+                log("WARN: panel content container not found");
                 return;
             }
-            recolor(body, color);
             sPanelBodyRef = new WeakReference<>(body);
-            log("panel color applied -> #" + Integer.toHexString(color));
+
+            final ClassLoader cl = popupObj.getClass().getClassLoader();
+            int color = getBottomBarColor(cl);
+            if (color == -1) {
+                // 底部栏尚未着色（如输入法刚起），推迟一拍再试。
+                log("defer: bottom color not ready");
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    try {
+                        int c = getBottomBarColor(cl);
+                        if (c != -1) {
+                            tint(body, c);
+                            log("retry ok -> #" + Integer.toHexString(c));
+                        } else {
+                            log("retry still -1");
+                        }
+                    } catch (Throwable ignored) {
+                        // 重试失败即保持原样
+                    }
+                }, 200L);
+                return;
+            }
+            tint(body, color);
+            log("applied -> #" + Integer.toHexString(color));
         } catch (Throwable t) {
             log("applyPanelColor error - " + t);
         }
     }
 
     /**
-     * 在内容视图树里找「仅顶部圆角」的实心容器——它正是面板主体背景层。
-     * 深度优先、命中即返回（面板主体通常是内容根的直接子级，最先被遍历到）。
+     * 定位面板内容容器：优先按 id 名 {@code inside_view}（跨版本稳），
+     * 退回内容根第一个带背景的子视图，再退回视图树扫描。
      */
-    private static View findTopRoundedBody(View root) {
+    private static View findBody(View content) {
+        try {
+            int id = content.getResources().getIdentifier(ID_INSIDE_VIEW, "id", null);
+            if (id != 0) {
+                View v = content.findViewById(id);
+                if (v != null) {
+                    log("body by id(" + ID_INSIDE_VIEW + ")=" + Integer.toHexString(id));
+                    return v;
+                }
+            }
+        } catch (Throwable ignored) {
+            // 解析失败则走兜底
+        }
+        if (content instanceof ViewGroup) {
+            ViewGroup vg = (ViewGroup) content;
+            if (vg.getChildCount() > 0) {
+                View c0 = vg.getChildAt(0);
+                if (c0 != null && c0.getBackground() != null) {
+                    log("body by content child[0]");
+                    return c0;
+                }
+            }
+        }
+        View scanned = findFirstWithBg(content);
+        if (scanned != null) {
+            log("body by scan");
+        }
+        return scanned;
+    }
+
+    private static View findFirstWithBg(View root) {
         if (root instanceof ViewGroup) {
             ViewGroup vg = (ViewGroup) root;
             for (int i = 0; i < vg.getChildCount(); i++) {
                 View child = vg.getChildAt(i);
-                if (isTopRoundedBody(child)) {
+                if (child.getBackground() != null) {
                     return child;
                 }
-                View found = findTopRoundedBody(child);
+                View found = findFirstWithBg(child);
                 if (found != null) {
                     return found;
                 }
@@ -137,45 +186,21 @@ public final class PanelColorHook {
         return null;
     }
 
-    private static boolean isTopRoundedBody(View v) {
-        Drawable bg = v.getBackground();
-        if (!(bg instanceof GradientDrawable)) {
-            return false;
-        }
-        GradientDrawable gd = (GradientDrawable) bg;
-        float r = gd.getCornerRadius();
-        if (r >= 0f) {
-            // 统一圆角（非「仅顶部」），不是面板主体背景层。
-            return false;
-        }
-        float[] cr = gd.getCornerRadii();
-        if (cr == null || cr.length < 8) {
-            return false;
-        }
-        boolean topRounded = cr[0] > 1f || cr[2] > 1f;
-        boolean bottomFlat = cr[4] < 1f && cr[6] < 1f;
-        return topRounded && bottomFlat;
-    }
-
-    /** 用底部栏实色重建背景，保留原圆角形状。 */
-    private static void recolor(View body, int color) {
+    /**
+     * 给容器背景着色。用 {@link Drawable#setTint} 只改颜色、保留原 drawable
+     * （圆角形状 / MIUI 自定义阴影都在原 drawable 上，重建就会丢）。
+     */
+    private static void tint(View body, int color) {
         Drawable bg = body.getBackground();
-        GradientDrawable nd = new GradientDrawable();
-        nd.setShape(GradientDrawable.RECTANGLE);
-        nd.setColor(color);
-        if (bg instanceof GradientDrawable) {
-            GradientDrawable gd = (GradientDrawable) bg;
-            float r = gd.getCornerRadius();
-            if (r >= 0f) {
-                nd.setCornerRadius(r);
-            } else {
-                float[] cr = gd.getCornerRadii();
-                if (cr != null) {
-                    nd.setCornerRadii(cr);
-                }
-            }
+        if (bg == null) {
+            body.setBackgroundColor(color);
+            return;
         }
-        body.setBackground(nd);
+        bg.setTintMode(PorterDuff.Mode.SRC_IN);
+        bg.setTint(color);
+        bg.invalidateSelf();
+        body.requestLayout();
+        body.invalidate();
     }
 
     /** 取底部功能栏当前实色；优先读其 ColorDrawable 背景，退回静态字段，皆失败返回 -1。 */
@@ -190,7 +215,7 @@ public final class PanelColorHook {
                 }
             }
         } catch (Throwable t) {
-            log("getBottomBarColor from sBottomView failed - " + t);
+            log("color from sBottomView failed - " + t);
         }
         try {
             Class<?> mgr = Reflect.findClass(BOTTOM_MANAGER, cl);
