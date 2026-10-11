@@ -124,7 +124,10 @@ public class XposedInit extends XposedModule {
         // 剪贴板面板背景跟随底部功能栏配色：面板实际运行在输入法进程（如微信输入法 :hld、
         // 系统 MIUI 输入法），与 com.miui.phrase 不是同一进程。故凡是能加载到该面板类的进程
         // 都要挂（用类存在性自检兜底），不再限定 com.miui.phrase。
-        PanelColorHook.init(param);
+        // 由「优化剪贴板面板背景」开关控制，默认关闭。
+        if (ModulePrefs.isPanelColorEnabled()) {
+            PanelColorHook.init(param);
+        }
 
         if (PKG_PHRASE.equals(pkg)) {
             log("phrase: v" + BuildConfig.VERSION_NAME);

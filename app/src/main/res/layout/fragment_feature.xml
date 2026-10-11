@@ -249,6 +249,45 @@
                     android:thumbTextPadding="0dp"
                     android:track="@drawable/switch_track" />
             </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1px"
+                android:layout_marginStart="20dp"
+                android:background="@color/divider" />
+
+            <LinearLayout
+                android:id="@+id/rowPanelColor"
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:background="@drawable/row_ripple"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="20dp"
+                android:paddingEnd="16dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="优化剪贴板面板背景"
+                    android:textColor="@color/text_primary"
+                    android:textSize="17sp" />
+
+                <Switch
+                    android:id="@+id/switchPanelColor"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="false"
+                    android:switchMinWidth="52dp"
+                    android:textOff=""
+                    android:textOn=""
+                    android:thumb="@drawable/switch_thumb"
+                    android:thumbTextPadding="0dp"
+                    android:track="@drawable/switch_track" />
+            </LinearLayout>
         </LinearLayout>
 
     </LinearLayout>

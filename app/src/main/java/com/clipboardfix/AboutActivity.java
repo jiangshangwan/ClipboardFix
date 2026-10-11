@@ -53,7 +53,7 @@ public class AboutActivity extends Activity {
     private int currentTab = 0;
 
     private TextView tvHideIcon, tvHideIconSub;
-    private Switch mSwImeUnlock, mSwUnlimitCount;
+    private Switch mSwImeUnlock, mSwUnlimitCount, mSwPanelColor;
     private TextView mSnackView;
 
     // 模块启用状态（通过 libxposed:service 实时查询 LSPosed）
@@ -391,24 +391,30 @@ public class AboutActivity extends Activity {
     private void setupFeatureSwitches() {
         mSwImeUnlock = findViewById(R.id.switchImeUnlock);
         mSwUnlimitCount = findViewById(R.id.switchUnlimitCount);
+        mSwPanelColor = findViewById(R.id.switchPanelColor);
 
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         mSwImeUnlock.setChecked(prefs.getBoolean(
                 ModulePrefs.KEY_IME_UNLOCK, ModulePrefs.DEFAULT_IME_UNLOCK));
         mSwUnlimitCount.setChecked(prefs.getBoolean(
                 ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT));
+        mSwPanelColor.setChecked(prefs.getBoolean(
+                ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR));
 
         mSwImeUnlock.setOnCheckedChangeListener((v, checked) -> saveFeaturePrefs());
         mSwUnlimitCount.setOnCheckedChangeListener((v, checked) -> saveFeaturePrefs());
+        mSwPanelColor.setOnCheckedChangeListener((v, checked) -> saveFeaturePrefs());
         // 整行可点，与点开关等效
         findViewById(R.id.rowImeUnlock).setOnClickListener(v -> mSwImeUnlock.toggle());
         findViewById(R.id.rowUnlimitCount).setOnClickListener(v -> mSwUnlimitCount.toggle());
+        findViewById(R.id.rowPanelColor).setOnClickListener(v -> mSwPanelColor.toggle());
     }
 
     private void saveFeaturePrefs() {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                 .putBoolean(ModulePrefs.KEY_IME_UNLOCK, mSwImeUnlock.isChecked())
                 .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, mSwUnlimitCount.isChecked())
+                .putBoolean(ModulePrefs.KEY_PANEL_COLOR, mSwPanelColor.isChecked())
                 .apply();
         pushFeaturePrefs();
         showSnack("已保存，重启手机后生效");
@@ -429,11 +435,14 @@ public class AboutActivity extends Activity {
                 ModulePrefs.KEY_IME_UNLOCK, ModulePrefs.DEFAULT_IME_UNLOCK);
         boolean unlimit = local.getBoolean(
                 ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT);
+        boolean panelColor = local.getBoolean(
+                ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR);
         new Thread(() -> {
             try {
                 svc.getRemotePreferences(ModulePrefs.GROUP).edit()
                         .putBoolean(ModulePrefs.KEY_IME_UNLOCK, ime)
                         .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, unlimit)
+                        .putBoolean(ModulePrefs.KEY_PANEL_COLOR, panelColor)
                         .apply();
             } catch (Throwable t) {
                 // 远程写失败不影响本地开关状态
@@ -646,6 +655,15 @@ public class AboutActivity extends Activity {
     private void showChangelog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(BottomSheet.buildVersionBlock(this, "V2.0",
+                "1. 全新 UI 重构，模块运行状态、设备与系统信息直观呈现，一眼掌握模块当前工作情况\n" +
+                "2. 液态玻璃风格底部导航全面升级，页面切换过渡顺滑，触控跟手度显著提升\n" +
+                "3. 新增独立功能设置面板，各项功能开关按需启闭，自定义自由度更高\n" +
+                "4. 完整适配系统级深浅模式，跟随系统自动切换明暗主题，暗光场景更护眼\n" +
+                "5. 新增专属关于页面，调用系统 API 实现动态渐变背景，视觉质感大幅提升\n" +
+                "6. 丰富关于页内容，集成作者联系方式、更新日志入口、项目信息与打赏通道，完善项目信息展示"));
+        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.13",
+                "新增优化剪贴板面板背景功能，优化剪贴板和常用语面板与功能区的取色问题"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.12",
                 "优化界面显示效果，修复部分错误"));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.11",

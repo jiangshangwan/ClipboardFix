@@ -10,7 +10,8 @@ import android.content.SharedPreferences;
  * 开关在目标进程下次加载时生效（重启输入法 / 重启手机）。
  *
  * <p>默认值即「还原到加开关之前的行为」：
- * 全面屏优化解锁默认开启，数量上限解锁默认关闭。
+ * 全面屏优化解锁默认开启，数量上限解锁默认关闭；
+ * 剪贴板面板背景优化属于新特性，默认关闭，由用户按需开启。
  */
 public final class ModulePrefs {
 
@@ -23,8 +24,12 @@ public final class ModulePrefs {
     /** 解锁剪贴板/常用语数量上限，默认关闭。 */
     public static final String KEY_UNLIMIT_COUNT = "clipboard_unlimit_count";
 
+    /** 剪贴板/常用语面板背景跟随底部功能栏取色，默认关闭。 */
+    public static final String KEY_PANEL_COLOR = "clipboard_panel_color";
+
     public static final boolean DEFAULT_IME_UNLOCK = true;
     public static final boolean DEFAULT_UNLIMIT_COUNT = false;
+    public static final boolean DEFAULT_PANEL_COLOR = false;
 
     private ModulePrefs() {
     }
@@ -66,5 +71,11 @@ public final class ModulePrefs {
     public static boolean isUnlimitCountEnabled() {
         SharedPreferences p = hookPrefs();
         return p != null && p.getBoolean(KEY_UNLIMIT_COUNT, DEFAULT_UNLIMIT_COUNT);
+    }
+
+    /** 剪贴板面板背景优化是否启用（hook 侧）。默认关闭，需用户在「功能设置」里手动开启。 */
+    public static boolean isPanelColorEnabled() {
+        SharedPreferences p = hookPrefs();
+        return p != null && p.getBoolean(KEY_PANEL_COLOR, DEFAULT_PANEL_COLOR);
     }
 }
