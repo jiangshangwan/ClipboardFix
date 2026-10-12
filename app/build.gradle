@@ -1,5 +1,7 @@
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
 }
 
 android {
@@ -11,13 +13,15 @@ android {
         // minSdk 抬到 33：HyperOS 即 Android 13+；借此可直接用标准 AGSL（RuntimeShader）实现「关于」页动态渐变。
         minSdk 33
         targetSdk 35
-        versionCode 58
+        versionCode 74
         versionName "2.0"
         // 构建日期：编译时写入，供「关于/主页」展示
         buildConfigField "String", "BUILD_DATE", "\"${new Date().format('yyyy-MM-dd')}\""
-        // 小米设备全部为 ARM 架构；剔除 x86 / x86_64 原生库（libdexkit.so），省约 817KB
+        // 小米设备全部为 ARM 架构；剔除 x86 / x86_64 原生库（libdexkit.so），省约 817KB。
+        // 只保留 arm64-v8a：再省约 253KB（armeabi-v7a 的 libdexkit.so + libandroidx.graphics.path.so）；
+        // 代价是 32 位老设备装不上（用户已确认「老设备不管」）。
         ndk {
-            abiFilters 'armeabi-v7a', 'arm64-v8a'
+            abiFilters 'arm64-v8a'
         }
     }
 
@@ -66,11 +70,12 @@ android {
 
     buildFeatures {
         buildConfig = true
+        compose true
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
         // libxposed:service 的 AAR 含 Java record，D8 需要 record desugaring 的全局 consumer
         coreLibraryDesugaringEnabled true
     }
@@ -131,4 +136,22 @@ dependencies {
 
     // record desugaring 运行时支撑（配合 coreLibraryDesugaringEnabled，覆盖 libxposed:service 的 record）
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
+
+    // ---- Compose + Miuix（2026-10-12 起：UI 迁 Compose/Miuix）----
+    // Compose 入口与基础布局（LazyColumn/Grid 等由 Miuix 间接依赖，这里显式对齐版本）
+    implementation 'androidx.activity:activity-compose:1.13.0'
+    implementation 'org.jetbrains.compose.foundation:foundation-android:1.12.0'
+    implementation 'androidx.graphics:graphics-shapes:1.1.0'
+    // Miuix 组件库（HyperOS 风格）：ui 为核心，preference/icons/blur 按需
+    implementation 'top.yukonga.miuix.kmp:miuix-ui-android:0.9.4-rc01'
+    implementation 'top.yukonga.miuix.kmp:miuix-preference-android:0.9.4-rc01'
+    implementation 'top.yukonga.miuix.kmp:miuix-icons-android:0.9.4-rc01'
+    implementation 'top.yukonga.miuix.kmp:miuix-blur-android:0.9.4-rc01'
+}
+
+// Kotlin/Compose 工具链：jvmTarget 对齐本机 JDK 17（机器仅装 JDK 17，无 21）
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
 }

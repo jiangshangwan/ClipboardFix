@@ -90,6 +90,16 @@ public class AboutLogoView extends ImageView {
     }
 
     /**
+     * 直接用纯色填充底板（Compose 版极光用 CPU 单点采背后极光色后经此接口设置，
+     * 与 setGlowShader 的 GPU 采色等价；调用时会清掉已注入的着色器）。
+     */
+    public void setPlateColor(int color) {
+        mPlatePaint.setShader(null);
+        mPlatePaint.setColor(color);
+        invalidate();
+    }
+
+    /**
      * 图形（卡片）着色。浅色模式传纯白（= 原图色，不改变），深色模式传深紫
      * （与浅紫底板形成强反差，对齐设计稿深色模式「浅底 + 深图形」观感）。
      * 传 0 表示清除着色（保持原图）。

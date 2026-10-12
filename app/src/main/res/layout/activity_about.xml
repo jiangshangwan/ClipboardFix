@@ -10,28 +10,27 @@
     android:layout_height="match_parent"
     android:background="@color/bg_surface">
 
-    <!-- 内容区：三页叠放，按 Tab 切换可见性（同时作为玻璃条的折射背景） -->
+    <!-- 内容区：三页叠放，按 Tab 切换可见性（同时作为玻璃条的折射背景）。
+         页面内容为 Compose + Miuix（各页一个 ComposeView）；液态玻璃条经
+         contentContainer.draw() 递归录制 Compose 内容作为折射源，效果不变。 -->
     <FrameLayout
         android:id="@+id/contentContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <include
+        <androidx.compose.ui.platform.ComposeView
             android:id="@+id/pageHome"
-            layout="@layout/fragment_home"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 
-        <include
+        <androidx.compose.ui.platform.ComposeView
             android:id="@+id/pageFeature"
-            layout="@layout/fragment_feature"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:visibility="gone" />
 
-        <include
+        <androidx.compose.ui.platform.ComposeView
             android:id="@+id/pageAbout"
-            layout="@layout/fragment_about"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:visibility="gone" />

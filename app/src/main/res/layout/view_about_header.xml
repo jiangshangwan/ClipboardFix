@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  关于页头部（Compose 经 AndroidView 嵌入，保留 AGSL 流光着色器）：
+    · AboutLogoView —— 底板由 AuroraState 每帧 CPU 单点采背后极光色注入（setPlateColor，
+      与旧版 GPU 采色等价），图形纯白/深紫随深浅色；
+    · tvAppTitle —— 模块名，Paint 挂极光着色器（AuroraState 每帧写 uniform，
+      文字逐像素透出背后流光色）；
+    · tvVersion —— 版本号（运行时写入 "V<versionName>"）。
+  logoBlock 距顶 190dp（对齐设计稿），水平居中。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@android:color/transparent">
+
+    <LinearLayout
+        android:id="@+id/logoBlock"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="190dp"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <com.clipboardfix.AboutLogoView
+            android:id="@+id/ivLogo"
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:src="@drawable/ic_logo_glyph" />
+
+        <TextView
+            android:id="@+id/tvAppTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:fontFamily="@font/misans_semibold"
+            android:text="HyperFixClip"
+            android:textColor="@color/about_title_1"
+            android:textSize="38sp" />
+
+        <TextView
+            android:id="@+id/tvVersion"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="V2.0"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+    </LinearLayout>
+</FrameLayout>

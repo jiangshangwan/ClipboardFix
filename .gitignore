@@ -6,4 +6,7 @@ local.properties
 *.apk
 *.log
 .blob-map.json
-.blob-map-v2.jsonclipboardfix.jks
+.blob-map-v2.json
+clipboardfix.jks
+build_log*.txt
+release_build_log.txt
