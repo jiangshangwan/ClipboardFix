@@ -78,10 +78,11 @@ public class AboutBgView extends View {
             {0.58f, 0.74f, 1.00f, 1.0f, 1.0f, 0.90f, 0.93f, 1.0f, 0.74f, 0.76f, 1.00f, 1.0f, 0.97f, 0.77f, 0.84f, 1.0f},
             {0.98f, 0.86f, 0.90f, 1.0f, 0.60f, 0.73f, 0.98f, 1.0f, 0.92f, 0.93f, 1.00f, 1.0f, 0.56f, 0.69f, 1.00f, 1.0f}
     };
+    // 深色调色板：RGB 整体压暗（×0.75）→ 底色更「深」；色相 / 饱和度保留，深色下仍浓郁。
     private static final float[][] DARK = {
-            {0.20f, 0.06f, 0.88f, 0.4f, 0.30f, 0.14f, 0.55f, 0.5f, 0.00f, 0.64f, 0.96f, 0.5f, 0.11f, 0.16f, 0.83f, 0.4f},
-            {0.07f, 0.15f, 0.79f, 0.5f, 0.62f, 0.21f, 0.67f, 0.5f, 0.06f, 0.25f, 0.84f, 0.5f, 0.00f, 0.20f, 0.78f, 0.5f},
-            {0.58f, 0.30f, 0.74f, 0.4f, 0.27f, 0.18f, 0.60f, 0.5f, 0.66f, 0.26f, 0.62f, 0.5f, 0.12f, 0.16f, 0.70f, 0.6f}
+            {0.150f, 0.045f, 0.660f, 0.4f, 0.225f, 0.105f, 0.413f, 0.5f, 0.000f, 0.480f, 0.720f, 0.5f, 0.083f, 0.120f, 0.623f, 0.4f},
+            {0.053f, 0.113f, 0.593f, 0.5f, 0.465f, 0.158f, 0.503f, 0.5f, 0.045f, 0.188f, 0.630f, 0.5f, 0.000f, 0.150f, 0.585f, 0.5f},
+            {0.435f, 0.225f, 0.555f, 0.4f, 0.203f, 0.135f, 0.450f, 0.5f, 0.495f, 0.195f, 0.465f, 0.5f, 0.090f, 0.120f, 0.525f, 0.6f}
     };
     private static final int[][] TITLE_LIGHT = {
             {0x3B, 0x6F, 0xD4}, {0x8A, 0x5B, 0xD0}, {0xD4, 0x58, 0x8A}
@@ -111,7 +112,8 @@ public class AboutBgView extends View {
             "uniform vec2 uResolution;" +
             "uniform float uAnimTime;" +
             "uniform vec4 uBound;" +
-            "uniform vec2 uTranslate;" +      // 标题专用：文字局部坐标 → 背景坐标的平移
+            "uniform vec2 uTranslate;" +      // 标题/LOGO 专用：View 局部坐标 → 背景坐标的平移（标题用）
+            "uniform vec2 uLogoCenter;" +     // LOGO 专用：LOGO 中心点（窗口坐标），直接取背后极光色
             "uniform float uTranslateY;" +
             "uniform vec3 uPoints[4];" +
             "uniform vec4 uColors[4];" +
@@ -213,27 +215,24 @@ public class AboutBgView extends View {
             "}";
 
     /**
-     * LOGO 图标专用（让图标底板跟随后面的流光变色）：
-     * 图标同样取「它正后方背景极光」的颜色，于是流光扫过时图标与背景一起呼吸变色。
-     *
-     * 与上一版的区别：现在着色器填充的是「圆角方形底板」（不再是图形本身）， LOGO 图形是恒定纯白。
-     * 所以这里的 uLogoSat / uLogoLum 是按设计稿底板实测值定的目标：
-     *   底板实测（截图采样）≈ RGB(95,32,124)，换算 HSV 约 S=0.74 / V=0.49。
-     * 色相完全取自极光（保留流光感），饱和度与明度向目标值收敛。
-     *
-     * ⚠️ 混合系数是实机反解出来的，不能凭感觉调：
-     *   极光自身 S≈0.17 / V≈0.99（很淡、很亮）。mix(target, aurora, w) = (1-w)*target + w*aurora。
-     *   首版 w=0.30/0.22 -> 实测 S=0.57 / V=0.60，比目标值偏淡偏亮。
-     *   反解：S=0.74 => w=0.14, target=0.82；V=0.49 => w=0.10, target=0.46。
-     *   改后实测 S≈0.73 / V≈0.51，命中目标值。
+     * LOGO 图标专用（温和跟随流光、无幕布）：
+     * code 50 曾改为完全静态紫底板；code 51 改为取「4 枚调色板颜色 RGB 平均」作为主导色相，
+     * 但 4 色同相位轮转后均值几乎不动、且都是浅粉彩，强加固定饱和度/亮度后色相只在紫↔蓝间
+     * 微弱摆动、整页周期又长达 20s，肉眼难辨（用户反馈「看不出在变」）。
+     * 本版改为：直接取 LOGO 正后方那块极光的颜色（aurora(uLogoCenter)，与标题同源、同窗口坐标），
+     * 得到的是「背后流光」的真实色 —— metaball 漂移 + 调色板轮转会让中心色持续流动，
+     * LOGO 因此明显随流光变色；同时只取**中心点**（整块板是单一均匀色，而非把背景局部放大铺满），
+     * 所以从根上杜绝了 code 50 之前「小实心板把背景色界放大成幕布」的问题。
+     * 最后把饱和度/明度收敛到 night-aware 的 uLogoSat/uLogoLum，与背景拉开反差、保持品牌色。
+     * uAnimTime / uColors 每帧由 syncGlowShaders 写入，LOGO 随极光持续呼吸。
      */
     private static final String AGSL_LOGO_MAIN =
             "vec4 main(vec2 fragCoord){" +
-            "  vec4 color = aurora(fragCoord + uTranslate);" +
-            "  vec3 lhsv = rgb2hsv(color.rgb / max(color.a, 1.0e-4));" +
-            "  lhsv.y = mix(uLogoSat, lhsv.y, 0.14);" +
-            "  lhsv.z = mix(uLogoLum, lhsv.z, 0.10);" +
-            "  return vec4(hsv2rgb(lhsv), 1.0);" +
+            "  vec4 color = aurora(uLogoCenter);" +
+            "  vec3 hsv = rgb2hsv(color.rgb / max(color.a, 1.0e-4));" +
+            "  hsv.y = max(hsv.y, uLogoSat);" +
+            "  hsv.z = uLogoLum;" +
+            "  return vec4(hsv2rgb(hsv), 1.0);" +
             "}";
 
     private static final String AGSL = AGSL_HEADER + AGSL_FUNCS + AGSL_BG_MAIN;
@@ -278,8 +277,9 @@ public class AboutBgView extends View {
         s.setFloatUniform("uNoiseScale", 1.5f);
         s.setFloatUniform("uPointOffset", mNight ? 0.4f : 0.2f);
         s.setFloatUniform("uPointRadiusMulti", 1f);
-        s.setFloatUniform("uSaturateOffset", mNight ? 0.17f : 0.2f);
-        s.setFloatUniform("uLightOffset", 0.1f);
+        // 深色：更「浓郁」（少去饱和）+ 更深（少提亮），对齐「深色下色调更深也更亮眼」的观感
+        s.setFloatUniform("uSaturateOffset", mNight ? 0.10f : 0.2f);
+        s.setFloatUniform("uLightOffset", mNight ? 0.05f : 0.1f);
         s.setFloatUniform("uAlphaOffset", 0.5f);
         s.setFloatUniform("uColors", mColorsF);
     }
@@ -388,9 +388,12 @@ public class AboutBgView extends View {
         if (w <= 0 || h <= 0 || isInEditMode()) {
             return;
         }
-        int band = (mBandBottom > 0) ? Math.min(mBandBottom, h) : h;
+        // ⭐ 极光铺满整屏（不再约束在头部带内）：uBound 覆盖全高，流光得以一路向下延伸、
+        //    穿过卡片区；配合 drawBottomFade 的「上亮下暗」形成整屏连续渐变，
+        //    卡片（半透明）便能透出背后的流光，而非只在顶部露一段。
+        int band = h;
 
-        // 底：整屏铺页面底色（带外 / 顶栏之下即为此色，与页面无缝）
+        // 底：整屏铺页面底色
         int bg = ContextCompat.getColor(getContext(), R.color.bg_surface) | 0xFF000000;
         mBasePaint.setColor(bg);
         mBasePaint.setAlpha((int) (255 * mGradientAlpha));
@@ -399,23 +402,22 @@ public class AboutBgView extends View {
         if (mShader != null) {
             mShader.setFloatUniform("uAnimTime", mAnimTime);
             mShader.setFloatUniform("uResolution", (float) w, (float) h);
-            float height2 = (band > 0 ? (float) band : (float) h) / (float) h;
-            mShader.setFloatUniform("uBound", 0f, 1f - height2, 1f, height2);
+            // 全屏 uv（uBound 覆盖整个 View），metaball 铺满整屏
+            mShader.setFloatUniform("uBound", 0f, 0f, 1f, 1f);
             mShaderPaint.setShader(mShader);
             mShaderPaint.setAlpha((int) (255 * mGradientAlpha));
-            canvas.drawRect(0f, 0f, (float) w, (float) band, mShaderPaint);
+            canvas.drawRect(0f, 0f, (float) w, (float) h, mShaderPaint);
         } else {
             // 静态兜底：竖向极光 + 缓慢游动的半透明色斑（保证不空白、不崩）
-            drawFallback(canvas, w, band);
+            drawFallback(canvas, w, h);
         }
 
-        // 底部收尾：极光在头部区底部平滑没入页面底色，
-        // 避免极光带与下方页面底色之间出现硬边。
-        drawBottomFade(canvas, w, band, bg);
+        // 下部渐暗：极光自约 1/3 高度起渐次没入页面底色（上亮下暗的整屏渐变）。
+        drawBottomFade(canvas, w, h, bg);
 
-        // 跟随流光：每帧把背景的实时状态（时间/配色/尺寸/带高）同步给标题/LOGO 着色器，
+        // 跟随流光：每帧把背景的实时状态（时间/配色/尺寸）同步给标题/LOGO 着色器，
         // 并把「目标 View 相对本 View 的偏移」写入 uTranslate，使其取到它背后位置的极光色。
-        syncGlowShaders(w, h, band);
+        syncGlowShaders(w, h, h);
     }
 
     /** 把背景每帧状态同步给「跟随流光」的着色器（见 setTitleView / setLogoView 说明）。 */
@@ -447,8 +449,12 @@ public class AboutBgView extends View {
             ls.setFloatUniform("uColors", mColorsF);
             int[] vPos = new int[2];
             lv.getLocationInWindow(vPos);
+            float cx = (float) (vPos[0] - bgPos[0]) + lv.getWidth() * 0.5f;
+            float cy = (float) (vPos[1] - bgPos[1]) + lv.getHeight() * 0.5f;
             ls.setFloatUniform("uTranslate",
                     (float) (vPos[0] - bgPos[0]), (float) (vPos[1] - bgPos[1]));
+            // LOGO 中心点（窗口坐标）：直接采背后极光色，单一均匀色、无幕布
+            ls.setFloatUniform("uLogoCenter", cx, cy);
             lv.invalidate();
         }
     }
@@ -458,7 +464,11 @@ public class AboutBgView extends View {
             return;
         }
         if (mFadeShader == null || mFadeShaderBand != band || mFadeShaderColor != bg) {
-            float fadeStart = band * 0.55f;
+            // ⭐ 渐暗起点约 50% 高度：极光在头部 + 首屏卡片区（≈ 0~480dp）保持明亮，
+            //    卡片半透明时背后的流光才透得出来；之下平缓没入页面底色，整屏「上亮下暗」。
+            // 渐暗起点：深色模式延后到 64% 高度 → 浓郁色调一路延伸到卡片区（整屏都被极光照射）；
+            // 浅色维持 50%（浅色下过亮的极光压不住，反而发灰）。
+            float fadeStart = band * (mNight ? 0.64f : 0.5f);
             // 用 5 个色标拟合成 smoothstep（t²(3-2t)）而非线性：
             // 线性渐变在两端与「纯极光」「纯底色」相接处会留下折角，长时间注视仍能看出一条带；
             // 缓入缓出后两端斜率为 0，与上下两段无缝焊接。
@@ -470,10 +480,10 @@ public class AboutBgView extends View {
             mFadeShaderColor = bg;
         }
         mFadePaint.setShader(mFadeShader);
-        // ⚠️ 必须固定 255（不乘 mGradientAlpha）：收尾遮罩的作用是「用页面底色盖住极光的下半段」，
-        // 它是一个几何遮罩，与极光本身亮不亮无关。若跟着 mGradientAlpha 一起变淡，滚动时遮罩会失效，
-        // 极光带底（band 处）就露出 drawRect 的硬切边 —— 即用户上报的「上滑后有一条明显边界」。
-        mFadePaint.setAlpha(255);
+        // 收尾遮罩随背景整体淡出一起收起：band=整屏（无「带底」概念，不会露硬边），
+        // 因此可安全地乘 mGradientAlpha。完全上滑后 mGradientAlpha=0，遮罩随之消失，
+        // 背景成为纯表面色（对齐 HyperCeiler：划上去无流光、背景变纯色）。
+        mFadePaint.setAlpha((int) (255 * mGradientAlpha));
         canvas.drawRect(0f, 0f, (float) w, (float) band, mFadePaint);
     }
 

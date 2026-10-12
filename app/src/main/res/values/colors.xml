@@ -5,6 +5,9 @@
     <!-- 页面底色 / 卡片面 / 导航胶囊面 -->
     <color name="bg_surface">#F2F2F4</color>
     <color name="card_bg">#FFFFFF</color>
+    <!-- 关于页卡片：白底卡片（与页面表面灰 #F2F2F4 拉开对比，成为可辨识的实心面）；
+         滚动时由 AboutActivity 动态调背景 alpha——顶部半透明（流光透射）、上滑变不透明实心白 -->
+    <color name="about_card_bg">#FFFFFF</color>
     <color name="nav_surface">#FFFFFF</color>
 
     <!-- 文字层级 -->

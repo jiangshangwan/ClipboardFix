@@ -43,14 +43,19 @@
                 android:textSize="14sp" />
         </LinearLayout>
 
-        <!-- 状态卡：浅绿填充 + 右侧大号徽章（完整显示在卡内） -->
+        <!-- 状态卡：浅绿填充 + 右侧大号徽章（完整显示在卡内）。
+             cardStatus：整卡可按压，点任意位置都有「按下」反馈（跟随触摸点的 3D 倾斜：
+             被按角向屏内下沉、对角保持不动，纯倾斜不缩放，卡片外缘不位移）。 -->
         <LinearLayout
+            android:id="@+id/cardStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="150dp"
             android:background="@drawable/card_status_bg"
             android:gravity="center_vertical"
             android:orientation="horizontal"
+            android:clickable="true"
+            android:focusable="true"
             android:padding="20dp">
 
             <LinearLayout

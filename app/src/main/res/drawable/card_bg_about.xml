@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 关于页专用卡片：半透明圆角，透出背后铺满整屏的极光渐变；
+     其余页面（home/feature）仍用不透明的 card_bg，互不影响。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/about_card_bg" />
+    <corners android:radius="20dp" />
+</shape>

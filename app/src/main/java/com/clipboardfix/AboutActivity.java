@@ -11,6 +11,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -18,7 +19,9 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
+import android.view.Choreographer;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodInfo;
@@ -36,6 +39,7 @@ import io.github.libxposed.service.XposedServiceHelper;
 import java.io.DataOutputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -64,6 +68,10 @@ public class AboutActivity extends Activity {
 
     // 关于页：头部区高度（运行时按 @dimen/about_header_height 设置给占位与渐变带）
     private int mAboutSpacerPx = 0;
+    // 关于页卡片（背景为 card_bg_about 的 LinearLayout），供滚动时按位置调透明度
+    private final List<View> mAboutCards = new ArrayList<>();
+    // 关于页极光背景视图：滚动时整体淡出（露出纯表面色），对齐 HyperCeiler 关于页观感
+    private AboutBgView mAboutBg;
 
     // ---- 模块状态（进程级）----
     // 根因：LSPosed 的 binder 在进程存活期间只推送一次（经 XposedProvider.call 推给进程），
@@ -236,6 +244,10 @@ public class AboutActivity extends Activity {
 
         initModuleStatus();
 
+        // 模块状态卡：整卡可按压反馈（缩放下陷 + 跟随触摸点的 3D 倾斜，弹簧回弹）。
+        // 监听落在整张卡上，点左上角或右下角都生效。
+        attachCardPressFeedback(findViewById(R.id.cardStatus));
+
         ((TextView) findViewById(R.id.tvAppVersion)).setText(BuildConfig.VERSION_NAME);
         ((TextView) findViewById(R.id.tvBuildDate)).setText(BuildConfig.BUILD_DATE);
         ((TextView) findViewById(R.id.tvDeviceModel)).setText(Build.BRAND + " " + Build.MODEL);
@@ -249,6 +261,71 @@ public class AboutActivity extends Activity {
 
         // 您需了解：打开「特别说明」弹卡（非强制，可点遮罩关闭）
         findViewById(R.id.rowMustKnow).setOnClickListener(v -> showMustKnow(false));
+    }
+
+    /**
+     * 主页「模块状态」卡的按压反馈（纯 3D 倾斜、不缩放）：
+     * 枢轴放在「触摸点对角」的那一角 —— 被按的一角向屏幕内下沉，对角保持不动，
+     * 因此卡片的整体外缘不会位移/外凸（此前额外做了缩放，会显得「边缘被挤出去」）。
+     * 触摸落在整张卡上，点左上角或右下角都有对应的倾斜。
+     */
+    private void attachCardPressFeedback(final View card) {
+        // X/Y 各一条弹簧：临界阻尼（无回弹过冲，松开后不会反向越过原位）。
+        final Spring springX = new Spring(1.0f, 400f, 0.001f, 0f);
+        final Spring springY = new Spring(1.0f, 400f, 0.001f, 0f);
+        // 最大倾斜角（度）：本卡较宽，绕一角旋转的摆幅正比于宽/高，取小角度避免幅度过大、越出边缘。
+        final float tiltAmount = 3f;
+
+        final Choreographer choreo = Choreographer.getInstance();
+        final Choreographer.FrameCallback frame = new Choreographer.FrameCallback() {
+            private long mLast = 0; // 上一帧 vsync 时间（ns）
+            @Override
+            public void doFrame(long frameTimeNanos) {
+                float dt = (mLast == 0) ? (1f / 60f) : (frameTimeNanos - mLast) / 1e9f;
+                mLast = frameTimeNanos;
+                boolean rx = springX.update(dt);
+                boolean ry = springY.update(dt);
+                card.setRotationX(springX.value());
+                card.setRotationY(springY.value());
+                if (rx || ry) {
+                    choreo.postFrameCallback(this);
+                } else {
+                    mLast = 0;
+                }
+            }
+        };
+
+        card.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN: {
+                    int w = card.getWidth();
+                    int h = card.getHeight();
+                    if (w <= 0 || h <= 0) return false;
+                    // 透视相机距离：取大于卡片长边（Android 建议值），得到平缓的 3D 透视、无鱼眼外凸。
+                    card.setCameraDistance(Math.max(w, h) * 3f);
+                    float x = event.getX();
+                    float y = event.getY();
+                    // 枢轴 = 触摸点的对角：被按侧下沉、对角保持不动（卡片外缘不位移）
+                    card.setPivotX((x < w * 0.5f) ? w : 0f);
+                    card.setPivotY((y < h * 0.5f) ? h : 0f);
+                    springX.animateTo((y < h * 0.5f) ? tiltAmount : -tiltAmount);
+                    springY.animateTo((x < w * 0.5f) ? -tiltAmount : tiltAmount);
+                    choreo.removeFrameCallback(frame);
+                    choreo.postFrameCallback(frame);
+                    return true; // 成为触摸目标，后续 move/up 继续收到
+                }
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL: {
+                    springX.animateTo(0f); // 倾斜回正
+                    springY.animateTo(0f);
+                    choreo.removeFrameCallback(frame);
+                    choreo.postFrameCallback(frame);
+                    return true;
+                }
+                default:
+                    return false; // 不消费移动等事件，ScrollView 仍可正常滚动
+            }
+        });
     }
 
     // ---------------- 模块启用状态（libxposed:service 实时查询，进程级状态） ----------------
@@ -482,10 +559,13 @@ public class AboutActivity extends Activity {
         ((TextView) findViewById(R.id.tvVersion)).setText("V" + BuildConfig.VERSION_NAME);
 
         // 「关于」页视觉：
-        //  ① AboutBgView —— 仅限顶部头部区的流体极光（下接页面底色，无统一白板）；
+        //  ① AboutBgView —— 流体极光铺满整屏（上亮下暗连续渐变），卡片半透明时透出流光；
         //  ② aboutLogoLayer —— 固定 LOGO 层（不进入滚动容器，不随页面位移），落在屏幕上部约 1/5 处；
         //  ③ aboutScroll —— 透明滚动内容，首项透明占位透出 LOGO/极光，滚动后卡片升起覆盖。
+        //  滚动联动（见 applyAboutScroll）：LOGO 在卡片升到 LOGO 区前淡出完毕（不重叠）；
+        //  卡片仅在覆盖 LOGO 区时半透明（透流光），离开/越过后恢复不透明。
         final AboutBgView aboutBg = findViewById(R.id.aboutBg);
+        mAboutBg = aboutBg;
         final View aboutScroll = findViewById(R.id.aboutScroll);
 
         final TextView tvAppTitle = findViewById(R.id.tvAppTitle);
@@ -505,32 +585,43 @@ public class AboutActivity extends Activity {
             aboutBg.setLogoView(ivLogo);
         }
 
-        // 滚动动画（按设计稿阈值，按 dp 缩放）：
-        //  · 极光整带：滚动 0 → 头部高(480dp) 由全亮淡到 0——极光在整段头部区内渐隐，
-        //    卡片升满时恰好收进页面底色（对应其「actionBarPadding 全段淡出」）；
-        //  · LOGO 块：190dp 起淡出、230dp 完全消失，同时轻微缩小
-        //    （对应其 logoPadding=190dp、logoHeight=40dp，即 190→230dp）。
-        // LOGO 层为固定层，不随页面位移，仅做透明度/缩放过渡。
+        // 关于页滚动联动（对齐 HyperCeiler 关于页观感）：
+        //  · 固定 LOGO 层：在卡片升到 LOGO 区之前就完全淡出（含轻微缩放），
+        //    消除「半透明卡片滚动到 LOGO 处、LOGO 文字透出」的重叠感；
+        //  · 卡片：背景不透明度随其相对 LOGO 区的位置变化——正覆盖 LOGO 区时降到 minCardAlpha
+        //    （透出背后流光），离开 LOGO 区（初始在下方 / 继续上滑越过）恢复 1.0 不透明，
+        //    解决「卡片一直处于半透明状态」的问题。
         if (aboutScroll instanceof android.widget.ScrollView) {
             final float dp = getResources().getDisplayMetrics().density;
-            // 极光淡出区间 = 整个头部区（与占位/渐变带同高，改 @dimen/about_header_height 即自动同步）
-            final int gradFadeEnd = getResources().getDimensionPixelSize(R.dimen.about_header_height);
-            final int logoFadeStart = Math.round(190f * dp);
-            final int logoFadeEnd = Math.round(230f * dp);
-            ((android.widget.ScrollView) aboutScroll).setOnScrollChangeListener(
-                    (v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
-                        float ga = 1f - clamp01((float) scrollY / (float) gradFadeEnd);
-                        if (aboutBg != null) aboutBg.setGradientAlpha(ga);
+            final int logoFadeStart = Math.round(120f * dp);
+            final int logoFadeEnd = Math.round(185f * dp);
+            // 背景极光淡出距离：很短（≈头部 LOGO 区高），划上去很快就没有流光（对齐 HyperCeiler：
+            // 流光只在顶部，划上去即消失、背景变纯色），而不是拖到首卡升顶才淡完。
+            final int auroraFadeEnd = Math.round(200f * dp);
+            // 卡片在「顶部/流光区」半透明（极光透射到卡片），上滑离开后渐变为实心面
+            final int cardRevealEnd = Math.round(480f * dp);   // 首卡升到屏幕顶时完成变实心
+            // 顶部最低不透明度：深色下更低（更透）→ 卡片更明显地承接背后极光（「被照射」的玻璃感）；
+            // 浅色维持 0.5。
+            int uiNight = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+            final float minCardAlpha = (uiNight == Configuration.UI_MODE_NIGHT_YES) ? 0.40f : 0.5f;
 
-                        float lt = clamp01((float) (scrollY - logoFadeStart)
-                                / (float) (logoFadeEnd - logoFadeStart));
-                        if (logoBlock != null) {
-                            logoBlock.setAlpha(1f - lt);
-                            float scale = 1f - 0.15f * lt;
-                            logoBlock.setScaleX(scale);
-                            logoBlock.setScaleY(scale);
-                        }
-                    });
+            mAboutCards.clear();
+            collectCard(R.id.cardDeveloper);
+            collectCard(R.id.cardProject);
+            collectCard(R.id.rowDonate);
+            collectCard(R.id.rowTelegram);
+            collectCard(R.id.rowUpstream);
+            // 卡片保持「扁平白面」：与首页 / 功能页的卡片观感一致 —— 仅靠纯白底
+            // （card_bg_about=#FFFFFF）与页面底色（bg_surface=#F2F2F4）的色差区分，
+            // 不设 elevation（不要立体投影 / 边缘高光）。
+
+            ((android.widget.ScrollView) aboutScroll).setOnScrollChangeListener(
+                    (v, scrollX, scrollY, oldScrollX, oldScrollY) ->
+                            applyAboutScroll(scrollY, logoBlock, logoFadeStart, logoFadeEnd,
+                                    auroraFadeEnd, cardRevealEnd, minCardAlpha));
+            // 初始态（scrollY=0）：卡片半透明、流光透射；LOGO 完整
+            applyAboutScroll(0, logoBlock, logoFadeStart, logoFadeEnd, auroraFadeEnd,
+                    cardRevealEnd, minCardAlpha);
         }
 
         // 关于页 inset 处理：状态栏透明、页面根不吃 inset（极光与 LOGO 直接顶到屏幕最顶，
@@ -606,6 +697,48 @@ public class AboutActivity extends Activity {
         if (v < 0f) return 0f;
         if (v > 1f) return 1f;
         return v;
+    }
+
+    /** 收集「关于页卡片」到 mAboutCards（背景为 card_bg_about 的 LinearLayout）。 */
+    private void collectCard(int id) {
+        View v = findViewById(id);
+        if (v != null) mAboutCards.add(v);
+    }
+
+    /**
+     * 关于页滚动联动（对齐 HyperCeiler 关于页观感）：
+     *  · 背景极光随滚动整体淡出——未划上去时流光透射到半透明卡片上；上滑后流光彻底消失，
+     *    背景露出纯页面表面色（不再是深色极光糊成「全黑背景」）；
+     *  · 固定 LOGO 层在卡片升到 LOGO 区之前完全淡出，避免「半透明卡片透出 LOGO 文字」的重叠；
+     *  · 卡片背景不透明度随滚动位置变化——顶部（流光区）半透明，背后的极光透射到卡片上；
+     *    继续上滑离开流光区后渐变为不透明实心面（白/深灰，与页面底色拉开对比），
+     *    即「流光照射到卡片、上滑变不透明」。
+     */
+    private void applyAboutScroll(int scrollY, View logoBlock,
+                                  int logoFadeStart, int logoFadeEnd,
+                                  int auroraFadeEnd, int cardRevealEnd, float minCardAlpha) {
+        // 背景极光：随滚动整体淡出——仅在顶部（未划上去）被流光照射；划上去流光迅速消失、
+        // 背景露出纯页面表面色（对齐 HyperCeiler：未划上去被流光照射，划上去无流光、背景纯色）。
+        // 淡出距离很短（auroraFadeEnd≈头部高），确保划上去后看不到残留流光。
+        float ap = clamp01((float) scrollY / (float) auroraFadeEnd);
+        if (mAboutBg != null) {
+            mAboutBg.setGradientAlpha(1f - ap);
+        }
+        // LOGO 层：在卡片覆盖 LOGO 区前就淡出完毕（与卡片升起错峰，不重叠）
+        float lt = clamp01((float) (scrollY - logoFadeStart) / (float) (logoFadeEnd - logoFadeStart));
+        if (logoBlock != null) {
+            logoBlock.setAlpha(1f - lt);
+            float scale = 1f - 0.15f * lt;
+            logoBlock.setScaleX(scale);
+            logoBlock.setScaleY(scale);
+        }
+        // 卡片：顶部半透明（极光透射）、上滑渐变为不透明实心面（白/深灰，与页面底色区分）
+        float p = clamp01((float) scrollY / (float) cardRevealEnd);
+        int cardAlpha = (int) (255f * (minCardAlpha + (1f - minCardAlpha) * p));
+        for (View card : mAboutCards) {
+            Drawable bg = card.getBackground();
+            if (bg != null) bg.mutate().setAlpha(cardAlpha);
+        }
     }
 
     /** 读取状态栏高度：优先取根窗口 inset，缺失时退回系统 status_bar_height 资源。 */

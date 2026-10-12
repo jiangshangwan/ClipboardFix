@@ -3,6 +3,9 @@
     <!-- 深色：页面底色 / 卡片面 / 导航胶囊面 -->
     <color name="bg_surface">#121214</color>
     <color name="card_bg">#242424</color>
+    <!-- 关于页卡片：深灰卡片（与页面表面 #121214 拉开对比，成为可辨识的实心面）；
+         滚动时由 AboutActivity 动态调背景 alpha——顶部半透明（流光透射）、上滑变不透明实心灰 -->
+    <color name="about_card_bg">#242424</color>
     <color name="nav_surface">#242424</color>
 
     <!-- 文字层级 -->

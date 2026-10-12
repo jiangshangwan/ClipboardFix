@@ -128,11 +128,11 @@
                 android:textSize="14sp" />
 
             <LinearLayout
+                android:id="@+id/cardDeveloper"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="22dp"
-                android:background="@drawable/card_bg"
-                android:clipToOutline="true"
+                android:background="@drawable/card_bg_about"
                 android:orientation="vertical">
 
                 <LinearLayout
@@ -259,11 +259,11 @@
                 android:textSize="14sp" />
 
             <LinearLayout
+                android:id="@+id/cardProject"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="22dp"
-                android:background="@drawable/card_bg"
-                android:clipToOutline="true"
+                android:background="@drawable/card_bg_about"
                 android:orientation="vertical">
 
                 <LinearLayout
@@ -360,8 +360,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="22dp"
-                android:background="@drawable/card_bg"
-                android:clipToOutline="true"
+                android:background="@drawable/card_bg_about"
                 android:clickable="true"
                 android:focusable="true"
                 android:foreground="@drawable/row_ripple"
@@ -409,8 +408,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="22dp"
-                android:background="@drawable/card_bg"
-                android:clipToOutline="true"
+                android:background="@drawable/card_bg_about"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 android:paddingStart="20dp"
@@ -454,8 +452,7 @@
                 android:id="@+id/rowUpstream"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="@drawable/card_bg"
-                android:clipToOutline="true"
+                android:background="@drawable/card_bg_about"
                 android:clickable="true"
                 android:focusable="true"
                 android:foreground="@drawable/row_ripple"
