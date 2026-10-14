@@ -23,9 +23,11 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 剪贴板修复三件套，只在 com.miui.phrase 进程内安装。
+ * 剪贴板修复四件套，只在 com.miui.phrase 进程内安装。
  *
  * <p>Hook 1：包名伪造，绕过 V4.7.7 的白名单校验
+ * <p>Hook 1.5：签名查询出口伪装，让 insert() 的签名白名单放行（滑动删除的
+ *              列表保存由此真正落库，不再「删了又复活」）
  * <p>Hook 2：ContentProvider 查询改写，吞异常 + thumbImage WebP 转 PNG
  * <p>Hook 3：SecurityException 构造拦截
  */
@@ -73,10 +75,12 @@ public final class ClipboardHook {
         if (appPm != null) {
             hookNameForUidOn(appPm);
             hookPkgsForUidOn(appPm);
+            hookGetPackageInfoOn(appPm);
         } else {
             // 兜底：找不到具体实现时直接 hook 抽象声明
             hookNameForUidOn(PackageManager.class);
             hookPkgsForUidOn(PackageManager.class);
+            hookGetPackageInfoOn(PackageManager.class);
         }
     }
 
@@ -143,6 +147,99 @@ public final class ClipboardHook {
         } catch (Throwable t) {
             log("FAIL: getPackagesForUid on " + clazz.getSimpleName() + " - " + t);
             return false;
+        }
+    }
+
+    // ====== Hook 1.5: PackageManager.getPackageInfo 签名伪装 ======
+
+    /**
+     * phrase provider 的 {@code insert()} 在包名校验之后还有一道签名白名单：
+     * {@code getPackageInfo(pkgName, GET_SIGNATURES).signatures[0]} 的 SHA1
+     * 必须命中 {@code InputProvider} 的静态列表。
+     *
+     * <p>包名伪造已把调用方扮成 {@link #ALLOWED_PACKAGES} 首位，但该进程内这次
+     * 签名查询仍以「非支持的签名应用」收场（code 91 前的 insert 全量被拒，
+     * 滑动删除的列表保存因此从不落库 → 面板重开条目复活）。这里在签名查询
+     * 出口上把结果换成 {@code com.xiaomi.type} 的真实 PackageInfo——其 MIUI
+     * 平台证书的 SHA1 本就在 provider 白名单内，门禁原样放行，只是让
+     * 「我们伪装出来的这个输入法」持有一张能过检的证书。
+     *
+     * <p>只拦 {@code GET_SIGNATURES} 位且包名恰为伪装目标的那一次查询，
+     * 其余查询原样透传；钩子内部发起的真实查询套 {@link Bypass} 防递归。
+     */
+    private static boolean hookGetPackageInfoOn(Class<?> clazz) {
+        try {
+            Method m = Reflect.findMethod(clazz, "getPackageInfo", String.class, int.class);
+            XposedInit.hook(m, chain -> {
+                if (Bypass.isActive()) {
+                    // 本钩子内部发起的真实查询（重入）：放行
+                    return chain.proceed();
+                }
+                String name = (String) chain.getArg(0);
+                int flags = (Integer) chain.getArg(1);
+                if (!ALLOWED_PACKAGES[0].equals(name)
+                        || (flags & PackageManager.GET_SIGNATURES) == 0) {
+                    return chain.proceed();
+                }
+                PackageManager pm = (PackageManager) chain.getThisObject();
+                Bypass.begin();
+                try {
+                    // 诊断：真实签名查询到底返回什么
+                    try {
+                        android.content.pm.PackageInfo real = pm.getPackageInfo(name, flags);
+                        if (real == null) {
+                            log("sig lookup: " + name + " -> null PackageInfo");
+                        } else if (real.signatures == null || real.signatures.length == 0) {
+                            log("sig lookup: " + name + " -> no signatures");
+                        } else {
+                            StringBuilder sb = new StringBuilder();
+                            for (android.content.pm.Signature s : real.signatures) {
+                                sb.append(' ').append(sha1Hex(s));
+                            }
+                            log("sig lookup: " + name + " ->" + sb);
+                        }
+                    } catch (Throwable t) {
+                        log("sig lookup: " + name + " threw " + t);
+                    }
+                    // 换白名单证书（com.xiaomi.type 的 MIUI 平台证书）
+                    try {
+                        android.content.pm.PackageInfo mi =
+                                pm.getPackageInfo(ALLOWED_PACKAGES[1], flags);
+                        if (mi != null && mi.signatures != null && mi.signatures.length > 0) {
+                            log("sig lookup: substituted " + ALLOWED_PACKAGES[1]
+                                    + " cert " + sha1Hex(mi.signatures[0]));
+                            return mi;
+                        }
+                        log("sig lookup: substitute failed, no cert on " + ALLOWED_PACKAGES[1]);
+                    } catch (Throwable t) {
+                        log("sig lookup: substitute threw " + t);
+                    }
+                } finally {
+                    Bypass.end();
+                }
+                return chain.proceed();
+            });
+            log("OK: getPackageInfo on " + clazz.getSimpleName());
+            return true;
+        } catch (Throwable t) {
+            log("FAIL: getPackageInfo on " + clazz.getSimpleName() + " - " + t);
+            return false;
+        }
+    }
+
+    /** SHA1(证书 DER) 小写 hex——与 provider 的 HashUtils.toHexString 对齐。 */
+    private static String sha1Hex(android.content.pm.Signature sig) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA1");
+            byte[] d = md.digest(sig.toByteArray());
+            StringBuilder sb = new StringBuilder(d.length * 2);
+            for (byte b : d) {
+                sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+                sb.append(Character.forDigit(b & 0xF, 16));
+            }
+            return sb.toString();
+        } catch (Throwable t) {
+            return "?";
         }
     }
 

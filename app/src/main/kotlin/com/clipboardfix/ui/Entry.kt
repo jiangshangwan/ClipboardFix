@@ -14,6 +14,11 @@ fun interface BoolAction {
     fun invoke(value: Boolean)
 }
 
+/** 带整型参数的回调（Java 侧以 lambda 传入，如 mode -> selectTheme(mode)）。 */
+fun interface IntAction {
+    fun invoke(value: Int)
+}
+
 /**
  * 供 Java 侧创建 Compose 可观察状态。Kotlin 的 mutableStateOf 用默认参数，Java 看不到
  * 单参重载；这里用 @JvmOverloads 暴露单参版本。
@@ -33,6 +38,7 @@ fun installPages(
     home: ComposeView,
     feature: ComposeView,
     about: ComposeView,
+    settings: ComposeView,
     statusText: State<String>,
     imeCountText: State<String>,
     statusEnabled: State<Boolean>,
@@ -45,14 +51,15 @@ fun installPages(
     swImeUnlock: State<Boolean>,
     swUnlimitCount: State<Boolean>,
     swPanelColor: State<Boolean>,
+    swClipboardPin: State<Boolean>,
     iconHidden: State<Boolean>,
     onCheckUpdate: Runnable,
-    onMustKnow: Runnable,
     onOpenStatusSheet: Runnable,
     onToggleImeUnlock: BoolAction,
     onToggleUnlimitCount: BoolAction,
     onTogglePanelColor: BoolAction,
-    onHideIcon: Runnable,
+    onToggleClipboardPin: BoolAction,
+    onHideIcon: BoolAction,
     onReboot: Runnable,
     onOpenCoolapk: Runnable,
     onOpenWeibo: Runnable,
@@ -62,6 +69,12 @@ fun installPages(
     onOpenTelegram: Runnable,
     onUpstream: Runnable,
     onOpenMiuix: Runnable,
+    themeMode: Int,
+    langMode: Int,
+    updateDisabled: State<Boolean>,
+    onThemeSelect: IntAction,
+    onLanguageSelect: IntAction,
+    onToggleUpdateDisabled: BoolAction,
 ) {
     home.setContent {
         ClipboardFixTheme {
@@ -75,7 +88,6 @@ fun installPages(
                 androidVersion = androidVersion,
                 systemVersion = systemVersion,
                 abiInfo = abiInfo,
-                onMustKnow = { onMustKnow.run() },
                 onStatusCardClick = { onOpenStatusSheet.run() },
             )
         }
@@ -86,12 +98,11 @@ fun installPages(
                 swImeUnlock = swImeUnlock.value,
                 swUnlimitCount = swUnlimitCount.value,
                 swPanelColor = swPanelColor.value,
-                iconHidden = iconHidden.value,
+                swClipboardPin = swClipboardPin.value,
                 onToggleImeUnlock = { onToggleImeUnlock.invoke(it) },
                 onToggleUnlimitCount = { onToggleUnlimitCount.invoke(it) },
                 onTogglePanelColor = { onTogglePanelColor.invoke(it) },
-                onHideIcon = { onHideIcon.run() },
-                onReboot = { onReboot.run() },
+                onToggleClipboardPin = { onToggleClipboardPin.invoke(it) },
             )
         }
     }
@@ -108,6 +119,58 @@ fun installPages(
                 onUpstream = { onUpstream.run() },
                 onOpenMiuix = { onOpenMiuix.run() },
                 onCheckUpdate = { onCheckUpdate.run() },
+            )
+        }
+    }
+    settings.setContent {
+        ClipboardFixTheme {
+            SettingsPage(
+                themeMode = themeMode,
+                langMode = langMode,
+                updateDisabled = updateDisabled.value,
+                iconHidden = iconHidden.value,
+                onThemeSelect = { onThemeSelect.invoke(it) },
+                onLanguageSelect = { onLanguageSelect.invoke(it) },
+                onToggleUpdateDisabled = { onToggleUpdateDisabled.invoke(it) },
+                onHideIcon = { onHideIcon.invoke(it) },
+                onReboot = { onReboot.run() },
+            )
+        }
+    }
+}
+
+/**
+ * 装配「首次进入欢迎引导」（三页）到独立 ComposeView —— 由 AboutActivity 挂到根布局顶层的
+ * 覆盖层里，铺满整屏并盖住底部导航。
+ *
+ * 与 [installPages] 同风格：Java 侧只传「可观察状态」（androidx State / MutableState）与
+ * 「动作回调」（Runnable / IntAction）。页面下标由 Java 侧的 MutableState 持有，使系统返回键
+ * 与「语言切换触发 recreate」都能正确落页。
+ */
+fun installWelcome(
+    host: ComposeView,
+    page: MutableState<Int>,
+    hyperOsVersion: String,
+    androidVersion: String,
+    moduleActive: State<Boolean>,
+    hasRoot: State<Boolean>,
+    gestureLineHidden: State<Boolean>,
+    langMode: Int,
+    onLanguageSelect: IntAction,
+    onFinish: Runnable,
+) {
+    host.setContent {
+        ClipboardFixTheme {
+            WelcomeFlow(
+                page = page,
+                hyperOsVersion = hyperOsVersion,
+                androidVersion = androidVersion,
+                moduleActive = moduleActive.value,
+                hasRoot = hasRoot.value,
+                gestureLineHidden = gestureLineHidden.value,
+                langMode = langMode,
+                onLanguageSelect = { onLanguageSelect.invoke(it) },
+                onFinish = { onFinish.run() },
             )
         }
     }

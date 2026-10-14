@@ -253,7 +253,7 @@ public final class BottomSheet {
         public void showCompleted() {
             handler.post(() -> {
                 if (dismissed) return;
-                tvTitle.setText("下载完成，正在调起安装…");
+                tvTitle.setText(tvTitle.getContext().getString(R.string.uc_download_done));
                 tvPercent.setText("100%");
                 setWeight(fill, 100);
                 setWeight(spacer, 0);
@@ -350,7 +350,7 @@ public final class BottomSheet {
 
         // 取消按钮（次级文字按钮，居中）
         TextView btnCancel = new TextView(activity);
-        btnCancel.setText("取消下载");
+        btnCancel.setText(activity.getString(R.string.uc_cancel_dl));
         btnCancel.setTextColor(activity.getColor(R.color.text_secondary));
         btnCancel.setTextSize(15f);
         btnCancel.setGravity(Gravity.CENTER);

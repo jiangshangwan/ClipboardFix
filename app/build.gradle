@@ -13,7 +13,7 @@ android {
         // minSdk 抬到 33：HyperOS 即 Android 13+；借此可直接用标准 AGSL（RuntimeShader）实现「关于」页动态渐变。
         minSdk 33
         targetSdk 35
-        versionCode 74
+        versionCode 110
         versionName "2.0"
         // 构建日期：编译时写入，供「关于/主页」展示
         buildConfigField "String", "BUILD_DATE", "\"${new Date().format('yyyy-MM-dd')}\""
@@ -147,6 +147,12 @@ dependencies {
     implementation 'top.yukonga.miuix.kmp:miuix-preference-android:0.9.4-rc01'
     implementation 'top.yukonga.miuix.kmp:miuix-icons-android:0.9.4-rc01'
     implementation 'top.yukonga.miuix.kmp:miuix-blur-android:0.9.4-rc01'
+    // Haze：关于页头部顶栏的渐进模糊（对齐参考项目顶栏；其模糊副本与来源同帧生成，无拖影）。
+    // 与 layerBackdrop 并存：layerBackdrop 供毛玻璃卡片模糊极光，Haze 供头部条模糊滚动内容。
+    implementation 'dev.chrisbanes.haze:haze:1.7.3'
+    // Backdrop：液体玻璃（vibrancy + blur + lens 边缘折射带色散 + 高光描边 + 柔和投影），
+    // 供设置页「语言 / 主题」下拉弹卡做 HyperOS 系统级玻璃观感。自带 shape 处理，无需额外 shapes 包。
+    implementation 'io.github.kyant0:backdrop:2.0.0'
 }
 
 // Kotlin/Compose 工具链：jvmTarget 对齐本机 JDK 17（机器仅装 JDK 17，无 21）

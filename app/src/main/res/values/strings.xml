@@ -1,6 +1,173 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HyperFixClip</string>
+    <string name="app_name">HyperClipFix</string>
     <string name="settings_class">com.clipboardfix.AboutActivity</string>
     <string name="module_description">修复 HyperOS 第三方输入法无法使用系统剪贴板的问题，并解锁全面屏优化（输入法底部常用语/剪贴板入口）</string>
+
+    <!-- 底部导航 -->
+    <string name="nav_home">主页</string>
+    <string name="nav_feature">功能</string>
+    <string name="nav_about">关于</string>
+    <string name="nav_settings">设置</string>
+
+    <!-- 主页 -->
+    <string name="home_title">主页</string>
+    <string name="home_subtitle">HyperClipFix</string>
+    <string name="module_status">模块状态</string>
+    <string name="info_app_version">应用版本</string>
+    <string name="info_device">设备机型</string>
+    <string name="info_android">Android 版本</string>
+    <string name="info_system">系统版本</string>
+    <string name="info_arch">系统架构</string>
+    <string name="info_lsposed">LSPosed API</string>
+    <string name="info_build">构建日期</string>
+
+    <!-- 功能页 -->
+    <string name="feature_title">功能</string>
+    <string name="sec_software">软件设置</string>
+    <string name="hide_icon">隐藏桌面图标</string>
+    <string name="show_icon">显示桌面图标</string>
+    <string name="hide_icon_sub_hidden">当前已隐藏，点击恢复</string>
+    <string name="hide_icon_sub_default">LSPosed 内仍可打开模块设置</string>
+    <string name="reboot_title">立即重启手机</string>
+    <string name="reboot_sub">需要 ROOT 权限</string>
+    <string name="sec_feature">功能设置</string>
+    <string name="sw_ime_unlock">启用全面屏优化功能</string>
+    <string name="sw_unlimit">解锁剪贴板数量上限</string>
+    <string name="sw_panel">优化剪贴板面板背景</string>
+    <string name="sw_clipboard_pin">开启剪贴板条目置顶</string>
+    <string name="sw_clipboard_pin_sub">右滑条目轻轻一划露出置顶按钮，点击即可置顶；最多置顶一条，清空剪贴板时置顶条目保留</string>
+
+    <!-- 设置页 -->
+    <string name="settings_title">设置</string>
+    <string name="sec_appearance">外观</string>
+    <string name="language">语言</string>
+    <string name="theme">主题</string>
+    <string name="disable_update">停用更新检测</string>
+    <string name="disable_update_sub">开启后模块无法检测更新</string>
+    <string name="opt_default">默认</string>
+    <string name="opt_zh">简体中文</string>
+    <string name="opt_en">English</string>
+    <string name="opt_light">浅色</string>
+    <string name="opt_dark">深色</string>
+
+    <!-- 关于页 -->
+    <string name="about_title">关于</string>
+    <string name="sec_developer">开发者</string>
+    <string name="sec_donate">为爱发电</string>
+    <string name="support_text">您的支持就是我的最大动力</string>
+    <string name="sec_project">项目</string>
+    <string name="github">GitHub</string>
+    <string name="changelog">更新日志</string>
+    <string name="sec_community">社群讨论</string>
+    <string name="qq">腾讯QQ</string>
+    <string name="sec_check_update">检查更新</string>
+    <string name="check_update">检查更新</string>
+    <string name="check_update_sub">检查 GitHub 上的新版本</string>
+    <string name="sec_thanks">开源致谢</string>
+    <string name="ref_solution">方案参考</string>
+    <string name="miuix">Miuix</string>
+    <string name="author_name1">江上晚</string>
+    <string name="author_handle1">酷安 @江上晚</string>
+    <string name="author_name2">李十六的日记本</string>
+    <string name="author_handle2">微博 @李十六的日记本</string>
+    <string name="copyright">©2026 jiangshangwan(江上晚)</string>
+
+    <!-- 弹卡：您需了解 -->
+    <string name="sheet_must_know_title">您需了解</string>
+    <string name="sheet_must_know_confirm">我已有悉</string>
+    <string name="sheet_must_know_body">💕 特别说明\n\n感谢您使用【HyperClipFix】模块，本模块免费使用，请勿二改及盗卖！以下信息还请仔细阅读：\n\n1、本模块仅修改剪贴板和常用语验证逻辑，不影响数据内容，请放心使用。如果您的系统剪贴板功能正常请勿安装本模块！\n2、从1.3版本起模块内置解锁MIUI键盘全面屏优化限制并适配HyperOS4，可能在OS3版本上存在部分异常问题，具体请自测。\n3、本模块已适配微信输入法、搜狗输入法、讯飞输入法、QQ输入法、豆包输入法、Gboard输入法\n4、本模块需LSPosed支持libxposed新版API（API 102）\n5、请在LSPosed框架内勾选推荐作用域，完成后务必重启手机，否则不生效\n\n最后温馨提醒：玩机有风险，请及时备份您的手机数据，造成损失本人不承担任何责任！</string>
+
+    <!-- 弹卡：友情提示 -->
+    <string name="sheet_status_title">友情提示</string>
+    <string name="sheet_status_body">bug 要一个一个修，代码要一行一行敲，催更无效，调试靠熬，不保证哪天更新，在这里感谢ROG、小米MiMo大模型、中国电信、国家电网对本项目的大力支持</string>
+
+    <!-- 弹卡：更新日志 -->
+    <string name="sheet_changelog_title">更新日志</string>
+    <string name="changelog_v20">1. 全面重构模块 UI，界面简洁清爽，视觉体验升级\n2. 搭载液态玻璃导航，滑动手感更丝滑、触控更跟手\n3. 修复 HyperOS 剪贴板对第三方输入法适配异常问题\n4. 解决剪贴板与键盘功能区色差不一致问题\n5. 扩充信息展示面板，设备信息、模块运行状态直观可见\n6. 全新改版关于页面，内容丰富，使用便捷\n7. 关于页卡片布局重新排布，分区间距更舒展\n8. 关于页上滑时新增居中头部标题\n9. 关于页头部标题加渐隐背景板，上滑时卡片不再与标题重叠\n10. 关于页头部标题背景改为实时渐进模糊（顶栏磨砂，下边缘柔和化入内容，快速滑动无拖影）\n11. 新增剪贴板条目置顶：右滑条目轻轻一划露出置顶按钮，点击置顶（对已置顶条目再点一次取消），最多同时置顶一条，清空剪贴板时置顶条目保留\n12. 置顶条目新增（已置顶）提醒：云端条目标在来源标注后，本地条目显示在正文上方，取消置顶后自动消失
+13. 修复左滑删除剪贴板条目后，重新打开面板被删条目复活的问题
+14. 修复本地剪贴板条目内容过长时（已置顶）提醒被截断不显示的问题，改为显示在正文上方
+15. 修复本地置顶条目标记位置偏高的问题：正文上提收紧，与云端条目（来源标注→正文）间距一致
+16. 修复云端置顶条目正文与「来自我的电脑」来源标注重叠的问题（关闭面板重开才恢复正常）
+17. 修复开启系统「手势提示线」（全面屏手势导航）后第三方输入法键盘被整体抬高、底部留白的问题：清理手势区 inset 的底部 padding，并让键盘视图撑满父容器消除无用留白（豆包、搜狗等）</string>
+    <string name="changelog_v1413">新增优化剪贴板面板背景功能，优化剪贴板和常用语面板与功能区的取色问题</string>
+    <string name="changelog_v1412">优化界面显示效果，修复部分错误</string>
+    <string name="changelog_v1411">修复部分错误</string>
+    <string name="changelog_v1410">修复部分输入法开启手势提示线后被异常抬高的bug\n新增启用全面屏优化功能开关\n新增解锁剪贴板数量限制上限</string>
+    <string name="changelog_v149">修复部分输入法因开启手势提示线导致的键盘抬高BUG\n新增对豆包输入法的支持\n社群开放，QQ群：1124180635</string>
+    <string name="changelog_v148">重构模块UI，模块状态及设备信息一目了然\n模块正式更名为HyperClipFix\n修复因开启手势提示线后导致部分输入法被异常抬高的BUG\n支持豆包输入法（测试）</string>
+    <string name="changelog_v147">1、修复跨设备剪贴板同步BUG，无需通过切换系统输入法进行预热\n2、新增对Gboard键盘的适配\n3、使用中如果出现键盘异常抬高的问题请尝试关闭小白条</string>
+
+    <!-- 弹卡：为爱发电 / 捐赠 -->
+    <string name="sheet_donate_title">为爱发电</string>
+    <string name="donate_qr_title">向开发者捐赠</string>
+    <string name="donate_list_title">捐赠名单</string>
+    <string name="donate_note">打赏请备注昵称，如：酷安/XXX，微博/XXX</string>
+    <string name="donate_save">保存到相册</string>
+    <string name="donate_qr_saved">二维码已保存到相册\n已打开微信，请用「扫一扫」→「相册」识别</string>
+
+    <!-- 弹卡：致谢列表 -->
+    <string name="sheet_thanks_title">致谢列表</string>
+    <string name="thanks_miui_ime">MIUI_IME_Unlock</string>
+
+    <!-- 通用提示 -->
+    <string name="open_failed">无法打开链接</string>
+    <string name="hide_icon_restored">桌面图标已恢复</string>
+    <string name="hide_icon_hidden">桌面图标已隐藏\n（LSPosed 内仍可打开模块设置）</string>
+    <string name="root_required">需要 ROOT 权限才能重启手机</string>
+    <string name="rebooting">即将重启手机…</string>
+    <string name="reboot_fail">重启失败：</string>
+    <string name="op_failed">操作失败：</string>
+    <string name="save_fail">保存失败：</string>
+    <string name="save_snack">已保存，重启手机后生效</string>
+    <string name="update_disabled_msg">您已停用更新功能，如需更新请关闭【停用更新检测】</string>
+
+    <!-- 更新检查（UpdateChecker） -->
+    <string name="uc_checking">正在检查更新…</string>
+    <string name="uc_net_fail">网络请求失败，请检查网络</string>
+    <string name="uc_check_fail">检查更新失败：</string>
+    <string name="uc_latest">当前已是最新版本 v</string>
+    <string name="uc_new_version">发现新版本</string>
+    <string name="uc_current">当前版本：v</string>
+    <string name="uc_update_content">更新内容：</string>
+    <string name="uc_later">稍后</string>
+    <string name="uc_update_now">立即更新</string>
+    <string name="uc_downloading">正在下载更新</string>
+    <string name="uc_download_fail">下载失败：</string>
+    <string name="uc_install_perm">请先开启「安装未知应用」权限</string>
+    <string name="uc_download_done">下载完成，正在调起安装…</string>
+    <string name="uc_cancel_dl">取消下载</string>
+
+    <!-- ============ 首次进入欢迎引导（三页） ============ -->
+    <string name="welcome_title">欢迎使用</string>
+    <string name="welcome_brand">HyperClipFix</string>
+    <string name="welcome_desc">旨在解决第三方输入法\n无法使用系统剪贴板的\nLSPosed 模块</string>
+
+    <!-- 第二页：模块准备工作 -->
+    <string name="prep_title">模块准备工作</string>
+    <string name="prep_hyperos">HyperOS 版本</string>
+    <string name="prep_android">Android 版本</string>
+    <string name="prep_activate">在 LSPosed 管理器中激活模块</string>
+    <string name="prep_root">给予模块超级用户权限</string>
+    <string name="prep_gesture_line">关闭手势提示线</string>
+    <string name="prep_gesture_line_sub">避免输入法键盘被异常抬高、底部留白</string>
+    <string name="prep_language">语言</string>
+    <string name="prep_unknown">未检测到</string>
+    <string name="welcome_next">继续</string>
+
+    <!-- 第三页：协议与声明 -->
+    <string name="agreement_title">协议与声明</string>
+    <string name="agreement_user">用户协议</string>
+    <string name="agreement_disclaimer">免责声明</string>
+    <string name="agreement_privacy">隐私政策</string>
+    <string name="agreement_code">输入动态验证码</string>
+    <string name="agreement_code_sub">验证后即可勾选协议</string>
+    <string name="agreement_code_sub_done">已通过验证</string>
+    <string name="agreement_code_prompt">请输入下方 4 位数字以完成验证</string>
+    <string name="agreement_code_input">输入验证码</string>
+    <string name="agreement_code_wrong">验证码错误，请重新输入</string>
+    <string name="agreement_code_need">请先完成动态验证码验证</string>
+    <string name="agreement_code_confirm">确认</string>
+    <string name="agreement_code_cancel">取消</string>
+    <string name="agreement_read">我已阅读并同意《用户协议》《免责声明》及《隐私政策》，知晓本模块仅适用于 HyperOS 3.0+，了解在非目标系统运行引发的崩溃与无法开机等风险，自愿承担相应责任。</string>
 </resources>

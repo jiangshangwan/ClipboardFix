@@ -27,9 +27,13 @@ public final class ModulePrefs {
     /** 剪贴板/常用语面板背景跟随底部功能栏取色，默认关闭。 */
     public static final String KEY_PANEL_COLOR = "clipboard_panel_color";
 
+    /** 剪贴板条目置顶（右滑置顶、清空保留），默认关闭。 */
+    public static final String KEY_CLIPBOARD_PIN = "clipboard_pin_entry";
+
     public static final boolean DEFAULT_IME_UNLOCK = true;
     public static final boolean DEFAULT_UNLIMIT_COUNT = false;
     public static final boolean DEFAULT_PANEL_COLOR = false;
+    public static final boolean DEFAULT_CLIPBOARD_PIN = false;
 
     private ModulePrefs() {
     }
@@ -77,5 +81,11 @@ public final class ModulePrefs {
     public static boolean isPanelColorEnabled() {
         SharedPreferences p = hookPrefs();
         return p != null && p.getBoolean(KEY_PANEL_COLOR, DEFAULT_PANEL_COLOR);
+    }
+
+    /** 剪贴板条目置顶是否启用（hook 侧）。默认关闭，需用户在「功能设置」里手动开启。 */
+    public static boolean isClipboardPinEnabled() {
+        SharedPreferences p = hookPrefs();
+        return p != null && p.getBoolean(KEY_CLIPBOARD_PIN, DEFAULT_CLIPBOARD_PIN);
     }
 }

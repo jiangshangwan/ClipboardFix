@@ -34,7 +34,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
             android:fontFamily="@font/misans_semibold"
-            android:text="HyperFixClip"
+            android:text="HyperClipFix"
             android:textColor="@color/about_title_1"
             android:textSize="38sp" />
 

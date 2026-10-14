@@ -10,7 +10,7 @@
     android:layout_height="match_parent"
     android:background="@color/bg_surface">
 
-    <!-- 内容区：三页叠放，按 Tab 切换可见性（同时作为玻璃条的折射背景）。
+    <!-- 内容区：四页叠放，按 Tab 切换可见性（同时作为玻璃条的折射背景）。
          页面内容为 Compose + Miuix（各页一个 ComposeView）；液态玻璃条经
          contentContainer.draw() 递归录制 Compose 内容作为折射源，效果不变。 -->
     <FrameLayout
@@ -31,6 +31,12 @@
 
         <androidx.compose.ui.platform.ComposeView
             android:id="@+id/pageAbout"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <androidx.compose.ui.platform.ComposeView
+            android:id="@+id/pageSettings"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:visibility="gone" />
@@ -81,7 +87,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="1dp"
-                        android:text="主页"
+                        android:text="@string/nav_home"
                         android:textSize="11sp" />
                 </LinearLayout>
             </FrameLayout>
@@ -108,7 +114,34 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="1dp"
-                        android:text="功能"
+                        android:text="@string/nav_feature"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/navSettings"
+                android:layout_width="76dp"
+                android:layout_height="match_parent">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:orientation="vertical">
+
+                    <ImageView
+                        android:id="@+id/navIconSettings"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@drawable/ic_settings" />
+
+                    <TextView
+                        android:id="@+id/navLabelSettings"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="1dp"
+                        android:text="@string/nav_settings"
                         android:textSize="11sp" />
                 </LinearLayout>
             </FrameLayout>
@@ -135,7 +168,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="1dp"
-                        android:text="关于"
+                        android:text="@string/nav_about"
                         android:textSize="11sp" />
                 </LinearLayout>
             </FrameLayout>

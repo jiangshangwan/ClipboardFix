@@ -41,12 +41,18 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.clipboardfix.AboutLogoView
 import com.clipboardfix.R
+import dev.chrisbanes.haze.HazeProgressive
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.blur.blur
 import top.yukonga.miuix.kmp.blur.drawBackdrop
@@ -73,17 +79,17 @@ private val TITLE_FADE_START_DP = 60f
 private val TITLE_FADE_END_DP = 140f
 
 /**
- * 头部标题条：
- * · [BAR_SCRIM_ALPHA] —— 页底遮罩不透明度（实心段要足够实，卡片滑上来才不会被看穿）；
- * · [BAR_FADE_DP] —— 条底部渐隐带高度：遮罩在这段内线性溶到全透明（柔和边缘）；
- * · [BAR_BOTTOM_PAD_DP] —— 标题下留白，把渐隐带整体推到标题墨迹之下。
+ * 头部标题条（Haze 渐进模糊，对齐参考项目顶栏）：
+ * · [BAR_BLUR_DP] —— 顶栏模糊半径（顶部满强度）；
+ * · [BAR_TINT_ALPHA] —— 页底色叠加在模糊之上的透明度（越大越「实」）；
+ * · [BAR_BOTTOM_PAD_DP] —— 标题下留白，决定条高与渐隐带长度。
  *
- * 说明：这里**不做高斯模糊**。极光在 scrollY 200dp 处已淡尽，而标题正是 60dp 之后才出现——
- * 「条可见时背后极光已消失」，模糊极光等于没有效果；而模糊滚动内容（真做出 HyperLight
- * 那种卡片被糊掉）会因列表图层每帧位移而滞后数帧，实机表现为拖影。两版均已留档，需要再回炉。
+ * 模糊源是滚动列表（③），经 Haze `hazeSource` / `hazeEffect` 实时录制 + 模糊：
+ * 其模糊副本与来源**同帧**生成（不像 Miuix `layerBackdrop` 会滞后 2~3 帧），
+ * 故快速滑动不再出现拖影；`progressive` 让模糊强度自上而下线性归零 → 下边缘柔和渐隐。
  */
-private const val BAR_SCRIM_ALPHA = 0.88f
-private val BAR_FADE_DP = 40f
+private val BAR_BLUR_DP = 16f
+private const val BAR_TINT_ALPHA = 0.30f
 private val BAR_BOTTOM_PAD_DP = 52
 
 /** 毛玻璃卡片最大模糊半径（极光明亮区）。 */
@@ -111,11 +117,15 @@ fun AboutPage(
     val density = LocalDensity.current
     val listState = rememberLazyListState()
     val night = isSystemInDarkTheme()
+    // 页底色（组合作用域预取，供头部条 hazeEffect 的非组合 lambda 引用）
+    val pageBg = pageBackgroundColor()
 
     // 极光驱动状态 + 毛玻璃背后内容源（layerBackdrop 只录 Compose 绘制节点，
     // 故极光必须是 Compose 节点而非 AndroidView）
     val aurora = remember(night) { AuroraState(night) }
     val backdrop = rememberLayerBackdrop()
+    // Haze 渐进模糊状态：头部条 ④ 据此模糊背后滚动内容（同帧录制，无拖影）
+    val hazeState = rememberHazeState()
 
     // 滚动联动的淡出参数（对齐原「关于」页观感：上滑流光迅速消失、LOGO 先淡出）
     val scrollY by remember(listState) {
@@ -133,9 +143,7 @@ fun AboutPage(
     // 起得早、收得早，避免两者同时半透明时的「双标题叠影」。
     val titleAlpha = ((scrollY - TITLE_FADE_START_DP * density.density) /
         ((TITLE_FADE_END_DP - TITLE_FADE_START_DP) * density.density)).coerceIn(0f, 1f)
-    // 头部标题条参数（构图期换算一次）
-    val barFadePx = with(density) { BAR_FADE_DP.dp.toPx() }
-    val barScrimColor = pageBackgroundColor().copy(alpha = BAR_SCRIM_ALPHA)
+    // 头部标题条参数改由 Haze 在 ④ 内声明，此处不再需要预换算。
 
     // 卡片「被极光照亮」与毛玻璃模糊半径均由 GlassCard 在 draw 阶段按 scrollY 计算
     // （滚动只重绘不重组，见 GlassCard 注释）；此处不再派生 cardAlpha/blurPx。
@@ -169,6 +177,9 @@ fun AboutPage(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // 模糊来源（①+②+③ 整体）：Haze 据此实时录制并模糊，供头部条 ④ 的 hazeEffect 消费；
+        // 模糊副本与来源**同帧**生成（不像 Miuix layerBackdrop 滞后 2~3 帧），快速滑动无拖影。
+        Box(modifier = Modifier.fillMaxSize().hazeSource(hazeState)) {
         // ① 极光背景（Compose AGSL，铺满整屏；滚动整体淡出；挂 layerBackdrop 供卡片模糊）
         AuroraBackground(
             state = aurora,
@@ -212,91 +223,105 @@ fun AboutPage(
 
             item {
                 Column {
-                    SectionLabel("开发者")
+                    SectionLabel(stringResource(R.string.sec_developer))
                     GlassCard(backdrop = backdrop, night = night, scrollYProvider = { scrollY }) {
-                        PersonRow(R.drawable.author_avatar, "江上晚", "酷安 @江上晚", onOpenCoolapk)
-                        PersonRow(R.drawable.author_avatar_weibo, "李十六的日记本", "微博 @李十六的日记本", onOpenWeibo)
+                        PersonRow(R.drawable.author_avatar, stringResource(R.string.author_name1), stringResource(R.string.author_handle1), onOpenCoolapk)
+                        PersonRow(R.drawable.author_avatar_weibo, stringResource(R.string.author_name2), stringResource(R.string.author_handle2), onOpenWeibo)
                     }
                 }
             }
 
             item {
                 Column {
-                    SectionLabel("为爱发电")
+                    SectionLabel(stringResource(R.string.sec_donate))
                     GlassCard(backdrop = backdrop, night = night, scrollYProvider = { scrollY }) {
-                        LinkRow(R.drawable.ic_heart, "您的支持就是我的最大动力", onDonate)
+                        LinkRow(R.drawable.ic_heart, stringResource(R.string.support_text), onDonate)
                     }
                 }
             }
 
             item {
                 Column {
-                    SectionLabel("项目")
+                    SectionLabel(stringResource(R.string.sec_project))
                     GlassCard(backdrop = backdrop, night = night, scrollYProvider = { scrollY }) {
-                        LinkRow(R.drawable.ic_github, "GitHub", onOpenGithub)
-                        LinkRow(R.drawable.ic_books, "更新日志", onReleases)
+                        LinkRow(R.drawable.ic_github, stringResource(R.string.github), onOpenGithub)
+                        LinkRow(R.drawable.ic_books, stringResource(R.string.changelog), onReleases)
                     }
                 }
             }
 
             item {
                 Column {
-                    SectionLabel("社群讨论")
+                    SectionLabel(stringResource(R.string.sec_community))
                     GlassCard(backdrop = backdrop, night = night, scrollYProvider = { scrollY }) {
-                        LinkRow(R.drawable.ic_qq, "腾讯QQ", onOpenTelegram)
+                        LinkRow(R.drawable.ic_qq, stringResource(R.string.qq), onOpenTelegram)
                     }
                 }
             }
 
             item {
                 Column {
-                    SectionLabel("检查更新")
+                    SectionLabel(stringResource(R.string.sec_check_update))
                     GlassCard(backdrop = backdrop, night = night, scrollYProvider = { scrollY }) {
-                        LinkRow(R.drawable.ic_check, "检查更新", onCheckUpdate,
-                                summary = "检查 GitHub 上的新版本")
+                        LinkRow(R.drawable.ic_check, stringResource(R.string.check_update), onCheckUpdate,
+                                summary = stringResource(R.string.check_update_sub))
                     }
                 }
             }
 
             item {
                 Column {
-                    SectionLabel("开源致谢")
+                    SectionLabel(stringResource(R.string.sec_thanks))
                     GlassCard(backdrop = backdrop, night = night, scrollYProvider = { scrollY }) {
-                        LinkRow(R.drawable.ic_bookshelf, "方案参考", onUpstream)
-                        LinkRow(R.drawable.ic_link, "Miuix", onOpenMiuix)
+                        LinkRow(R.drawable.ic_bookshelf, stringResource(R.string.ref_solution), onUpstream)
+                        LinkRow(R.drawable.ic_link, stringResource(R.string.miuix), onOpenMiuix)
                     }
+                }
+            }
+
+            item {
+                Column {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.copyright),
+                        fontSize = 13.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp, bottom = 8.dp),
+                    )
                 }
             }
         }
+        } // ← 模糊来源容器结束
 
         // ④ 头部标题条 + 上滑淡入的「关于」小标题。
-        //    背景 = 页面底色的竖向渐变遮罩：上部实心（把滑上来的卡片整条盖住 → 不再与标题重叠），
-        //    底部 [BAR_FADE_DP] 内线性溶到全透明（柔和边缘，复刻 HyperLight 那种看不到下边缘的过渡）。
-        //    放在 LazyColumn **之后**（同级最上层），自身不挂任何 pointerInput，不抢列表触摸。
+        //    背景 = Haze 渐进模糊（对齐参考项目顶栏）：模糊来源 ①+②+③，顶部满强度、向下线性归零
+        //    （progressive 渐隐），故底边柔和化入内容、快速滑动无拖影；tints 以页底色轻压，
+        //    保证「关于」标题在磨砂之上依旧清晰。放在来源容器 **之后**（同级最上层），
+        //    自身不挂任何 pointerInput，不抢列表触摸。
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .graphicsLayer { alpha = titleAlpha }
-                .drawWithContent {
-                    val h = size.height.coerceAtLeast(1f)
-                    val solidStop = ((h - barFadePx) / h).coerceIn(0f, 1f)
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0f to barScrimColor,
-                                solidStop to barScrimColor,
-                                1f to Color.Transparent,
-                            ),
-                            startY = 0f,
-                            endY = h,
-                        ),
+                .hazeEffect(hazeState) {
+                    blurRadius = BAR_BLUR_DP.dp
+                    // 透明底：让 progressive 的 alpha 掩码单独控制「模糊强度自上而下归零」，
+                    // 底边才能柔和化入内容（若设不透明页底色，底边会变硬边）。
+                    backgroundColor = pageBg.copy(alpha = 0f)
+                    noiseFactor = 0f
+                    tints = listOf(HazeTint(pageBg.copy(alpha = BAR_TINT_ALPHA)))
+                    progressive = HazeProgressive.Brush(
+                        Brush.verticalGradient(
+                            0f to Color.Black,
+                            1f to Color.Black.copy(alpha = 0f),
+                        )
                     )
-                    drawContent()
                 },
         ) {
             Text(
-                text = "关于",
+                text = stringResource(R.string.about_title),
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Medium,
                 color = MiuixTheme.colorScheme.onSurface,

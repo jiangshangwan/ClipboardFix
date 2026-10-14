@@ -1,0 +1,1897 @@
+package com.clipboardfix;
+
+import android.content.ContentResolver;
+import android.content.Context;
+import android.content.ContentValues;
+import android.database.Cursor;
+import android.database.MatrixCursor;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewParent;
+import android.widget.PopupWindow;
+import android.widget.TextView;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.lang.ref.WeakReference;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
+
+import io.github.libxposed.api.XposedModuleInterface;
+
+/**
+ * 剪贴板条目置顶（右滑置顶 / 再滑取消，最多一条，清空时保留）。
+ *
+ * <p><b>功能定义</b>：
+ * <ul>
+ *   <li>面板条目<b>右滑</b>置顶该条；再次右滑已置顶条目则取消置顶。最多同时置顶一条，
+ *       置顶新条目会自动顶掉旧置顶。</li>
+ *   <li>置顶条目始终排在列表首位（查询返回时重排，不改动 provider 数据）。</li>
+ *   <li>点「清理剪贴板」清空全部条目后，被置顶的条目会被自动写回并保留。</li>
+ *   <li>置顶条目显示「（已置顶）」提醒：云端条目标在其来源标注（「来自我的电脑」）
+ *       后；本地条目借来源标注位把提醒放到<b>正文上方</b>（避免长文本把追加在
+ *       正文后的提醒 ellipsize 掉）；取消置顶后随列表刷新消失。</li>
+ *   <li>本地置顶条目会把正文上提 {@link #PIN_HEADER_TUCK_DP}dp 以对齐云端条目的
+ *       「来源标注→正文」间距；该边距由 {@link #sTuckSaved} 记账，ViewHolder 复用
+ *       或状态翻转时精确复位，避免残留负边距压住来源标注。</li>
+ * </ul>
+ *
+ * <p><b>方向说明</b>：系统自带的删除是<b>左滑</b>（主视图向左移、露出右侧删除按钮，
+ * 见 {@code SwipeRevealLayout} dragEdge=RIGHT + {@code clampViewPositionHorizontal} 的
+ * {@code [closeLeft - secWidth, closeLeft]} 区间）。左滑方向被系统删除占用，
+ * 因此置顶手势做在<b>右滑</b>（系统未使用的空档方向），左滑删除流完全不动。
+ *
+ * <p><b>进程归属</b>：全部逻辑装在<b>默认输入法进程</b>：
+ * <ol>
+ *   <li><b>查询重排</b>：hook {@code android.app.ApplicationContentResolver.query}，
+ *       URI 含 {@code getClipboardList} 时把 {@code time == pinnedTime} 的行挪到首位，
+ *       构建 {@link MatrixCursor} 返回（列名从原游标拷贝，关闭原游标防泄漏）。
+ *       不动 {@code com.miui.phrase} 进程的 provider 数据。</li>
+ *   <li><b>清空保护</b>：hook {@code ApplicationContentResolver.call}，
+ *       {@code method == "clearClipboardDataMethod"} 时先 {@code proceed()} 完成清空，
+ *       再用 {@code call(uri, "saveClipboardCipherText", null, bundle)}（bundle key
+ *       {@code jsonArray}）把置顶条目写回，最后刷新面板。</li>
+ *   <li><b>手势</b>：hook 框架 {@code PopupWindow} 内容/显示点，按实例类名识别面板
+ *       （面板类在动态 dex 里，进程启动时按名加载必失败，与 {@link PanelColorHook}
+ *       同一套绕法），拿到面板 classloader 后懒挂
+ *       {@code com.miui.inputmethod.SwipeRevealLayout} 的
+ *       {@code onInterceptTouchEvent}/{@code onTouchEvent} 实现右滑状态机
+ *       （每实例一份状态，存 {@link WeakHashMap}）。</li>
+ * </ol>
+ *
+ * <p><b>条目身份</b>：{@code ClipboardContentModel.time}（JSON key {@code "time"}，
+ * 毫秒时间戳）作为唯一标识。置顶条目被用户左滑删除后，下次查询匹配不到该 time，
+ * 自动清置顶状态。
+ *
+ * <p><b>持久化</b>：置顶状态存输入法应用 {@code files/clipboardfix_pin.txt}
+ * （第一行 time，其余为条目 JSON），输入法重启后仍保留。
+ *
+ * <p><b>开关</b>：由「功能」页「开启剪贴板条目置顶」控制，默认关闭；
+ * 开关推进程启动时生效（与现有功能开关一致）。
+ */
+public final class ClipboardPinHook {
+
+    // ---------------- 常量 ----------------
+
+    private static final String PHRASE_POPUP =
+            "com.miui.inputmethod.InputMethodClipboardPhrasePopupView";
+    private static final String SWIPE_REVEAL =
+            "com.miui.inputmethod.SwipeRevealLayout";
+    private static final String CLIPBOARD_ADAPTER =
+            "com.miui.inputmethod.InputMethodClipboardAdapter";
+    private static final String CLIPBOARD_MANAGER =
+            "com.miui.inputmethod.MiuiClipboardManager";
+    private static final String ACR =
+            "android.app.ContextImpl$ApplicationContentResolver";
+    private static final String POPUP_WINDOW = "android.widget.PopupWindow";
+    private static final String RECYCLER_VIEW =
+            "androidx.recyclerview.widget.RecyclerView";
+
+    /** 置顶状态文件（输入法应用 files 目录）。 */
+    private static final String PIN_FILE = "clipboardfix_pin.txt";
+
+    /** provider 游标的内容列名（ClipboardContentModel 的 JSON 行）。 */
+    private static final String COL_CONTENT = "phrase_content";
+
+    /** 清空剪贴板的 provider 方法名。 */
+    private static final String METHOD_CLEAR = "clearClipboardDataMethod";
+
+    /** 保存剪贴板列表的 provider 方法名（写回置顶条目用）。 */
+    private static final String METHOD_SAVE = "saveClipboardCipherText";
+
+    /** 置顶判定：查询 URI 特征串。 */
+    private static final String URI_LIST = "getClipboardList";
+
+    /** 置顶按钮直径（dp），与系统删除按钮视觉规格对齐。 */
+    private static final float PIN_BTN_DP = 56f;
+
+    /** 置顶按钮与条目边缘的间距（dp）。 */
+    private static final float PIN_BTN_MARGIN_DP = 8f;
+
+    /** 置顶按钮底色（蓝，与系统删除按钮的红区分）。 */
+    private static final int PIN_BTN_COLOR = 0xFF3B82F6;
+
+    /**
+     * 置顶条目标注：追加在来源标注（「来自我的电脑」）后的提醒文字。
+     * 硬编码——hook 跑在输入法进程，用不到本 APK 的字符串资源。
+     */
+    private static final String PIN_MARK = "（已置顶）";
+
+    /**
+     * 本地置顶时把正文上提的间距（dp）。
+     *
+     * <p>系统给云端条目的正文设了负的上边距，让它紧贴来源标注；本地条目复用来源标注
+     * 容器后没这个负边距，正文被顶得更低，「（已置顶）」看着离正文太远（code 92 真机
+     * 实测：本地标记→正文 81px、云端 49px，差约 12dp）。补上同样的收紧即与云端一致。
+     */
+    private static final float PIN_HEADER_TUCK_DP = 12f;
+
+    /** 来源标注容器（phrase 包 id 名）：云条目显示「来自我的电脑」+云图标，本地条目 GONE。 */
+    private static final String ID_TIP_BOX = "clipboard_across_devices_tip";
+
+    /** 来源标注图标（phrase 包 id 名）：云条目的电脑/云图标。 */
+    private static final String ID_TIP_ICON = "clipboard_across_devices_tip_image";
+
+    /** 来源标注 TextView（phrase 包 id 名）：云端条目显示「来自我的电脑」。 */
+    private static final String ID_TIP_TEXT = "clipboard_across_devices_tip_text";
+
+    /**
+     * 正文 TextView（phrase 包 id 名）：文本条目用 top、图片条目用 bottom。
+     * 仅作 id 解析失败时的兜底标注位——正常路径本地条目把提醒放到来源标注位
+     * （{@link #ID_TIP_BOX}），即正文上方。
+     */
+    private static final String ID_TEXT_TOP = "clipboard_text_item_top";
+    private static final String ID_TEXT_BOTTOM = "clipboard_text_item_bottom";
+
+    // ---------------- 置顶门状态 ----------------
+
+    /** 全关：左滑走系统删除，右滑开置顶门。 */
+    private static final int MODE_NONE = 0;
+
+    /** 正在右划开置顶门（主视图跟手）。 */
+    private static final int MODE_OPENING = 1;
+
+    /** 置顶门已开（按钮可见，等点击）。 */
+    private static final int MODE_PIN_OPEN = 2;
+
+    // ---------------- 置顶状态（进程级） ----------------
+
+    /** 置顶条目的 time；0 表示无置顶。 */
+    private static volatile long sPinnedTime = 0L;
+
+    /** 置顶条目的原始 JSON（写回 / 重排都靠它）。 */
+    private static volatile String sPinnedJson = null;
+
+    /** 持久化文件是否已加载过（只试一次，失败保持内存态）。 */
+    private static volatile boolean sPinLoaded = false;
+
+    // ---------------- 数据快照（每次查询更新） ----------------
+
+    /** 最近一次查询结果的 time 序列（已是重排后的显示顺序，按位置对应条目）。 */
+    private static volatile List<Long> sRowTimes = new ArrayList<>();
+
+    /** time -> 原始 JSON，供置顶时取写回内容。 */
+    private static volatile Map<Long, String> sTimeJson = new HashMap<>();
+
+    /** 面板当前显示的列表（hook adapter.setClipboardList 捕获，兜底取行身份用）。 */
+    private static volatile WeakReference<List<?>> sDisplayListRef = new WeakReference<>(null);
+
+    /** 面板列表适配器实例（hook adapter.setClipboardList 捕获，刷新面板用）。 */
+    private static volatile WeakReference<Object> sAdapterRef = new WeakReference<>(null);
+
+    // ---------------- 面板上下文 ----------------
+
+    /** 面板实例（识别到即存，消失后自然回收）。 */
+    private static volatile WeakReference<PopupWindow> sPopupRef = new WeakReference<>(null);
+
+    /** 输入法 context（取 contentResolver / files 目录）。 */
+    private static volatile WeakReference<Context> sImeCtxRef = new WeakReference<>(null);
+
+    /** 面板实例所在 classloader（能解析 com.miui.inputmethod.*）。 */
+    private static volatile ClassLoader sPanelCl = null;
+
+    /** 进程默认 classloader（兜底）。 */
+    private static volatile ClassLoader sDefaultCl = null;
+
+    /** 当前宿主包名（仅日志用）。 */
+    private static volatile String sHostPkg = null;
+
+    /** 防重复装配（onPackageLoaded 可能多次回调）。 */
+    private static volatile boolean sInitDone = false;
+
+    /** 手势 hook 是否已挂上（懒挂 + 有界重试）。 */
+    private static volatile boolean sGestureHooked = false;
+
+    /** 每实例手势状态。 */
+    private static final WeakHashMap<Object, GestureState> sStates = new WeakHashMap<>();
+
+    /**
+     * ViewHolder.itemView → 适配器位置映射（hook {@code onBindViewHolder} 建立）。
+     *
+     * <p>面板的 RecyclerView 是 MIUI 定制版（dex 优化裁掉了
+     * {@code getChildAdapterPosition}/{@code getChildLayoutPosition}/{@code getChildViewHolder}
+     * 等位置 API，实测 NoSuchMethodException），无法向 RV 问位置；
+     * 而 adapter 的 {@code onBindViewHolder} 必然被调用，参数里就带 position，
+     * 用它建映射最稳（View 复用重绑时会自动覆盖旧值）。
+     */
+    private static final WeakHashMap<View, Integer> sBindMap = new WeakHashMap<>();
+
+    /**
+     * 记录「我们」给哪些 itemView 施加过正文上提（tuck），及其被改前的原始
+     * {@code topMargin}（{@code {top, bottom}}）。ViewHolder 复用或状态翻转时，
+     * 用它精确复位——否则残留的负边距会把新条目的正文上移压住来源标注
+     * （实测：云端条目置顶后正文与「来自我的电脑」重叠，关面板重开才正常）。
+     */
+    private static final WeakHashMap<View, int[]> sTuckSaved = new WeakHashMap<>();
+
+    private ClipboardPinHook() {
+    }
+
+    // ---------------- 装配 ----------------
+
+    public static void init(XposedModuleInterface.PackageLoadedParam param) {
+        if (sInitDone) {
+            return;
+        }
+        ClassLoader cl;
+        try {
+            cl = param.getDefaultClassLoader();
+        } catch (Throwable t) {
+            log("init: no classloader - " + t);
+            return;
+        }
+        sInitDone = true;
+        sDefaultCl = cl;
+        sHostPkg = param.getPackageName();
+        log("init enter: pkg=" + sHostPkg);
+
+        // 数据面：客户端 query 重排 + 清空写回。对作用域内所有包生效，
+        // 内部按 URI / method 过滤，非剪贴板流量原样放行。
+        try {
+            Class<?> acr = resolveAcr();
+            if (acr != null) {
+                hookQuery(acr, new Class<?>[]{
+                        Uri.class, String[].class, String.class, String[].class, String.class});
+                hookQuery(acr, new Class<?>[]{
+                        Uri.class, String[].class, String.class, String[].class, String.class,
+                        android.os.CancellationSignal.class});
+                hookCall(acr, new Class<?>[]{
+                        Uri.class, String.class, String.class, Bundle.class});
+                hookAcrMutations(acr);
+            } else {
+                log("WARN: ApplicationContentResolver unresolvable on any classloader");
+            }
+        } catch (Throwable t) {
+            log("WARN: ApplicationContentResolver hook - " + t);
+        }
+
+        // 手势面：框架 PopupWindow 按实例类名识别面板（面板类在动态 dex 里，
+        // 此刻按名加载必 ClassNotFound，必须走实例识别绕法）。
+        try {
+            Class<?> pwCls = Reflect.findClass(POPUP_WINDOW, cl);
+            hookPopupLifecycle(pwCls);
+            log("OK: hooked framework PopupWindow content/show");
+        } catch (Throwable t) {
+            log("WARN: PopupWindow hook - " + t);
+        }
+    }
+
+    /**
+     * 解析 {@code android.app.ApplicationContentResolver}（framework @hide 类）。
+     *
+     * <p>注意：app 默认 classloader 在部分 HyperOS 输入法进程里解析不到该隐藏类
+     * （实测 ClassNotFoundException，原因待查），而 system classloader 可以
+     * （{@link PanelColorHook} 解析 {@code ViewRootImplStub} 同款路径）。
+     * 因此按「system → app 默认 → boot」顺序多重尝试。
+     */
+    private static Class<?> resolveAcr() {
+        ClassLoader[] loaders = {
+                ClassLoader.getSystemClassLoader(), sDefaultCl, null
+        };
+        for (ClassLoader cl : loaders) {
+            try {
+                Class<?> c = Class.forName(ACR, false, cl);
+                log("ACR resolved from " + cl);
+                return c;
+            } catch (Throwable ignored) {
+                // 换下一个 classloader
+            }
+        }
+        return null;
+    }
+
+    // ---------------- Hook: query 重排 ----------------
+
+    private static void hookQuery(Class<?> acr, Class<?>[] sig) {
+        try {
+            Method m = Reflect.findMethod(acr, "query", sig);
+            XposedInit.hook(m, chain -> {
+                Object r = chain.proceed();
+                try {
+                    Uri uri = (Uri) chain.getArg(0);
+                    if (uri == null) {
+                        return r;
+                    }
+                    log("query: " + uri);
+                    if (!uri.toString().contains(URI_LIST)) {
+                        return r;
+                    }
+                    log("query hit: " + uri + " cursor="
+                            + (r == null ? "null" : r.getClass().getName()));
+                    if (!(r instanceof Cursor)) {
+                        return r;
+                    }
+                    return reorder((Cursor) r);
+                } catch (Throwable t) {
+                    log("query reorder failed - " + t);
+                    return r;
+                }
+            });
+            log("OK: hooked query(" + sig.length + " args)");
+        } catch (Throwable t) {
+            log("WARN: query(" + sig.length + " args) hook - " + t);
+        }
+    }
+
+    /**
+     * 把置顶行挪到首位并返回新游标；无置顶（或置顶行已不在列表）时原样透传。
+     *
+     * <p>同时刷新 {@link #sRowTimes} / {@link #sTimeJson} 快照（手势取行身份用）。
+     * 置顶条目不在结果里（被删除）时自动清置顶状态——此处严禁再触发刷新，避免递归。
+     */
+    private static Object reorder(Cursor src) {
+        String[] cols = src.getColumnNames();
+        int contentIdx = -1;
+        for (int i = 0; i < cols.length; i++) {
+            if (COL_CONTENT.equals(cols[i])) {
+                contentIdx = i;
+                break;
+            }
+        }
+        if (contentIdx < 0) {
+            // 不是剪贴板列表数据（列结构不符），原样放行
+            return src;
+        }
+        List<Object[]> rows = new ArrayList<>();
+        List<Long> times = new ArrayList<>();
+        Map<Long, String> timeJson = new HashMap<>();
+        if (src.moveToFirst()) {
+            do {
+                Object[] row = new Object[cols.length];
+                for (int i = 0; i < cols.length; i++) {
+                    try {
+                        row[i] = src.getString(i);
+                    } catch (Throwable t) {
+                        // 非字符串列：读不出来就放弃整体重排，保持原游标语义
+                        src.moveToPosition(-1);
+                        return src;
+                    }
+                }
+                rows.add(row);
+                long time = extractTime((String) row[contentIdx]);
+                times.add(time);
+                if (time != 0L) {
+                    timeJson.put(time, (String) row[contentIdx]);
+                }
+            } while (src.moveToNext());
+        }
+        // 原游标读取完毕，关闭防泄漏（调用方拿到的是新 MatrixCursor）
+        try {
+            src.close();
+        } catch (Throwable ignored) {
+            // 关闭失败不影响功能
+        }
+        sTimeJson = timeJson;
+
+        long pin = sPinnedTime;
+        int pinIdx = -1;
+        if (pin != 0L) {
+            for (int i = 0; i < times.size(); i++) {
+                if (times.get(i) == pin) {
+                    pinIdx = i;
+                    break;
+                }
+            }
+        }
+        log("reorder: rows=" + rows.size() + " cols=" + java.util.Arrays.toString(cols)
+                + " pin=" + pin + " pinIdx=" + pinIdx);
+        if (pin != 0L && pinIdx < 0) {
+            // 置顶条目已被删除：清状态（不刷新、不写回，静默降级）
+            log("pinned row gone, clearing pin state");
+            clearPinState(ctxOf());
+        }
+        List<Long> displayTimes;
+        if (pinIdx > 0) {
+            Object[] pinnedRow = rows.remove(pinIdx);
+            rows.add(0, pinnedRow);
+            displayTimes = new ArrayList<>(times.size());
+            displayTimes.add(times.get(pinIdx));
+            for (int i = 0; i < times.size(); i++) {
+                if (i != pinIdx) {
+                    displayTimes.add(times.get(i));
+                }
+            }
+            log("pinned to top: time=" + pin + " from pos " + pinIdx);
+        } else {
+            displayTimes = times;
+        }
+        sRowTimes = displayTimes;
+
+        MatrixCursor out = new MatrixCursor(cols);
+        for (Object[] row : rows) {
+            out.addRow(row);
+        }
+        return out;
+    }
+
+    // ---------------- Hook: call 清空保护 ----------------
+
+    private static void hookCall(Class<?> acr, Class<?>[] sig) {
+        try {
+            Method m = Reflect.findMethod(acr, "call", sig);
+            XposedInit.hook(m, chain -> {
+                Object r = chain.proceed();
+                try {
+                    Object methodArg = chain.getArg(1);
+                    log("provider call: method=" + methodArg + " uri=" + chain.getArg(0));
+                    if (!METHOD_CLEAR.equals(methodArg)) {
+                        return r;
+                    }
+                    // 清空已执行：写回置顶条目并刷新面板
+                    Uri uri = (Uri) chain.getArg(0);
+                    restorePinnedAfterClear(uri);
+                } catch (Throwable t) {
+                    log("clear protect failed - " + t);
+                }
+                return r;
+            });
+            log("OK: hooked call(" + sig.length + " args)");
+        } catch (Throwable t) {
+            log("WARN: call(" + sig.length + " args) hook - " + t);
+        }
+    }
+
+    /**
+     * 诊断埋点：provider 的 update / delete / insert 全量打日志。
+     *
+     * <p>滑动删除走的可能不是 {@code call} 而是这三条路（云条目疑似软删除
+     * {@code deleted=1}，dex 里见过 {@code sourceid IS NOT NULL AND deleted=0}
+     * 这类 WHERE 片段）。要定位「删除后面板重开又复活」的真实链路，必须把
+     * 所有写路径都打出来。{@code Reflect.findMethod} 沿继承链查找，ACR 自己
+     * 没声明的方法会落到 {@link ContentResolver} 基类上，两种情形都能挂上。
+     */
+    private static void hookAcrMutations(Class<?> acr) {
+        hookMutation(acr, "update",
+                new Class<?>[]{Uri.class, ContentValues.class, String.class, String[].class});
+        hookMutation(acr, "delete",
+                new Class<?>[]{Uri.class, String.class, String[].class});
+        hookMutation(acr, "insert",
+                new Class<?>[]{Uri.class, ContentValues.class});
+    }
+
+    private static void hookMutation(Class<?> acr, String name, Class<?>[] sig) {
+        try {
+            Method m = Reflect.findMethod(acr, name, sig);
+            XposedInit.hook(m, chain -> {
+                Object r = chain.proceed();
+                try {
+                    Object a1 = chain.getArg(1);
+                    log("provider " + name + ": uri=" + chain.getArg(0)
+                            + " arg=" + (a1 == null ? "null" : a1.toString()));
+                } catch (Throwable ignored) {
+                    // 诊断日志失败不影响主流程
+                }
+                return r;
+            });
+            log("OK: hooked ACR." + name);
+        } catch (Throwable t) {
+            log("WARN: " + name + " hook - " + t);
+        }
+    }
+
+    /** 清空后用 saveClipboardCipherText 写回置顶条目，再刷新面板。 */
+    private static void restorePinnedAfterClear(Uri uri) {
+        long pin = sPinnedTime;
+        String json = sPinnedJson;
+        if (pin == 0L || json == null || json.isEmpty()) {
+            return;
+        }
+        ContentResolver cr = resolverOf();
+        if (cr == null || uri == null) {
+            log("restore skipped: no resolver/uri");
+            return;
+        }
+        try {
+            Bundle b = new Bundle();
+            b.putString("jsonArray", "[" + json + "]");
+            cr.call(uri, METHOD_SAVE, null, b);
+            log("pin restored after clear: time=" + pin);
+        } catch (Throwable t) {
+            log("restore after clear failed - " + t);
+            return;
+        }
+        refreshPanel();
+    }
+
+    // ---------------- 面板刷新 ----------------
+
+    /**
+     * 重拉剪贴板数据并刷新面板：
+     * {@code MiuiClipboardManager.getClipboardData(ctx)} →
+     * {@code buildRecyclerViewDisplayList(list)} →
+     * {@code adapter.setClipboardList(display)}，并同步 popup 的空视图/清空按钮状态。
+     *
+     * <p>拉数走的 query 会经过 {@link #reorder}，因此置顶条目自然回到首位。
+     */
+    private static void refreshPanel() {
+        final Context ctx = ctxOf();
+        final PopupWindow pw = popupOf();
+        if (ctx == null || pw == null) {
+            log("refresh skipped: no panel context");
+            return;
+        }
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                ClassLoader cl = clOf();
+                if (cl == null) {
+                    return;
+                }
+                Class<?> mgr = Reflect.findClass(CLIPBOARD_MANAGER, cl);
+                Object data = Reflect.callStaticMethod(mgr, "getClipboardData", ctx);
+                if (!(data instanceof List)) {
+                    log("refresh: getClipboardData returned non-list");
+                    return;
+                }
+                Object adapter = adapterOf();
+                if (adapter == null) {
+                    log("refresh: adapter not captured yet");
+                    return;
+                }
+                Object display = Reflect.callStaticMethod(
+                        mgr, "buildRecyclerViewDisplayList", data);
+                Reflect.callMethod(adapter, "setClipboardList", display);
+                // 同步 popup 内部状态，保证空视图 / 清空按钮显示正确
+                try {
+                    Reflect.setField(pw, "mCurrentImeClipboardList", data);
+                } catch (Throwable ignored) {
+                    // 字段不存在或类型不符时忽略
+                }
+                try {
+                    Reflect.callMethod(pw, "maybeChangeEmptyViewAndClearButtonState", data);
+                } catch (Throwable t2) {
+                    try {
+                        Reflect.callMethod(pw, "maybeChangeEmptyViewAndClearButtonState", display);
+                    } catch (Throwable ignored) {
+                        // 两种参数形态都不匹配时忽略
+                    }
+                }
+                View content = pw.getContentView();
+                Object rvObj = content == null ? null : findRecyclerView(content);
+                if (rvObj instanceof View) {
+                    // 不用 RecyclerView.scrollToPosition——MIUI 定制 RV 把它裁了
+                    // （实测 NoSuchMethodException），改用 View 基类 scrollBy 滚回顶部。
+                    View rv = (View) rvObj;
+                    int sy = rv.getScrollY();
+                    if (sy > 0) {
+                        rv.scrollBy(0, -sy);
+                        log("rv scrolled to top, was y=" + sy);
+                    }
+                }
+                log("panel refreshed after pin change");
+            } catch (Throwable t) {
+                log("refresh failed - " + t);
+            }
+        });
+    }
+
+    // ---------------- Hook: PopupWindow 识别面板 + 懒挂手势 ----------------
+
+    private static void hookPopupLifecycle(Class<?> pwCls) {
+        hookPopupIfPanel(pwCls, "setContentView", new Class<?>[]{View.class});
+        hookPopupIfPanel(pwCls, "showAsDropDown",
+                new Class<?>[]{View.class, int.class, int.class});
+        hookPopupIfPanel(pwCls, "showAsDropDown",
+                new Class<?>[]{View.class, int.class, int.class, int.class});
+        hookPopupIfPanel(pwCls, "showAtLocation",
+                new Class<?>[]{View.class, int.class, int.class, int.class});
+    }
+
+    private static void hookPopupIfPanel(Class<?> pwCls, String name, Class<?>[] sig) {
+        try {
+            Method m = Reflect.findMethod(pwCls, name, sig);
+            XposedInit.hook(m, chain -> {
+                Object r = chain.proceed();
+                Object self = chain.getThisObject();
+                if (isOurPanel(self)) {
+                    if (sPanelCl == null) {
+                        sPanelCl = self.getClass().getClassLoader();
+                        log("panel classloader captured");
+                    }
+                    if (self instanceof PopupWindow) {
+                        sPopupRef = new WeakReference<>((PopupWindow) self);
+                        View content = ((PopupWindow) self).getContentView();
+                        if (content != null) {
+                            sImeCtxRef = new WeakReference<>(content.getContext());
+                        }
+                        // 用输入法进程自己的 context 读写 pin 状态文件
+                        //（面板 context 实际是 phrase 包的 context，目录不对）
+                        loadPinIfNeeded(ctxOf());
+                    }
+                    ensureGestureHooks();
+                    log("panel detected via " + name);
+                }
+                return r;
+            });
+        } catch (Throwable t) {
+            log("WARN: " + name + " hook - " + t);
+        }
+    }
+
+    private static boolean isOurPanel(Object o) {
+        return o != null && PHRASE_POPUP.equals(o.getClass().getName());
+    }
+
+    /**
+     * 懒挂 {@code SwipeRevealLayout} 触摸事件与 {@code InputMethodClipboardAdapter.setClipboardList}。
+     * 动态 dex 里按名解析，失败不置位，由 {@link #scheduleGestureRetry} 有界重试兜底。
+     */
+    private static boolean ensureGestureHooks() {
+        if (sGestureHooked) {
+            return true;
+        }
+        boolean any = false;
+        Class<?> srl = resolve(SWIPE_REVEAL);
+        if (srl != null) {
+            log("SwipeRevealLayout resolved from " + srl.getClassLoader());
+            any |= hookTouch(srl, "onInterceptTouchEvent", MotionEvent.class);
+            any |= hookTouch(srl, "onTouchEvent", MotionEvent.class);
+            any |= hookOnLayout(srl);
+        } else {
+            log("SwipeRevealLayout not resolvable yet (panelCl=" + sPanelCl
+                    + ", defaultCl=" + sDefaultCl + ")");
+        }
+        Class<?> ad = resolve(CLIPBOARD_ADAPTER);
+        if (ad != null) {
+            log("adapter resolved from " + ad.getClassLoader());
+            any |= hookSetClipboardList(ad);
+            any |= hookOnBindViewHolder(ad);
+        } else {
+            log("adapter not resolvable yet (panelCl=" + sPanelCl
+                    + ", defaultCl=" + sDefaultCl + ")");
+        }
+        sGestureHooked = any;
+        if (!any) {
+            scheduleGestureRetry();
+        } else {
+            log("gesture hooks ready");
+        }
+        return any;
+    }
+
+    /** 有界重试懒挂手势（面板 classloader 就绪前动态 dex 可能还没解析出来）。 */
+    private static void scheduleGestureRetry() {
+        final Handler h = new Handler(Looper.getMainLooper());
+        h.postDelayed(new Runnable() {
+            int tries = 0;
+
+            @Override
+            public void run() {
+                if (sGestureHooked || ensureGestureHooks()) {
+                    return;
+                }
+                if (++tries < 20) {
+                    h.postDelayed(this, 500L);
+                } else {
+                    log("gesture hooks gave up after retries");
+                }
+            }
+        }, 300L);
+    }
+
+    // ---------------- Hook: SwipeRevealLayout 右滑置顶门 ----------------
+
+    /**
+     * 右滑「置顶门」状态机（onInterceptTouchEvent / onTouchEvent 共用），
+     * 交互与系统删除门对称：轻划露出按钮 → 点按钮才置顶。
+     *
+     * <p>三态：
+     * <ul>
+     *   <li><b>MODE_NONE（全关）</b>：左滑 = 系统删除（proceed 不劫持）；
+     *       右滑超阈值 = 开置顶门（劫持，主视图跟手右移）；系统删除门开着
+     *       （主视图 translationX &lt; -1f）时右滑一律 proceed 交还系统
+     *       ——「右滑取消删除」是系统原生行为，绝不拦。</li>
+     *   <li><b>MODE_OPENING（正在划开置顶门）</b>：主视图 translationX 跟随手指
+     *       （0..门宽），松手超过门宽一半则保持打开。</li>
+     *   <li><b>MODE_PIN_OPEN（置顶门已开）</b>：按钮可见；左滑跟手往关的方向拖，
+     *       松手或点击条目其他区域关门；<b>点击置顶按钮</b>才触发置顶/取消置顶。</li>
+     * </ul>
+     *
+     * <p><b>为什么不能用 {@code isOpened()} 判断系统删除门</b>：MIUI 版
+     * {@code SwipeRevealLayout.isOpened()} 实测恒返回 false，导致右滑被误劫持、
+     * 系统「右滑取消删除」失效（code 84 实机 bug）。改用主视图 translationX
+     * 符号做物理判断：&lt; -1f = 系统删除门开着，&gt; +1f = 置顶门开着。
+     */
+    private static boolean hookTouch(Class<?> cls, String name, Class<?>... sig) {
+        try {
+            Method m = Reflect.findMethod(cls, name, sig);
+            XposedInit.hook(m, chain -> {
+                Object self = chain.getThisObject();
+                if (self == null) {
+                    return chain.proceed();
+                }
+                MotionEvent ev = (MotionEvent) chain.getArg(0);
+                if (ev == null) {
+                    return chain.proceed();
+                }
+                View sv = (View) self;
+                GestureState st = stateOf(self);
+                View main = mainViewOf(self);
+                switch (ev.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        st.downX = ev.getX();
+                        st.downY = ev.getY();
+                        st.declined = false;
+                        if (st.mode == MODE_OPENING) {
+                            // 上一手势异常中断：归位再重新开始
+                            st.mode = MODE_NONE;
+                            snapBack(main);
+                        }
+                        if (st.mode == MODE_PIN_OPEN && main != null && main.getLeft() < -1) {
+                            // 异常态：系统删除门实际开着却残留置顶门状态（两门同显错乱），
+                            // 清掉置顶门、主视图位移归零（left 交给系统）
+                            st.mode = MODE_NONE;
+                            main.setTranslationX(0f);
+                            showPinBtn(self, false);
+                            log("stale pin door cleared (system delete door open)");
+                        }
+                        return chain.proceed();
+                    case MotionEvent.ACTION_MOVE: {
+                        if (st.declined) {
+                            return chain.proceed();
+                        }
+                        float dx = ev.getX() - st.downX;
+                        float dy = ev.getY() - st.downY;
+                        float slop = slopOf(sv);
+                        float bw = pinDoorWidth(sv);
+                        if (st.mode == MODE_PIN_OPEN) {
+                            // 置顶门已开：左滑（往回拖）才劫持，其余交给系统/RV
+                            if (dx < -slop && Math.abs(dx) > Math.abs(dy)) {
+                                return dragPinDoor(sv, main, st, bw, dx);
+                            }
+                            return chain.proceed();
+                        }
+                        if (st.mode == MODE_OPENING) {
+                            return dragPinDoor(sv, main, st, bw, dx);
+                        }
+                        // 全关态：先判方向
+                        if (Math.abs(dx) < slop || Math.abs(dx) <= Math.abs(dy)) {
+                            // 未超触摸阈值或趋势是垂直滑动：交给系统 / RecyclerView
+                            return chain.proceed();
+                        }
+                        if (dx < 0f) {
+                            // 左滑 = 系统删除，绝不劫持
+                            st.declined = true;
+                            return chain.proceed();
+                        }
+                        if (main != null && (main.getLeft() < -1 || main.getTranslationX() < -1f)) {
+                            // 系统删除门开着（主视图被 ViewDragHelper 推到左侧：left 变负）。
+                            // 此时右滑是系统原生「取消删除」，必须原样交还系统——
+                            // 只查 translationX 会漏判（系统 drag 改的是 left，不是 translationX），
+                            // 漏判的后果：右滑被误劫持成置顶门，系统关门失效（code 86 实机 bug）。
+                            st.declined = true;
+                            return chain.proceed();
+                        }
+                        // 右滑 = 开置顶门
+                        st.mode = MODE_OPENING;
+                        log("pin door opening: dx=" + dx);
+                        // 跟手阶段即显示按钮：主视图移多少、按钮露多少，
+                        // 与系统删除门露出删除按钮的机制一致
+                        showPinBtn(self, true);
+                        return dragPinDoor(sv, main, st, bw, dx);
+                    }
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL: {
+                        int mode = st.mode;
+                        boolean up = ev.getActionMasked() == MotionEvent.ACTION_UP;
+                        float dx = ev.getX() - st.downX;
+                        st.declined = false;
+                        if (mode == MODE_NONE) {
+                            return chain.proceed();
+                        }
+                        float bw = pinDoorWidth(sv);
+                        if (mode == MODE_OPENING) {
+                            // 只要划过触摸阈值就算「有意划出」：轻划即留门，
+                            // 松手后主视图补一个动画滑到全开，按钮完整露出
+                            //（阈值用门宽一半会导致轻划被弹回，实测用户只滑 30~40px）
+                            if (up && dx >= slopOf(sv)) {
+                                st.mode = MODE_PIN_OPEN;
+                                if (main != null) {
+                                    main.animate().translationX(bw).setDuration(150L).start();
+                                }
+                                showPinBtn(self, true);
+                                log("pin door opened (dx=" + dx + ", bw=" + bw + ")");
+                            } else {
+                                st.mode = MODE_NONE;
+                                snapBack(main);
+                                showPinBtn(self, false);
+                            }
+                            return Boolean.TRUE;
+                        }
+                        // MODE_PIN_OPEN
+                        if (up && isInPinBtn(sv, ev)) {
+                            // 点中置顶按钮 → 置顶 / 取消置顶，随后关门
+                            log("pin button clicked");
+                            togglePinAt(self);
+                            st.mode = MODE_NONE;
+                            snapBack(main);
+                            showPinBtn(self, false);
+                            return Boolean.TRUE;
+                        }
+                        float cur = main != null ? main.getTranslationX() : 0f;
+                        if (up && cur >= bw * 0.5f) {
+                            // 仍停在开门位置（未点按钮、未往回拖）：保持打开
+                            return Boolean.TRUE;
+                        }
+                        st.mode = MODE_NONE;
+                        snapBack(main);
+                        showPinBtn(self, false);
+                        return Boolean.TRUE;
+                    }
+                    default:
+                        return chain.proceed();
+                }
+            });
+            return true;
+        } catch (Throwable t) {
+            log("WARN: " + name + " hook - " + t);
+            return false;
+        }
+    }
+
+    /** 置顶门拖动中：主视图 translationX 跟手（开门 0..bw；已开门则 bw+dx）。 */
+    private static Object dragPinDoor(
+            View sv, View main, GestureState st, float bw, float dx) {
+        float tx = st.mode == MODE_PIN_OPEN ? bw + dx : dx;
+        tx = Math.max(0f, Math.min(bw, tx));
+        if (main != null) {
+            main.setTranslationX(tx);
+        }
+        return Boolean.TRUE;
+    }
+
+    /** 主视图归位（关门）。 */
+    private static void snapBack(View main) {
+        if (main != null) {
+            main.animate().translationX(0f).setDuration(150L).start();
+        }
+    }
+
+    /**
+     * hook {@code SwipeRevealLayout.onLayout}，在系统摆完 child0/child1 后
+     * 手动把置顶按钮摆到条目左侧垂直居中。
+     *
+     * <p>MIUI 的 onLayout 不认识我们 addView 进去的按钮（不摆它），且 RV 复用
+     * 条目时会反复触发 onLayout，正好每次都为按钮重新定位。
+     */
+    private static boolean hookOnLayout(Class<?> cls) {
+        try {
+            Method m = Reflect.findMethod(cls, "onLayout",
+                    boolean.class, int.class, int.class, int.class, int.class);
+            XposedInit.hook(m, chain -> {
+                Object r = chain.proceed();
+                try {
+                    Object self = chain.getThisObject();
+                    View btn = sPinBtns.get(self);
+                    if (btn != null && btn.getParent() == self) {
+                        layoutPinBtn(self, btn);
+                    }
+                } catch (Throwable t) {
+                    log("pin btn layout failed - " + t);
+                }
+                return r;
+            });
+            log("OK: hooked SwipeRevealLayout.onLayout");
+            return true;
+        } catch (Throwable t) {
+            log("WARN: onLayout hook - " + t);
+            return false;
+        }
+    }
+
+    /** 置顶 / 取消置顶当前手势所在条目，然后刷新面板。 */
+    private static void togglePinAt(Object swipe) {
+        long time = timeOfRow(swipe);
+        if (time == 0L) {
+            log("toggle pin: row time unresolved (swipe="
+                    + swipe.getClass().getName() + ")");
+            return;
+        }
+        Context ctx = ctxOf();
+        if (sPinnedTime == time) {
+            // 已置顶 → 取消
+            clearPinState(ctx);
+            log("pin cancelled: time=" + time);
+        } else {
+            String json = sTimeJson.get(time);
+            if (json == null || json.isEmpty()) {
+                log("toggle pin: no json snapshot for time=" + time
+                        + " (snapshot keys=" + sTimeJson.size() + ")");
+                return;
+            }
+            sPinnedTime = time;
+            sPinnedJson = json;
+            persistPin(ctx, time, json);
+            log("pinned: time=" + time);
+        }
+        refreshPanel();
+    }
+
+    // ---------------- Hook: adapter.setClipboardList 捕获列表 ----------------
+
+    private static boolean hookSetClipboardList(Class<?> ad) {
+        try {
+            for (Method m : ad.getMethods()) {
+                if (!"setClipboardList".equals(m.getName())) {
+                    continue;
+                }
+                Class<?>[] ps = m.getParameterTypes();
+                if (ps.length != 1 || !List.class.isAssignableFrom(ps[0])) {
+                    continue;
+                }
+                XposedInit.hook(m, chain -> {
+                    Object r = chain.proceed();
+                    Object self = chain.getThisObject();
+                    if (self != null) {
+                        // adapter 实例弱引用在下方统一维护（反射字段成本高，直接存）
+                        sAdapterRef = new WeakReference<>(self);
+                    }
+                    Object list = chain.getArg(0);
+                    if (list instanceof List) {
+                        sDisplayListRef = new WeakReference<>((List<?>) list);
+                        List<?> l = (List<?>) list;
+                        log("setClipboardList captured: " + l.size() + " rows, elem="
+                                + (l.isEmpty() ? "?"
+                                : l.get(0).getClass().getName()));
+                    } else {
+                        log("setClipboardList arg not a List: "
+                                + (list == null ? "null" : list.getClass().getName()));
+                    }
+                    return r;
+                });
+                log("OK: hooked " + ad.getName() + ".setClipboardList");
+                return true;
+            }
+            log("WARN: setClipboardList not found on " + ad.getName());
+            return false;
+        } catch (Throwable t) {
+            log("WARN: setClipboardList hook - " + t);
+            return false;
+        }
+    }
+
+    // ---------------- Hook: adapter.onBindViewHolder 建立 View→position 映射 ----------------
+
+    /**
+     * hook {@code onBindViewHolder(ViewHolder, int)}，把 {@code ViewHolder.itemView}
+     * 与适配器位置的对应关系记进 {@link #sBindMap}，供手势时反查条目位置。
+     *
+     * <p>面板的 RecyclerView 是 MIUI 定制版，位置查询 API 全被 dex 优化裁掉
+     * （实测 {@code getChildAdapterPosition} 等均 NoSuchMethodException），
+     * 只能走这条不依赖 RV API 的路。
+     */
+    private static boolean hookOnBindViewHolder(Class<?> ad) {
+        try {
+            for (Method m : ad.getDeclaredMethods()) {
+                if (!"onBindViewHolder".equals(m.getName())) {
+                    continue;
+                }
+                Class<?>[] ps = m.getParameterTypes();
+                // 只要 (ViewHolder, int) 两参版本；(vh, pos, payloads) 三参版不接
+                if (ps.length != 2) {
+                    continue;
+                }
+                if (!int.class.equals(ps[1]) && !Integer.class.equals(ps[1])) {
+                    continue;
+                }
+                final Method target = m;
+                XposedInit.hook(target, chain -> {
+                    Object r = chain.proceed();
+                    try {
+                        Object vh = chain.getArg(0);
+                        Object posArg = chain.getArg(1);
+                        if (vh == null || !(posArg instanceof Integer)) {
+                            return r;
+                        }
+                        Object itemView = Reflect.getField(vh, "itemView");
+                        if (itemView instanceof View) {
+                            synchronized (sBindMap) {
+                                sBindMap.put((View) itemView, (Integer) posArg);
+                            }
+                            // 条目复用时清掉可能残留的置顶门状态（开门态被滑出屏幕
+                            // 或列表刷新后，主视图位移/按钮必须归位，否则显示错乱）
+                            resetPinDoorIfNeeded((View) itemView);
+                            // 诊断：前 3 次 bind 打一次条目视图树（确认布局 id 映射）
+                            dumpTreeOnce((View) itemView);
+                            // 置顶条目追加「（已置顶）」提醒
+                            markPinnedSource((View) itemView, rowTimeAt((Integer) posArg));
+                        }
+                    } catch (Throwable t) {
+                        log("bind map record failed - " + t);
+                    }
+                    return r;
+                });
+                log("OK: hooked " + ad.getName() + ".onBindViewHolder("
+                        + ps[0].getSimpleName() + ", int)");
+                return true;
+            }
+            log("WARN: onBindViewHolder not found on " + ad.getName());
+            return false;
+        } catch (Throwable t) {
+            log("WARN: onBindViewHolder hook - " + t);
+            return false;
+        }
+    }
+
+    // ---------------- 行身份解析 ----------------
+
+    /**
+     * 取手势所在行的条目 time。优先走 adapter 当前列表（按适配器位置），
+     * 失败退回最近一次查询快照（同样按位置）。两者都失败返回 0（放弃本次置顶）。
+     *
+     * <p>位置来源是 {@link #sBindMap}（hook {@code onBindViewHolder} 建立的
+     * itemView→position 映射）：从手势 view 向上遍历祖先，命中映射即得适配器位置。
+     * 不依赖 RecyclerView 的位置 API——面板的 MIUI 定制 RV 把这些方法全裁了。
+     */
+    private static long timeOfRow(Object swipe) {
+        try {
+            View sv = (View) swipe;
+            Integer pos = null;
+            View cur = sv;
+            for (int i = 0; i < 6 && cur != null; i++) {
+                synchronized (sBindMap) {
+                    pos = sBindMap.get(cur);
+                }
+                if (pos != null) {
+                    break;
+                }
+                ViewParent pp = cur.getParent();
+                cur = pp instanceof View ? (View) pp : null;
+            }
+            if (pos == null) {
+                log("timeOfRow: no bind map entry for swipe view, ancestors scanned, "
+                        + "mapSize=" + sBindMap.size());
+                return 0L;
+            }
+            List<?> list = sDisplayListRef.get();
+            log("timeOfRow: pos=" + pos + " list="
+                    + (list == null ? "null"
+                    : (list.size() + "x" + (list.isEmpty() ? "?"
+                    : list.get(0).getClass().getSimpleName())))
+                    + " snapshot=" + sRowTimes.size());
+            if (list != null && pos >= 0 && pos < list.size()) {
+                long t = timeOfItem(list.get(pos));
+                if (t != 0L) {
+                    return t;
+                }
+            }
+            List<Long> times = sRowTimes;
+            if (pos >= 0 && pos < times.size()) {
+                return times.get(pos);
+            }
+            log("timeOfRow: pos=" + pos + " beyond snapshot size=" + times.size());
+            return 0L;
+        } catch (Throwable t) {
+            log("timeOfRow failed - " + t);
+            return 0L;
+        }
+    }
+
+    /** 反射取列表元素的 time 字段 / getTime()；display item 包一层 model 也试；最后兜底 toString 提取。 */
+    private static long timeOfItem(Object item) {
+        if (item == null) {
+            return 0L;
+        }
+        String cls = item.getClass().getName();
+        try {
+            return (Long) Reflect.getField(item, "time");
+        } catch (Throwable ignored) {
+            // 字段不存在，继续试方法
+        }
+        try {
+            return (Long) Reflect.callMethod(item, "getTime");
+        } catch (Throwable ignored) {
+            // 方法不存在，继续试包装字段
+        }
+        for (String f : new String[]{"model", "mModel", "clipboardContentModel", "mClipboardContentModel", "data", "mData"}) {
+            try {
+                Object inner = Reflect.getField(item, f);
+                if (inner == null) {
+                    continue;
+                }
+                try {
+                    return (Long) Reflect.getField(inner, "time");
+                } catch (Throwable ignored2) {
+                    // 内层也没有 time 字段
+                }
+                try {
+                    return (Long) Reflect.callMethod(inner, "getTime");
+                } catch (Throwable ignored2) {
+                    // 内层也没有 getTime
+                }
+                try {
+                    return extractTime(inner.toString());
+                } catch (Throwable ignored2) {
+                    // 内层 toString 也提取不到
+                }
+            } catch (Throwable ignored) {
+                // 字段不存在，试下一个
+            }
+        }
+        // 最终兜底：item 自身 toString 里可能带 time=...（调试信息常见）
+        try {
+            long t = extractTime(item.toString());
+            if (t != 0L) {
+                log("timeOfItem: time from toString fallback");
+                return t;
+            }
+        } catch (Throwable ignored) {
+            // toString 提取失败
+        }
+        String s;
+        try {
+            s = item.toString();
+        } catch (Throwable t) {
+            s = "<toString failed>";
+        }
+        log("timeOfItem: unresolved for " + cls + " -> "
+                + (s.length() > 240 ? s.substring(0, 240) + "…" : s));
+        return 0L;
+    }
+
+    // ---------------- 置顶条目标注（「（已置顶）」提醒） ----------------
+
+    /**
+     * 给置顶条目标注「（已置顶）」提醒——统一放在<b>正文上方</b>：
+     * <ul>
+     *   <li>云端条目：追加在来源标注（{@code clipboard_across_devices_tip_text}，
+     *       「来自我的电脑」）后，本就在正文上方；</li>
+     *   <li>本地条目：没有来源标注（容器 {@code clipboard_across_devices_tip} 被
+     *       置 GONE）。把它显出来、写上「（已置顶）」并隐藏云图标，借同一个位置把
+     *       提醒放到正文上方——长文本把正文 ellipsize 掉也不会吞掉提醒。</li>
+     * </ul>
+     *
+     * <p>每次绑定先剥掉复用残留（View 回收带着旧文字），非置顶行只剥不贴——
+     * 取消置顶后列表刷新复用它，标记不会错留。点击条目插入的是模型数据、
+     * 不读 TextView 文字，标记不会污染粘贴内容。
+     *
+     * <p>位置 id 按名从 phrase 资源包解析（面板布局来自 {@code com.miui.phrase}，
+     * 输入法进程自己的资源里查不到）；解析失败时退回「正文后追加」兜底。
+     */
+    private static void markPinnedSource(View itemView, long rowTime) {
+        try {
+            boolean pinned = rowTime != 0L && rowTime == sPinnedTime;
+            View tipBox = findViewByPhraseId(itemView, ID_TIP_BOX);
+            View tipIcon = findViewByPhraseId(itemView, ID_TIP_ICON);
+            TextView tip = findText(itemView, ID_TIP_TEXT);
+            TextView top = findText(itemView, ID_TEXT_TOP);
+            TextView bottom = findText(itemView, ID_TEXT_BOTTOM);
+            // 先剥掉复用残留（View 回收带着旧文字）
+            stripMark(tip);
+            stripMark(top);
+            stripMark(bottom);
+            // 复位上一轮「我们」施加的正文上提：ViewHolder 复用或状态翻转（如那次
+            // bind 时来源容器还 GONE、被误判成本地条目而套了负边距）后，若不还原，
+            // 残留的负边距会把本条目的正文上移压住来源标注（实测：云端置顶条目正文
+            // 与「来自我的电脑」重叠，关面板重开才正常）。只还原我们改过的 View，
+            // 绝不触碰系统自管的边距。
+            boolean untucked = restoreHeaderTuck(itemView, top, bottom);
+            // MIUI 刚 bind 完：来源容器可见即云条目（本地条目被它置 GONE）
+            boolean cloud = tip != null && effectivelyVisible(tip);
+            if (cloud && tipIcon != null) {
+                // 云条目图标恒显示——恢复可能被上一次「本地置顶」改成的 GONE
+                tipIcon.setVisibility(View.VISIBLE);
+            }
+            if (!pinned) {
+                return;
+            }
+            if (cloud) {
+                // 云条目：提醒追加在来源标注（「来自我的电脑」）后——本就在正文上方
+                appendMark(tip);
+                log("pinned source marked: tip time=" + rowTime + (untucked ? " untucked" : ""));
+            } else if (tipBox != null && tip != null) {
+                // 本地条目：借来源标注容器把提醒放到正文上方，隐藏云图标
+                if (tipIcon != null) {
+                    tipIcon.setVisibility(View.GONE);
+                }
+                tip.setText(PIN_MARK);
+                tipBox.setVisibility(View.VISIBLE);
+                // 收紧正文：让本地条目的「标记→正文」间距与云端一致（code 92 实测本地
+                // 81px、云端 49px，差约 12dp）。记录改前的原始边距，供复用/翻转时复位。
+                float density = itemView.getResources().getDisplayMetrics().density;
+                int tuck = (int) (-PIN_HEADER_TUCK_DP * density);
+                int[] saved = new int[]{marginTopOf(top), marginTopOf(bottom)};
+                setMarginTop(top, tuck);
+                setMarginTop(bottom, tuck);
+                synchronized (sTuckSaved) {
+                    sTuckSaved.put(itemView, saved);
+                }
+                log("pinned source marked: header time=" + rowTime + " tuck=" + tuck);
+            } else if (top != null && effectivelyVisible(top)) {
+                // 兜底（id 解析失败）：退回正文后追加
+                appendMark(top);
+                log("pinned source marked: top time=" + rowTime);
+            } else if (bottom != null && effectivelyVisible(bottom)) {
+                appendMark(bottom);
+                log("pinned source marked: bottom time=" + rowTime);
+            }
+        } catch (Throwable t) {
+            log("mark pinned source failed - " + t);
+        }
+    }
+
+    /**
+     * 有效可见性：视图自身与整条父链都不能有 GONE/INVISIBLE。
+     *
+     * <p>输入法面板的来源标注容器 {@code clipboard_across_devices_tip} 对本地条目
+     * 整体设 GONE，但其子 TextView（{@code clipboard_across_devices_tip_text}）
+     * 自身仍报 {@code VISIBLE}——只判自身可见性会把「（已置顶）」打到看不见的
+     * 视图上（code 90 bind tree 实锤：本地条目标记标到了 GONE 容器里的子视图），
+     * 必须沿父链一起判。
+     */
+    private static boolean effectivelyVisible(View v) {
+        if (v == null || v.getVisibility() != View.VISIBLE) {
+            return false;
+        }
+        ViewParent p = v.getParent();
+        while (p instanceof View) {
+            if (((View) p).getVisibility() != View.VISIBLE) {
+                return false;
+            }
+            p = p.getParent();
+        }
+        return true;
+    }
+
+    /** 按 phrase 包 id 名找 TextView；解析不到返回 null（调用方走兜底）。 */
+    private static TextView findText(View root, String idName) {
+        int id = phraseIdOf(idName);
+        if (id == 0) {
+            return null;
+        }
+        View v = root.findViewById(id);
+        return v instanceof TextView ? (TextView) v : null;
+    }
+
+    /** 按 phrase 包 id 名找 View；解析不到返回 null。 */
+    private static View findViewByPhraseId(View root, String idName) {
+        int id = phraseIdOf(idName);
+        return id == 0 ? null : root.findViewById(id);
+    }
+
+    /** 剥掉 TextView 末尾的置顶提醒（复用残留清理）。 */
+    private static void stripMark(TextView tv) {
+        if (tv == null) {
+            return;
+        }
+        CharSequence cs = tv.getText();
+        if (cs == null) {
+            return;
+        }
+        String s = cs.toString();
+        if (s.endsWith(PIN_MARK)) {
+            tv.setText(s.substring(0, s.length() - PIN_MARK.length()));
+        }
+    }
+
+    /** 追加置顶提醒（已有时不重复追加）。 */
+    private static void appendMark(TextView tv) {
+        CharSequence cs = tv.getText();
+        String s = cs == null ? "" : cs.toString();
+        if (!s.endsWith(PIN_MARK)) {
+            tv.setText(s + PIN_MARK);
+        }
+    }
+
+    /** 读正文 View 的 {@code topMargin}（无 MarginLayoutParams 时按 0）。 */
+    private static int marginTopOf(TextView v) {
+        if (v == null) {
+            return 0;
+        }
+        ViewGroup.LayoutParams p = v.getLayoutParams();
+        if (p instanceof ViewGroup.MarginLayoutParams) {
+            return ((ViewGroup.MarginLayoutParams) p).topMargin;
+        }
+        return 0;
+    }
+
+    /** 写正文 View 的 {@code topMargin}（变了才 setLayoutParams，省一次重布局）。 */
+    private static void setMarginTop(TextView v, int m) {
+        if (v == null) {
+            return;
+        }
+        ViewGroup.LayoutParams p = v.getLayoutParams();
+        if (p instanceof ViewGroup.MarginLayoutParams
+                && ((ViewGroup.MarginLayoutParams) p).topMargin != m) {
+            ((ViewGroup.MarginLayoutParams) p).topMargin = m;
+            v.setLayoutParams(p);
+        }
+    }
+
+    /**
+     * 复位上一条目遗留的正文上提：若该 itemView 曾被我们施加过 tuck，则把
+     * {@code clipboard_text_item_top/bottom} 的 {@code topMargin} 还原成改前的原值。
+     *
+     * <p>只处理 {@link #sTuckSaved} 里记录过的 View——系统自管的边距（若有）绝不动，
+     * 因此对云端条目的正常布局零影响。ViewHolder 复用或状态翻转后调用即可消除
+     * 「正文被负边距上移压住来源标注」的问题。
+     *
+     * @return 是否发生过复位
+     */
+    private static boolean restoreHeaderTuck(View itemView, TextView top, TextView bottom) {
+        int[] saved;
+        synchronized (sTuckSaved) {
+            saved = sTuckSaved.remove(itemView);
+        }
+        if (saved == null) {
+            return false;
+        }
+        setMarginTop(top, saved[0]);
+        setMarginTop(bottom, saved[1]);
+        log("header tuck restored: top=" + saved[0] + " bottom=" + saved[1]);
+        return true;
+    }
+
+    /** 来源标注前缀（系统 phrase 包字符串；id 解析失败时的兜底匹配）。 */
+    private static boolean isSourceLabel(CharSequence cs) {
+        if (cs == null) {
+            return false;
+        }
+        String s = cs.toString();
+        return s.startsWith("来自我的电脑")
+                || s.startsWith("来自我的手机")
+                || s.startsWith("来自我的平板");
+    }
+
+    /** 递归找来源标注 TextView（深度优先，取第一个命中的）。 */
+    private static TextView findSourceLabel(View root) {
+        if (root instanceof TextView) {
+            return isSourceLabel(((TextView) root).getText()) ? (TextView) root : null;
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup vg = (ViewGroup) root;
+            int n = vg.getChildCount();
+            for (int i = 0; i < n; i++) {
+                TextView hit = findSourceLabel(vg.getChildAt(i));
+                if (hit != null) {
+                    return hit;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** phrase 包 id 名 → id 值缓存（面板布局资源来自 com.miui.phrase）。 */
+    private static final Map<String, Integer> sPhraseIdCache = new HashMap<>();
+
+    /**
+     * 按名解析 phrase 包的 id。输入法进程里 {@code view.getResources()} 拿到的是
+     * 输入法自己的资源，按名查必然落空，必须经 PackageManager 取 phrase 的资源包
+     * （与 {@link PanelColorHook} 同款路径）。
+     */
+    private static int phraseIdOf(String name) {
+        Integer cached = sPhraseIdCache.get(name);
+        if (cached != null) {
+            return cached;
+        }
+        int id = 0;
+        try {
+            Context ctx = ctxOf();
+            if (ctx != null) {
+                android.content.res.Resources res = ctx.getPackageManager()
+                        .getResourcesForApplication(XposedInit.PKG_PHRASE);
+                id = res.getIdentifier(name, "id", XposedInit.PKG_PHRASE);
+            }
+        } catch (Throwable ignored) {
+            // 解析失败：id 保持 0，调用方走兜底
+        }
+        sPhraseIdCache.put(name, id);
+        return id;
+    }
+
+    /** 诊断：前 3 次 bind 各打一次条目视图树（类名 + id 名 + 可见性 + 文本）。 */
+    private static int sTreeDumps = 0;
+
+    private static void dumpTreeOnce(View root) {
+        if (sTreeDumps >= 3 || root == null) {
+            return;
+        }
+        sTreeDumps++;
+        StringBuilder sb = new StringBuilder("bind tree #" + sTreeDumps + ":");
+        dumpTree(root, sb, 0);
+        log(sb.toString());
+    }
+
+    private static void dumpTree(View v, StringBuilder sb, int depth) {
+        try {
+            sb.append('\n');
+            for (int i = 0; i < depth; i++) {
+                sb.append(' ');
+            }
+            sb.append(v.getClass().getSimpleName());
+            int id = v.getId();
+            if (id != View.NO_ID) {
+                String name = null;
+                try {
+                    name = v.getResources().getResourceName(id);
+                } catch (Throwable ignored) {
+                    // 解析不了只打 hex
+                }
+                sb.append(" id=").append(name != null ? name : Integer.toHexString(id));
+            }
+            sb.append(" vis=").append(v.getVisibility());
+            if (v instanceof TextView) {
+                CharSequence t = ((TextView) v).getText();
+                if (t != null) {
+                    String s = t.toString();
+                    sb.append(" text=\"")
+                            .append(s.length() > 40 ? s.substring(0, 40) + "…" : s)
+                            .append('"');
+                }
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup vg = (ViewGroup) v;
+                for (int i = 0; i < vg.getChildCount(); i++) {
+                    dumpTree(vg.getChildAt(i), sb, depth + 2);
+                }
+            }
+        } catch (Throwable t) {
+            sb.append(" <dump failed: ").append(t).append('>');
+        }
+    }
+
+    /** 取适配器位置对应条目的 time（优先当前列表，退回查询快照）；取不到返回 0。 */
+    private static long rowTimeAt(int pos) {
+        List<?> list = sDisplayListRef.get();
+        if (list != null && pos >= 0 && pos < list.size()) {
+            long t = timeOfItem(list.get(pos));
+            if (t != 0L) {
+                return t;
+            }
+        }
+        if (pos >= 0 && pos < sRowTimes.size()) {
+            return sRowTimes.get(pos);
+        }
+        return 0L;
+    }
+
+    // ---------------- 置顶状态持久化 ----------------
+
+    private static void persistPin(Context ctx, long time, String json) {
+        if (ctx == null) {
+            return;
+        }
+        FileWriter w = null;
+        try {
+            File f = new File(ctx.getFilesDir(), PIN_FILE);
+            w = new FileWriter(f);
+            w.write(time + "\n" + json);
+            w.flush();
+        } catch (Throwable t) {
+            log("persistPin failed - " + t);
+        } finally {
+            if (w != null) {
+                try {
+                    w.close();
+                } catch (Throwable ignored) {
+                    // 关闭失败忽略
+                }
+            }
+        }
+    }
+
+    /** 清内存态并删除持久化文件。query 重排路径调用（严禁再触发刷新）。 */
+    private static void clearPinState(Context ctx) {
+        sPinnedTime = 0L;
+        sPinnedJson = null;
+        if (ctx != null) {
+            try {
+                new File(ctx.getFilesDir(), PIN_FILE).delete();
+            } catch (Throwable ignored) {
+                // 删除失败忽略
+            }
+        }
+    }
+
+    /** 从输入法 files 目录恢复置顶状态（只试一次）。 */
+    private static void loadPinIfNeeded(Context ctx) {
+        if (sPinLoaded || ctx == null) {
+            return;
+        }
+        sPinLoaded = true;
+        BufferedReader r = null;
+        try {
+            File f = new File(ctx.getFilesDir(), PIN_FILE);
+            if (!f.exists()) {
+                return;
+            }
+            r = new BufferedReader(new FileReader(f));
+            String first = r.readLine();
+            if (first == null) {
+                return;
+            }
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (sb.length() > 0) {
+                    sb.append('\n');
+                }
+                sb.append(line);
+            }
+            long time = Long.parseLong(first.trim());
+            String json = sb.toString();
+            if (time != 0L && json.length() > 2) {
+                sPinnedTime = time;
+                sPinnedJson = json;
+                log("pin restored from disk: time=" + time);
+            }
+        } catch (Throwable t) {
+            log("loadPinIfNeeded failed - " + t);
+        } finally {
+            if (r != null) {
+                try {
+                    r.close();
+                } catch (Throwable ignored) {
+                    // 关闭失败忽略
+                }
+            }
+        }
+    }
+
+    // ---------------- 手势辅助 ----------------
+
+    private static GestureState stateOf(Object key) {
+        synchronized (sStates) {
+            GestureState st = sStates.get(key);
+            if (st == null) {
+                st = new GestureState();
+                sStates.put(key, st);
+            }
+            return st;
+        }
+    }
+
+    /** SwipeRevealLayout 的主内容视图（child1）。 */
+    private static View mainViewOf(Object swipe) {
+        try {
+            Object v = Reflect.getField(swipe, "mMainView");
+            if (v instanceof View) {
+                return (View) v;
+            }
+        } catch (Throwable t) {
+            log("mainViewOf failed - " + t);
+        }
+        return null;
+    }
+
+    /** 删除按钮是否已露出（打开态）。读不到方法时退回主视图位移判断。
+     *
+     * <p>注意：MIUI 版 {@code isOpened()} 实测恒返回 false（见 code 84 实机 bug），
+     * 手势状态机已改用主视图 translationX 符号判断，本方法仅作工具保留。 */
+    private static boolean isOpened(Object swipe) {
+        try {
+            Object r = Reflect.callMethod(swipe, "isOpened");
+            if (r instanceof Boolean) {
+                return (Boolean) r;
+            }
+        } catch (Throwable ignored) {
+            // 方法不存在，走位移兜底
+        }
+        View main = mainViewOf(swipe);
+        return main != null && Math.abs(main.getTranslationX()) > 1f;
+    }
+
+    private static float slopOf(View v) {
+        try {
+            return android.view.ViewConfiguration.get(v.getContext()).getScaledTouchSlop();
+        } catch (Throwable t) {
+            return 24f;
+        }
+    }
+
+    /** 置顶门宽（dp→px）：按钮直径 + 左右边距。 */
+    private static float pinDoorWidth(View v) {
+        float density = 3f;
+        try {
+            density = v.getResources().getDisplayMetrics().density;
+        } catch (Throwable ignored) {
+            // 用默认密度
+        }
+        return (PIN_BTN_DP + PIN_BTN_MARGIN_DP * 2f) * density;
+    }
+
+    // ---------------- 置顶按钮（每条目一个，懒创建） ----------------
+
+    /** SwipeRevealLayout → 置顶按钮视图。 */
+    private static final WeakHashMap<Object, View> sPinBtns = new WeakHashMap<>();
+
+    /**
+     * 取（没有则创建）置顶按钮并挂到 SwipeRevealLayout 上。
+     *
+     * <p>按钮 addView 到<b>末尾</b>（child2）：MIUI 的 onLayout 只摆它认识的
+     * child0（删除按钮）/ child1（主视图），且 {@code onFinishInflate} 早已跑完
+     * （mSecondaryView/mMainView 是缓存字段），不会因多一个 child 而错位；
+     * 按钮自身位置由 {@link #hookOnLayout} 在每次 layout 后手动摆到左侧。
+     * 按钮<b>不可点击</b>（不消费触摸），点击命中由手势状态机在 UP 时按矩形判断，
+     * 这样从按钮上起滑关门也不会被按钮吞掉事件。
+     */
+    private static View pinBtnOf(Object swipe) {
+        synchronized (sPinBtns) {
+            View btn = sPinBtns.get(swipe);
+            if (btn != null) {
+                return btn;
+            }
+            View sv = (View) swipe;
+            float density = sv.getResources().getDisplayMetrics().density;
+            int size = (int) (PIN_BTN_DP * density + 0.5f);
+            TextView tv = new TextView(sv.getContext());
+            tv.setLayoutParams(new ViewGroup.LayoutParams(size, size));
+            tv.setText("顶");
+            tv.setTextColor(0xFFFFFFFF);
+            tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+            tv.setGravity(android.view.Gravity.CENTER);
+            tv.setClickable(false);
+            tv.setFocusable(false);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setShape(GradientDrawable.OVAL);
+            bg.setColor(PIN_BTN_COLOR);
+            tv.setBackground(bg);
+            try {
+                ((ViewGroup) sv).addView(tv);
+                sPinBtns.put(swipe, tv);
+                log("pin button created for " + sv.getClass().getSimpleName());
+            } catch (Throwable t) {
+                log("pin button addView failed - " + t);
+                return null;
+            }
+            return tv;
+        }
+    }
+
+    /** 手动把置顶按钮摆到条目左侧垂直居中（MIUI onLayout 不认识它）。 */
+    private static void layoutPinBtn(Object swipe, View btn) {
+        View sv = (View) swipe;
+        int w = sv.getWidth();
+        int h = sv.getHeight();
+        if (w <= 0 || h <= 0) {
+            return;
+        }
+        float density = sv.getResources().getDisplayMetrics().density;
+        int size = (int) (PIN_BTN_DP * density + 0.5f);
+        int margin = (int) (PIN_BTN_MARGIN_DP * density + 0.5f);
+        int top = (h - size) / 2;
+        btn.layout(margin, top, margin + size, top + size);
+    }
+
+    /** 置顶按钮显隐。 */
+    private static void showPinBtn(Object swipe, boolean visible) {
+        View btn = sPinBtns.get(swipe);
+        if (btn == null) {
+            if (!visible) {
+                return;
+            }
+            btn = pinBtnOf(swipe);
+            if (btn == null) {
+                return;
+            }
+        }
+        int want = visible ? View.VISIBLE : View.GONE;
+        if (btn.getVisibility() != want) {
+            btn.setVisibility(want);
+        }
+    }
+
+    /** 触摸点是否落在置顶按钮矩形内。 */
+    private static boolean isInPinBtn(View sv, MotionEvent ev) {
+        View btn = sPinBtns.get(sv);
+        if (btn == null || btn.getVisibility() != View.VISIBLE) {
+            return false;
+        }
+        float x = ev.getX();
+        float y = ev.getY();
+        return x >= btn.getLeft() && x <= btn.getRight()
+                && y >= btn.getTop() && y <= btn.getBottom();
+    }
+
+    /**
+     * 条目被复用时重置其置顶门状态：主视图归位、按钮隐藏、状态回 MODE_NONE。
+     *
+     * <p>RV 复用 item 不会自动清理 translationX/自定义子 view 显隐，开门态条目
+     * 被滑出屏幕再复用会带着 +bw 位移和可见按钮显示成错乱态。
+     */
+    private static void resetPinDoorIfNeeded(View itemView) {
+        Object swipe = findSwipeReveal(itemView, 0);
+        if (swipe == null) {
+            return;
+        }
+        GestureState st = sStates.get(swipe);
+        if (st == null || st.mode == MODE_NONE) {
+            return;
+        }
+        st.mode = MODE_NONE;
+        st.declined = false;
+        View main = mainViewOf(swipe);
+        if (main != null) {
+            main.setTranslationX(0f);
+        }
+        showPinBtn(swipe, false);
+        log("pin door reset on rebind");
+    }
+
+    /** 在视图树里找 SwipeRevealLayout 实例（条目根通常就是它）。 */
+    private static Object findSwipeReveal(View v, int depth) {
+        if (v == null || depth > 3) {
+            return null;
+        }
+        if (SWIPE_REVEAL.equals(v.getClass().getName())) {
+            return v;
+        }
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                Object r = findSwipeReveal(g.getChildAt(i), depth + 1);
+                if (r != null) {
+                    return r;
+                }
+            }
+        }
+        return null;
+    }
+
+    // ---------------- 上下文 / 反射工具 ----------------
+
+    /**
+     * 取输入法进程自己的 Application context。
+     *
+     * <p><b>不要用面板 popup 的 contentView context</b>——面板要加载 {@code com.miui.phrase}
+     * 的资源，其 context 实际是 phrase 包的 context（实测 files 目录落在
+     * {@code /data/user/0/com.miui.phrase/} 下，写入失败）。持久化目录与
+     * ContentResolver 的 callingPackage 都应归属当前输入法进程，故优先取
+     * {@code ActivityThread.currentApplication()}；取不到再退回面板 context 兜底。
+     */
+    private static Context ctxOf() {
+        // ActivityThread 是 @hide 类，只能反射取当前 Application
+        try {
+            Class<?> at = Class.forName("android.app.ActivityThread");
+            Object app = at.getMethod("currentApplication").invoke(null);
+            if (app instanceof Context) {
+                return (Context) app;
+            }
+        } catch (Throwable ignored) {
+            // ActivityThread 不可用，走兜底
+        }
+        return sImeCtxRef.get();
+    }
+
+    private static PopupWindow popupOf() {
+        return sPopupRef.get();
+    }
+
+    private static ContentResolver resolverOf() {
+        Context c = ctxOf();
+        return c == null ? null : c.getContentResolver();
+    }
+
+    private static Object adapterOf() {
+        return sAdapterRef.get();
+    }
+
+    private static ClassLoader clOf() {
+        return sPanelCl != null ? sPanelCl : sDefaultCl;
+    }
+
+    /** 面板 classloader 优先、默认 classloader 兜底解析类。 */
+    private static Class<?> resolve(String name) {
+        ClassLoader[] loaders = {sPanelCl, sDefaultCl};
+        for (ClassLoader cl : loaders) {
+            if (cl == null) {
+                continue;
+            }
+            try {
+                return Reflect.findClass(name, cl);
+            } catch (Throwable ignored) {
+                // 换下一个 classloader
+            }
+        }
+        return null;
+    }
+
+    private static boolean isRecyclerView(Object o) {
+        if (o == null) {
+            return false;
+        }
+        try {
+            Class<?> c = Class.forName(RECYCLER_VIEW, false, o.getClass().getClassLoader());
+            return c.isInstance(o);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 深度优先找视图树里第一个 RecyclerView（面板内容容器内的列表）。 */
+    private static Object findRecyclerView(View root) {
+        if (root == null) {
+            return null;
+        }
+        if (isRecyclerView(root)) {
+            return root;
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup vg = (ViewGroup) root;
+            for (int i = 0; i < vg.getChildCount(); i++) {
+                Object found = findRecyclerView(vg.getChildAt(i));
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    // ---------------- 其他 ----------------
+
+    /** 从 ClipboardContentModel JSON 里取 "time" 数值；取不到返回 0。 */
+    private static long extractTime(String json) {
+        if (json == null) {
+            return 0L;
+        }
+        try {
+            int i = json.indexOf("\"time\"");
+            if (i < 0) {
+                return 0L;
+            }
+            i = json.indexOf(':', i);
+            if (i < 0) {
+                return 0L;
+            }
+            i++;
+            while (i < json.length() && json.charAt(i) == ' ') {
+                i++;
+            }
+            int start = i;
+            while (i < json.length() && Character.isDigit(json.charAt(i))) {
+                i++;
+            }
+            if (start == i) {
+                return 0L;
+            }
+            return Long.parseLong(json.substring(start, i));
+        } catch (Throwable t) {
+            return 0L;
+        }
+    }
+
+    /** 每实例手势状态。 */
+    private static final class GestureState {
+        float downX;
+        float downY;
+        /** {@link #MODE_NONE} / {@link #MODE_OPENING} / {@link #MODE_PIN_OPEN}。 */
+        int mode;
+        boolean declined;
+    }
+
+    private static void log(String msg) {
+        XposedInit.log("[Pin] " + msg);
+    }
+}

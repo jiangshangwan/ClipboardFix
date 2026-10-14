@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HyperClipFix</string>
+    <string name="settings_class">com.clipboardfix.AboutActivity</string>
+    <string name="module_description">Fixes the issue where third-party input methods on HyperOS cannot use the system clipboard, and unlocks fullscreen optimization (clipboard / frequently-used phrases entry at the bottom of the input method)</string>
+
+    <!-- Bottom navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_feature">Features</string>
+    <string name="nav_about">About</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Home -->
+    <string name="home_title">Home</string>
+    <string name="home_subtitle">HyperClipFix</string>
+    <string name="module_status">Module Status</string>
+    <string name="info_app_version">App Version</string>
+    <string name="info_device">Device Model</string>
+    <string name="info_android">Android Version</string>
+    <string name="info_system">System Version</string>
+    <string name="info_arch">Architecture</string>
+    <string name="info_lsposed">LSPosed API</string>
+    <string name="info_build">Build Date</string>
+
+    <!-- Feature page -->
+    <string name="feature_title">Features</string>
+    <string name="sec_software">App Settings</string>
+    <string name="hide_icon">Hide App Icon</string>
+    <string name="show_icon">Show App Icon</string>
+    <string name="hide_icon_sub_hidden">Currently hidden, tap to restore</string>
+    <string name="hide_icon_sub_default">Still accessible in LSPosed</string>
+    <string name="reboot_title">Reboot Phone Now</string>
+    <string name="reboot_sub">Requires ROOT</string>
+    <string name="sec_feature">Feature Settings</string>
+    <string name="sw_ime_unlock">Enable Fullscreen Optimization</string>
+    <string name="sw_unlimit">Unlock Clipboard Count Limit</string>
+    <string name="sw_panel">Optimize Clipboard Panel BG</string>
+    <string name="sw_clipboard_pin">Enable Clipboard Entry Pinning</string>
+    <string name="sw_clipboard_pin_sub">Swipe an entry right slightly to reveal the pin button, then tap it to pin. Only one pinned entry at a time; the pinned entry survives clipboard clearing.</string>
+
+    <!-- Settings page -->
+    <string name="settings_title">Settings</string>
+    <string name="sec_appearance">Appearance</string>
+    <string name="language">Language</string>
+    <string name="theme">Theme</string>
+    <string name="disable_update">Disable Update Check</string>
+    <string name="disable_update_sub">When enabled, the module cannot check for updates</string>
+    <string name="opt_default">Default</string>
+    <string name="opt_zh">简体中文</string>
+    <string name="opt_en">English</string>
+    <string name="opt_light">Light</string>
+    <string name="opt_dark">Dark</string>
+
+    <!-- About page -->
+    <string name="about_title">About</string>
+    <string name="sec_developer">Developer</string>
+    <string name="sec_donate">Support</string>
+    <string name="support_text">Your support is my biggest motivation</string>
+    <string name="sec_project">Project</string>
+    <string name="github">GitHub</string>
+    <string name="changelog">Changelog</string>
+    <string name="sec_community">Community</string>
+    <string name="qq">Tencent QQ</string>
+    <string name="sec_check_update">Check Update</string>
+    <string name="check_update">Check Update</string>
+    <string name="check_update_sub">Check GitHub for new versions</string>
+    <string name="sec_thanks">Acknowledgements</string>
+    <string name="ref_solution">References</string>
+    <string name="miuix">Miuix</string>
+    <string name="author_name1">江上晚</string>
+    <string name="author_handle1">Coolapk @江上晚</string>
+    <string name="author_name2">李十六的日记本</string>
+    <string name="author_handle2">Weibo @李十六的日记本</string>
+    <string name="copyright">©2026 jiangshangwan(JiangShangWan)</string>
+
+    <!-- Sheet: Must Know -->
+    <string name="sheet_must_know_title">Must Know</string>
+    <string name="sheet_must_know_confirm">I Understand</string>
+    <string name="sheet_must_know_body">💕 Special Note\n\nThank you for using the 【HyperClipFix】 module. It is free to use; please do not modify or resell it! Please read the following carefully:\n\n1. This module only modifies the clipboard and frequently-used phrases validation logic; it does not affect your data. Please use it with confidence. If your system clipboard works normally, do not install this module!\n2. Starting from v1.3, the module built-in unlocks MIUI keyboard fullscreen optimization limits and adapts to HyperOS 4; some anomalies may appear on OS3. Please test by yourself.\n3. The module has adapted to WeChat Input, Sogou Input, iFlytek Input, QQ Input, Doubao Input, and Gboard.\n4. This module requires LSPosed with the new libxposed API (API 102).\n5. Please enable the recommended scope in the LSPosed framework, then restart your phone, otherwise it won\'t take effect.\n\nFinal reminder: modding has risks; please back up your phone data in time. I am not responsible for any loss!</string>
+
+    <!-- Sheet: Friendly Note -->
+    <string name="sheet_status_title">Friendly Note</string>
+    <string name="sheet_status_body">Bugs are fixed one by one, code is written line by line. Nagging won\'t help, debugging relies on burning the midnight oil. No guarantee on when the next update comes. Here I\'d like to thank ROG, Xiaomi MiMo LLM, China Telecom, and State Grid for their strong support of this project.</string>
+
+    <!-- Sheet: Changelog -->
+    <string name="sheet_changelog_title">Changelog</string>
+    <string name="changelog_v20">1. Fully rebuilt the module UI: cleaner and more refreshing, upgraded visuals\n2. Added liquid-glass navigation for smoother swipes and more responsive touch\n3. Fixed HyperOS clipboard adaptation issues with third-party input methods\n4. Resolved color mismatch between clipboard and keyboard function area\n5. Expanded the info panel: device info and module status at a glance\n6. Brand-new About page: richer content, easier to use\n7. Re-arranged About page card layout with more relaxed spacing\n8. Added a centered header title when scrolling up on the About page\n9. Added a fade background to the About header so cards no longer overlap the title on scroll-up\n10. Replaced the About header background with real-time progressive blur (frosted top bar, soft fade at the bottom edge, no ghosting on fast scroll)\n11. Added clipboard entry pinning: swipe an entry right slightly to reveal the pin button and tap to pin (tap again on the pinned entry to unpin). Only one pinned entry at a time; the pinned entry survives clipboard clearing.\n12. Pinned entries now show a (Pinned) badge: after the source label for cloud entries, above the content for local ones; disappears after unpinning
+13. Fixed deleted clipboard entries reappearing after reopening the panel
+14. Fixed the (Pinned) badge being clipped and hidden for long local clipboard entries; it is now always shown above the content
+15. Fixed the local pinned badge sitting too high: the content is pulled up to match the gap of cloud entries (source label → content)
+16. Fixed the content overlapping the "From My Computer" source label on pinned cloud entries (was only correct after closing and reopening the panel)
+17. Fixed the keyboard being pushed up with empty space at the bottom on third-party IMEs when the system gesture hint line (full-screen gesture navigation) is enabled: clears the bottom padding from the gesture area inset and makes the keyboard view fill its parent to remove the dead space (e.g. Doubao, Sogou)</string>
+    <string name="changelog_v1413">Added clipboard panel background optimization; fixed clipboard and phrase panel color issues with the function area</string>
+    <string name="changelog_v1412">Optimized display; fixed some errors</string>
+    <string name="changelog_v1411">Fixed some errors</string>
+    <string name="changelog_v1410">Fixed the bug where some input methods were abnormally raised after enabling the gesture hint line\nAdded a fullscreen optimization toggle\nAdded an option to unlock the clipboard count limit</string>
+    <string name="changelog_v149">Fixed the bug where some input methods were abnormally raised due to the gesture hint line\nAdded support for Doubao Input\nCommunity opened, QQ group: 1124180635</string>
+    <string name="changelog_v148">Rebuilt module UI; module status and device info at a glance\nModule officially renamed to HyperClipFix\nFixed the bug where some input methods were abnormally raised after enabling the gesture hint line\nAdded support for Doubao Input (beta)</string>
+    <string name="changelog_v147">1. Fixed cross-device clipboard sync bug; no need to warm up by switching system input methods\n2. Added support for Gboard\n3. If the keyboard is abnormally raised when using, try turning off the gesture bar</string>
+
+    <!-- Sheet: Support / Donate -->
+    <string name="sheet_donate_title">Support</string>
+    <string name="donate_qr_title">Donate to Developer</string>
+    <string name="donate_list_title">Donors</string>
+    <string name="donate_note">When donating, please note your nickname, e.g. Coolapk/XXX, Weibo/XXX</string>
+    <string name="donate_save">Save to Gallery</string>
+    <string name="donate_qr_saved">QR code saved to gallery\nWeChat opened; use \"Scan\" → \"Gallery\" to recognize it</string>
+
+    <!-- Sheet: Credits -->
+    <string name="sheet_thanks_title">Credits</string>
+    <string name="thanks_miui_ime">MIUI_IME_Unlock</string>
+
+    <!-- Common toasts -->
+    <string name="open_failed">Cannot open link</string>
+    <string name="hide_icon_restored">App icon restored</string>
+    <string name="hide_icon_hidden">App icon hidden\n(Still accessible in LSPosed)</string>
+    <string name="root_required">ROOT permission required to reboot</string>
+    <string name="rebooting">Rebooting…</string>
+    <string name="reboot_fail">Reboot failed: </string>
+    <string name="op_failed">Operation failed: </string>
+    <string name="save_fail">Save failed: </string>
+    <string name="save_snack">Saved. Takes effect after reboot</string>
+    <string name="update_disabled_msg">Update check is disabled. Turn off \"Disable Update Check\" to update.</string>
+
+    <!-- Update checker -->
+    <string name="uc_checking">Checking for updates…</string>
+    <string name="uc_net_fail">Network request failed, check your connection</string>
+    <string name="uc_check_fail">Update check failed: </string>
+    <string name="uc_latest">You are on the latest version v</string>
+    <string name="uc_new_version">New version found</string>
+    <string name="uc_current">Current version: v</string>
+    <string name="uc_update_content">What\'s new:</string>
+    <string name="uc_later">Later</string>
+    <string name="uc_update_now">Update Now</string>
+    <string name="uc_downloading">Downloading update</string>
+    <string name="uc_download_fail">Download failed: </string>
+    <string name="uc_install_perm">Please enable \"Install unknown apps\" permission</string>
+    <string name="uc_download_done">Download complete, launching installer…</string>
+    <string name="uc_cancel_dl">Cancel Download</string>
+
+    <!-- ============ First-run welcome (3 pages) ============ -->
+    <string name="welcome_title">Welcome to</string>
+    <string name="welcome_brand">HyperClipFix</string>
+    <string name="welcome_desc">An LSPosed module that fixes\nthird-party IME access to the\nsystem clipboard</string>
+
+    <!-- Page 2: preparation -->
+    <string name="prep_title">Preparation</string>
+    <string name="prep_hyperos">HyperOS version</string>
+    <string name="prep_android">Android version</string>
+    <string name="prep_activate">Enable the module in LSPosed</string>
+    <string name="prep_root">Grant superuser permission</string>
+    <string name="prep_gesture_line">Disable gesture hint bar</string>
+    <string name="prep_gesture_line_sub">Prevents the IME keyboard from being raised with a bottom gap</string>
+    <string name="prep_language">Language</string>
+    <string name="prep_unknown">Not detected</string>
+    <string name="welcome_next">Continue</string>
+
+    <!-- Page 3: terms and notices -->
+    <string name="agreement_title">Terms &amp; Notices</string>
+    <string name="agreement_user">User Agreement</string>
+    <string name="agreement_disclaimer">Disclaimer</string>
+    <string name="agreement_privacy">Privacy Policy</string>
+    <string name="agreement_code">Enter dynamic code</string>
+    <string name="agreement_code_sub">Verify to accept the terms</string>
+    <string name="agreement_code_sub_done">Verified</string>
+    <string name="agreement_code_prompt">Enter the 4 digits below to verify</string>
+    <string name="agreement_code_input">Enter code</string>
+    <string name="agreement_code_wrong">Wrong code, please retry</string>
+    <string name="agreement_code_need">Please verify the dynamic code first</string>
+    <string name="agreement_code_confirm">Confirm</string>
+    <string name="agreement_code_cancel">Cancel</string>
+    <string name="agreement_read">I have read and agree to the User Agreement, Disclaimer and Privacy Policy. I understand this module only supports HyperOS 3.0+ and accept the risk of crashes or boot failures on unsupported systems.</string>
+</resources>

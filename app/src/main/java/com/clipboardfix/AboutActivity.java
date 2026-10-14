@@ -2,10 +2,12 @@ package com.clipboardfix;
 
 import android.content.ComponentName;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.database.ContentObserver;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -17,9 +19,12 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.system.Os;
 import android.system.OsConstants;
 import android.view.View;
+import android.view.animation.AccelerateInterpolator;
+import android.view.animation.DecelerateInterpolator;
 import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
@@ -29,6 +34,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
 import androidx.compose.runtime.MutableState;
 import androidx.compose.ui.platform.ComposeView;
 
@@ -42,6 +48,7 @@ import java.util.concurrent.TimeUnit;
 import io.github.libxposed.service.XposedService;
 import io.github.libxposed.service.XposedServiceHelper;
 
+import com.clipboardfix.ui.AppConfig;
 import com.clipboardfix.ui.ClipboardFixUi;
 
 /**
@@ -57,9 +64,19 @@ public class AboutActivity extends ComponentActivity {
     private static final String ALIAS_NAME = "com.clipboardfix.LauncherAlias";
     private static final String PREFS_NAME = "clipboardfix_prefs";
     private static final String KEY_MUST_KNOW = "must_know_agreed";
+    /** 首次进入欢迎引导（三页）是否已完成。 */
+    private static final String KEY_WELCOME_DONE = "welcome_done";
     private static final String TELEGRAM_URL =
             "https://qun.qq.com/universal-share/share?ac=1&authKey=n9wFDXy4i20n15nDlUwLTGqI8AnQ%2BiyzC2XPQxpeOs2MxMYDsqRw0MNRPXYvx9WS&busi_data=eyJncm91cENvZGUiOiIxMTI0MTgwNjM1IiwidG9rZW4iOiJTSVhYbUhsYUNnWVYvb2wzVUlRb0J6SDRQMTNCdUxBMUNocUMzeU9taFpvakJRRHhZNDFBeDJIdFVQeTNZVnRmIiwidWluIjoiOTAzNzU1MzQ1In0%3D&data=qWsg9TN3ydud1Rb7MCThG73KtRkUY7UumTdXIsBBKS2W9kcpZ-W8kSgWfZFjkdqqGSxXGkUmeL9Dmb5VYsXf3A&svctype=4&tempid=h5_group_info";
     private static final String MIUIX_URL = "https://compose-miuix-ui.github.io/miuix/zh_CN/";
+
+    // ---- 页面切换动画参数（淡入淡出 + 方向性横移 + 轻微缩放）----
+    /** 新页入场时长（略长，收尾有减速，观感更「软」）。 */
+    private static final long PAGE_ANIM_IN_MS = 260L;
+    /** 旧页离场时长（更短，避免两页长时间重叠发虚）。 */
+    private static final long PAGE_ANIM_OUT_MS = 180L;
+    /** 缩放起点：0.985 → 1，几乎不可察但足以去掉「硬切」的生硬感。 */
+    private static final float PAGE_ANIM_SCALE = 0.985f;
 
     // ---- Compose 可观察状态（composable 读取 .getValue() 即获得响应式刷新）----
     public final MutableState<String> uiStatusText = ClipboardFixUi.stateOf("检测中…");
@@ -68,16 +85,37 @@ public class AboutActivity extends ComponentActivity {
     public final MutableState<Boolean> uiSwImeUnlock = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_IME_UNLOCK);
     public final MutableState<Boolean> uiSwUnlimitCount = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_UNLIMIT_COUNT);
     public final MutableState<Boolean> uiSwPanelColor = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_PANEL_COLOR);
+    public final MutableState<Boolean> uiSwClipboardPin = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_CLIPBOARD_PIN);
     public final MutableState<Boolean> uiIconHidden = ClipboardFixUi.stateOf(false);
+    public final MutableState<Boolean> uiUpdateDisabled = ClipboardFixUi.stateOf(false);
+
+    // ---- 欢迎引导（首次进入的三页覆盖层）----
+    /** 引导当前页下标（0/1/2）。跨 Activity 重建保留：语言切换会 recreate，不能把用户踢回第一页。 */
+    private static int sWelcomePage = 0;
+    /** 当前页（Compose 读写同一份状态：翻页由 Compose 写，系统返回键由 Activity 写）。 */
+    public final MutableState<Integer> uiWelcomePage = ClipboardFixUi.stateOf(sWelcomePage);
+    /** 是否已获得超级用户权限（su 探测耗时会阻塞，故后台线程回填）。 */
+    public final MutableState<Boolean> uiWelcomeRoot = ClipboardFixUi.stateOf(false);
+    /** 手势提示线（小白条）是否已关闭：读 MIUI/HyperOS 的 global 设置 hide_gesture_line。 */
+    public final MutableState<Boolean> uiWelcomeGestureLineHidden = ClipboardFixUi.stateOf(false);
+    private ComposeView welcomeOverlay;
+    private OnBackPressedCallback welcomeBackCallback;
+    /** 实时监听手势提示线开关（引导展示期间注册，完成后注销）。 */
+    private ContentObserver gestureLineObserver;
+    /** 引导展示期间的轻量轮询：实时重查「模块激活」状态（binder IPC 廉价），让用户在 LSPosed 里启用模块后勾选立即刷新。 */
+    private Runnable welcomeStatusPoller;
+    private static final long WELCOME_POLL_MS = 2000;
 
     // ---- 页面与导航（View 外壳 + ComposeView 页面 + 液态玻璃导航）----
-    private ComposeView pageHome, pageFeature, pageAbout;
+    private ComposeView pageHome, pageFeature, pageAbout, pageSettings;
     private View contentContainer;
     private LiquidGlassBarView bottomNav;
-    private FrameLayout navHome, navFeature, navAbout;
-    private ImageView navIconHome, navIconFeature, navIconAbout;
-    private TextView navLabelHome, navLabelFeature, navLabelAbout;
+    private FrameLayout navHome, navFeature, navAbout, navSettings;
+    private ImageView navIconHome, navIconFeature, navIconAbout, navIconSettings;
+    private TextView navLabelHome, navLabelFeature, navLabelAbout, navLabelSettings;
     private int currentTab = 0;
+    /** 跨重建（切换语言/主题 recreate）保留当前 Tab，避免跳回主页。 */
+    private static int sLastTab = 0;
 
     private TextView mSnackView;
 
@@ -125,6 +163,12 @@ public class AboutActivity extends ComponentActivity {
             };
 
     @Override
+    protected void attachBaseContext(Context base) {
+        // 语言偏好：仅为上下文覆盖 Locale（主题走系统 Application Night Mode）。
+        super.attachBaseContext(AppConfig.applyLocale(base));
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
@@ -153,21 +197,21 @@ public class AboutActivity extends ComponentActivity {
         bindViews();
         setupBottomNav();
 
-        // 装配三页 Compose + Miuix 界面（状态与动作回调桥接到本 Activity）
+        // 装配四页 Compose + Miuix 界面（状态与动作回调桥接到本 Activity）
         ClipboardFixUi.installPages(
-                pageHome, pageFeature, pageAbout,
+                pageHome, pageFeature, pageAbout, pageSettings,
                 uiStatusText, uiImeCountText, uiStatusEnabled,
                 BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE,
                 DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
                 Build.VERSION.INCREMENTAL, abiInfo(),
-                uiSwImeUnlock, uiSwUnlimitCount, uiSwPanelColor, uiIconHidden,
+                uiSwImeUnlock, uiSwUnlimitCount, uiSwPanelColor, uiSwClipboardPin, uiIconHidden,
                 this::doCheckUpdate,
-                () -> showMustKnow(false),
                 this::showStatusSheet,
                 this::onToggleImeUnlock,
                 this::onToggleUnlimitCount,
                 this::onTogglePanelColor,
-                this::toggleLauncherIcon,
+                this::onToggleClipboardPin,
+                checked -> onToggleHideIcon(checked),
                 this::rebootDevice,
                 () -> openUrl("https://www.coolapk.com/u/3019478"),
                 () -> openUrl("https://weibo.com/u/3725737792"),
@@ -176,21 +220,28 @@ public class AboutActivity extends ComponentActivity {
                 this::showDonateSheet,
                 () -> openUrl(TELEGRAM_URL),
                 this::showThanksSheet,
-                () -> openUrl(MIUIX_URL));
+                () -> openUrl(MIUIX_URL),
+                AppConfig.getThemeMode(this), AppConfig.getLangMode(this), uiUpdateDisabled,
+                mode -> selectTheme(mode), mode -> selectLanguage(mode), this::onToggleUpdateDisabled);
 
         // 模块启用状态实时查询
         initModuleStatus();
 
-        // 初始落到主页
-        selectTab(0);
+        // 初始落到上次所在 Tab（重建后保留，首次为 0=主页）
+        selectTab(sLastTab);
 
-        // 首次启动强制阅读「您需了解」弹卡（不可点遮罩关闭，须点「我已知悉」）
-        if (!mustKnowAgreed()) {
+        // 首次进入：三页欢迎引导（独立覆盖层，盖住底部导航）；
+        // 已完成引导的旧版本升级用户走「您需了解」底部弹卡兜底。
+        if (!welcomeDone()) {
+            showWelcomeOverlay();
+        } else if (!mustKnowAgreed()) {
             showMustKnow(true);
         }
 
-        // 静默检查更新（有新版本才弹窗）
-        new UpdateChecker(this).checkSilent();
+        // 静默检查更新（有新版本才弹窗；已停用更新检测则跳过）
+        if (!AppConfig.isUpdateDisabled(this)) {
+            new UpdateChecker(this).checkSilent();
+        }
     }
 
     private void bindViews() {
@@ -198,35 +249,106 @@ public class AboutActivity extends ComponentActivity {
         pageHome = findViewById(R.id.pageHome);
         pageFeature = findViewById(R.id.pageFeature);
         pageAbout = findViewById(R.id.pageAbout);
+        pageSettings = findViewById(R.id.pageSettings);
         bottomNav = findViewById(R.id.bottomNav);
         navHome = findViewById(R.id.navHome);
         navFeature = findViewById(R.id.navFeature);
         navAbout = findViewById(R.id.navAbout);
+        navSettings = findViewById(R.id.navSettings);
         navIconHome = findViewById(R.id.navIconHome);
         navIconFeature = findViewById(R.id.navIconFeature);
         navIconAbout = findViewById(R.id.navIconAbout);
+        navIconSettings = findViewById(R.id.navIconSettings);
         navLabelHome = findViewById(R.id.navLabelHome);
         navLabelFeature = findViewById(R.id.navLabelFeature);
         navLabelAbout = findViewById(R.id.navLabelAbout);
+        navLabelSettings = findViewById(R.id.navLabelSettings);
     }
 
     private void setupBottomNav() {
-        // 玻璃条折射的是内容区（承载三页 ComposeView）的真实内容
+        // 玻璃条折射的是内容区（承载四页 ComposeView）的真实内容
         bottomNav.setBackdrop(contentContainer);
-        bottomNav.setItems(navHome, navFeature, navAbout);
+        // 顺序：主页 / 功能 / 设置 / 关于
+        bottomNav.setItems(navHome, navFeature, navSettings, navAbout);
         bottomNav.setAccentColor(getColor(R.color.accent));
         bottomNav.setOnItemSelectedListener(this::selectTab);
     }
 
+    /**
+     * 切换页面（带页面切换动画）。
+     *
+     * 动画：新页按导航方向淡入 + 轻微横向位移 + 0.985→1 缩放（260ms 减速），
+     * 旧页反向淡出并位移（180ms 加速）后 GONE——对齐参考项目的页面切换观感。
+     * 首次进入（idx == currentTab）不做动画，直接落位。
+     */
     private void selectTab(int idx) {
+        int prev = currentTab;
+        boolean animate = (idx != prev);
         currentTab = idx;
-        pageHome.setVisibility(idx == 0 ? View.VISIBLE : View.GONE);
-        pageFeature.setVisibility(idx == 1 ? View.VISIBLE : View.GONE);
-        pageAbout.setVisibility(idx == 2 ? View.VISIBLE : View.GONE);
+        sLastTab = idx;
+
+        View[] pages = {pageHome, pageFeature, pageSettings, pageAbout};
+        // 方向：目标在右侧（idx 更大）时新页自右滑入、旧页向左滑出；反之相反
+        float dir = idx > prev ? 1f : -1f;
+        float shift = 26f * getResources().getDisplayMetrics().density;
+        for (int i = 0; i < pages.length; i++) {
+            View p = pages[i];
+            if (p == null) continue;
+            if (i == idx) {
+                p.animate().cancel();
+                p.setVisibility(View.VISIBLE);
+                p.bringToFront();
+                if (animate) {
+                    p.setAlpha(0f);
+                    p.setTranslationX(dir * shift);
+                    p.setScaleX(PAGE_ANIM_SCALE);
+                    p.setScaleY(PAGE_ANIM_SCALE);
+                    p.animate()
+                            .alpha(1f)
+                            .translationX(0f)
+                            .scaleX(1f)
+                            .scaleY(1f)
+                            .setDuration(PAGE_ANIM_IN_MS)
+                            .setInterpolator(new DecelerateInterpolator(1.6f))
+                            .start();
+                } else {
+                    p.setAlpha(1f);
+                    p.setTranslationX(0f);
+                    p.setScaleX(1f);
+                    p.setScaleY(1f);
+                }
+            } else if (p.getVisibility() != View.GONE) {
+                p.animate().cancel();
+                if (animate) {
+                    p.animate()
+                            .alpha(0f)
+                            .translationX(-dir * shift)
+                            .scaleX(PAGE_ANIM_SCALE)
+                            .scaleY(PAGE_ANIM_SCALE)
+                            .setDuration(PAGE_ANIM_OUT_MS)
+                            .setInterpolator(new AccelerateInterpolator(1.2f))
+                            .withEndAction(() -> {
+                                p.setVisibility(View.GONE);
+                                p.setAlpha(1f);
+                                p.setTranslationX(0f);
+                                p.setScaleX(1f);
+                                p.setScaleY(1f);
+                            })
+                            .start();
+                } else {
+                    p.setVisibility(View.GONE);
+                    p.setAlpha(1f);
+                    p.setTranslationX(0f);
+                    p.setScaleX(1f);
+                    p.setScaleY(1f);
+                }
+            }
+        }
 
         applyNavItem(navIconHome, navLabelHome, currentTab == 0);
         applyNavItem(navIconFeature, navLabelFeature, currentTab == 1);
-        applyNavItem(navIconAbout, navLabelAbout, currentTab == 2);
+        applyNavItem(navIconSettings, navLabelSettings, currentTab == 2);
+        applyNavItem(navIconAbout, navLabelAbout, currentTab == 3);
         bottomNav.setSelectedIndex(idx, true);
     }
 
@@ -371,6 +493,10 @@ public class AboutActivity extends ComponentActivity {
                 ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT));
         uiSwPanelColor.setValue(prefs.getBoolean(
                 ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR));
+        uiSwClipboardPin.setValue(prefs.getBoolean(
+                ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN));
+        uiUpdateDisabled.setValue(prefs.getBoolean(
+                AppConfig.KEY_DISABLE_UPDATE, false));
     }
 
     private void onToggleImeUnlock(boolean checked) {
@@ -388,11 +514,17 @@ public class AboutActivity extends ComponentActivity {
         saveFeaturePrefs();
     }
 
+    private void onToggleClipboardPin(boolean checked) {
+        uiSwClipboardPin.setValue(checked);
+        saveFeaturePrefs();
+    }
+
     private void saveFeaturePrefs() {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                 .putBoolean(ModulePrefs.KEY_IME_UNLOCK, uiSwImeUnlock.getValue())
                 .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, uiSwUnlimitCount.getValue())
                 .putBoolean(ModulePrefs.KEY_PANEL_COLOR, uiSwPanelColor.getValue())
+                .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, uiSwClipboardPin.getValue())
                 .apply();
         pushFeaturePrefs();
         showSnack("已保存，重启手机后生效");
@@ -415,12 +547,15 @@ public class AboutActivity extends ComponentActivity {
                 ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT);
         boolean panelColor = local.getBoolean(
                 ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR);
+        boolean clipboardPin = local.getBoolean(
+                ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN);
         new Thread(() -> {
             try {
                 svc.getRemotePreferences(ModulePrefs.GROUP).edit()
                         .putBoolean(ModulePrefs.KEY_IME_UNLOCK, ime)
                         .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, unlimit)
                         .putBoolean(ModulePrefs.KEY_PANEL_COLOR, panelColor)
+                        .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, clipboardPin)
                         .apply();
             } catch (Throwable t) {
                 // 远程写失败不影响本地开关状态
@@ -430,9 +565,35 @@ public class AboutActivity extends ComponentActivity {
 
     // ---------------- 检查更新 ----------------
     private void doCheckUpdate() {
+        if (AppConfig.isUpdateDisabled(this)) {
+            showSnack(getString(R.string.update_disabled_msg));
+            return;
+        }
         UpdateChecker checker = new UpdateChecker(this);
         checker.setMessageSink(this::showSnack);
         checker.checkForUpdates();
+    }
+
+    // ---------------- 设置页：主题 / 语言 / 停用更新 ----------------
+    private void onToggleUpdateDisabled(boolean checked) {
+        uiUpdateDisabled.setValue(checked);
+        AppConfig.setUpdateDisabled(this, checked);
+        // 只写本地偏好、不重建 Activity：即时生效（无需重启手机），也无弹窗提醒
+    }
+
+    /** 主题选择：保存并应用（系统 Application Night Mode 触发 Activity 重建）。 */
+    private void selectTheme(int mode) {
+        AppConfig.setThemeMode(this, mode);
+    }
+
+    /** 语言选择：保存后重建 Activity 使 Locale 覆盖生效。 */
+    private void selectLanguage(int mode) {
+        AppConfig.setLangMode(this, mode);
+        // 引导期间切语言会重建 Activity：记住当前页，避免把用户踢回第一页
+        if (welcomeOverlay != null) {
+            sWelcomePage = uiWelcomePage.getValue();
+        }
+        recreate();
     }
 
     // ---------------- 桌面图标显隐 ----------------
@@ -448,37 +609,42 @@ public class AboutActivity extends ComponentActivity {
                 || state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER;
     }
 
-    private void toggleLauncherIcon() {
+    /**
+     * 桌面图标开关（设置页 SwitchPreference）。
+     *
+     * 语义是「置为目标状态」而非「取反」：开关的 checked 即期望的隐藏状态，
+     * 若与系统实际状态一致则直接返回（避免重复弹提示）；失败时回读实际状态，
+     * 让开关自动弹回正确位置。
+     */
+    private void onToggleHideIcon(boolean hide) {
         try {
+            if (hide == isAliasHidden()) return;
             PackageManager pm = getPackageManager();
             ComponentName alias = new ComponentName(this, ALIAS_NAME);
-            if (isAliasHidden()) {
-                pm.setComponentEnabledSetting(alias,
-                        PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                        PackageManager.DONT_KILL_APP);
-                Toast.makeText(this, "桌面图标已恢复", Toast.LENGTH_SHORT).show();
-            } else {
-                pm.setComponentEnabledSetting(alias,
-                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                        PackageManager.DONT_KILL_APP);
-                Toast.makeText(this, "桌面图标已隐藏\n（LSPosed 内仍可打开模块设置）", Toast.LENGTH_LONG).show();
-            }
-            updateHideRow();
+            pm.setComponentEnabledSetting(alias,
+                    hide ? PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                            : PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP);
+            Toast.makeText(this,
+                    hide ? getString(R.string.hide_icon_hidden) : getString(R.string.hide_icon_restored),
+                    hide ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
-            Toast.makeText(this, "操作失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, getString(R.string.op_failed) + e.getMessage(), Toast.LENGTH_SHORT).show();
+        } finally {
+            updateHideRow();
         }
     }
 
     private void rebootDevice() {
         if (!hasRoot()) {
-            Toast.makeText(this, "需要 ROOT 权限才能重启手机", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, getString(R.string.root_required), Toast.LENGTH_LONG).show();
             return;
         }
-        Toast.makeText(this, "即将重启手机…", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, getString(R.string.rebooting), Toast.LENGTH_SHORT).show();
         try {
             Runtime.getRuntime().exec(new String[]{"su", "-c", "reboot"});
         } catch (Exception e) {
-            Toast.makeText(this, "重启失败：" + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, getString(R.string.reboot_fail) + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -501,88 +667,246 @@ public class AboutActivity extends ComponentActivity {
     private void showMustKnow(boolean mandatory) {
         float density = getResources().getDisplayMetrics().density;
         TextView tv = new TextView(this);
-        tv.setText("💕 特别说明\n\n" +
-                "感谢您使用【HyperFixClip】模块，本模块免费使用，请勿二改及盗卖！以下信息还请仔细阅读：\n\n" +
-                "1、本模块仅修改剪贴板和常用语验证逻辑，不影响数据内容，请放心使用。如果您的系统剪贴板功能正常请勿安装本模块！\n" +
-                "2、从1.3版本起模块内置解锁MIUI键盘全面屏优化限制并适配HyperOS4，可能在OS3版本上存在部分异常问题，具体请自测。\n" +
-                "3、本模块已适配微信输入法、搜狗输入法、讯飞输入法、QQ输入法、豆包输入法、Gboard输入法\n" +
-                "4、本模块需LSPosed支持libxposed新版API（API 102）\n" +
-                "5、请在LSPosed框架内勾选推荐作用域，完成后务必重启手机，否则不生效\n\n" +
-                "最后温馨提醒：玩机有风险，请及时备份您的手机数据，造成损失本人不承担任何责任！");
+        tv.setText(getString(R.string.sheet_must_know_body));
         tv.setTextColor(getColor(R.color.text_primary));
         tv.setTextSize(15f);
         tv.setLineSpacing(6 * density, 1f);
         tv.setPadding(0, (int) (4 * density), 0, 0);
-        BottomSheet.show(this, "您需了解", tv, !mandatory,
-                mandatory ? "我已知悉" : null, () -> {
+        BottomSheet.show(this, getString(R.string.sheet_must_know_title), tv, !mandatory,
+                mandatory ? getString(R.string.sheet_must_know_confirm) : null, () -> {
                     if (mandatory) markMustKnowAgreed();
                 });
+    }
+
+    // ---------------- 欢迎引导（首次进入的三页覆盖层） ----------------
+    private boolean welcomeDone() {
+        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getBoolean(KEY_WELCOME_DONE, false);
+    }
+
+    /**
+     * 把三页欢迎引导挂成根布局顶层的全屏覆盖层（Compose）。
+     *
+     * 为什么用覆盖层而不是独立 Activity：引导页要展示「模块是否已在 LSPosed 激活」等实时状态，
+     * 这些状态由本 Activity 的 libxposed 服务查询维护；覆盖层可直接复用，无需在别处重复一套查询。
+     * 覆盖层铺满整屏并隐藏底部导航，完成后移除即可露出主界面。
+     */
+    private void showWelcomeOverlay() {
+        FrameLayout root = findViewById(R.id.rootLayout);
+        if (root == null) return;
+        if (welcomeOverlay != null && welcomeOverlay.getParent() == root) return;
+
+        ComposeView cv = new ComposeView(this);
+        root.addView(cv, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        welcomeOverlay = cv;
+
+        if (bottomNav != null) bottomNav.setVisibility(View.GONE);
+        detectRootAsync();
+        // 手势提示线状态：先读一次初值，并注册实时监听——
+        // 用户在系统设置里改动该开关后，引导页的勾选会立即刷新，无需退出 APP 重开。
+        uiWelcomeGestureLineHidden.setValue(isGestureLineHidden());
+        registerGestureLineObserver();
+        // 启动模块激活状态的轻量轮询（覆盖 LSPosed 启用模块后、进程未重建的重查缺口）
+        startWelcomeStatusPoller();
+
+        ClipboardFixUi.installWelcome(
+                cv, uiWelcomePage,
+                hyperOsVersion(),
+                "Android " + Build.VERSION.RELEASE + " / API " + Build.VERSION.SDK_INT,
+                uiStatusEnabled, uiWelcomeRoot, uiWelcomeGestureLineHidden,
+                AppConfig.getLangMode(this),
+                mode -> selectLanguage(mode),
+                this::finishWelcome);
+
+        // 返回键：逐页回退，首页再按则退出（引导不可绕过，但也不把用户困死）
+        welcomeBackCallback = new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                int p = uiWelcomePage.getValue();
+                if (p > 0) {
+                    uiWelcomePage.setValue(p - 1);
+                } else {
+                    finish();
+                }
+            }
+        };
+        getOnBackPressedDispatcher().addCallback(this, welcomeBackCallback);
+    }
+
+    /** 引导完成：落下标记（同时点亮旧版「您需了解」标记，避免再弹一次老的弹卡）并移除覆盖层。 */
+    private void finishWelcome() {
+        SharedPreferences.Editor e = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit();
+        e.putBoolean(KEY_WELCOME_DONE, true);
+        e.putBoolean(KEY_MUST_KNOW, true);
+        e.apply();
+        sWelcomePage = 0;
+        unregisterGestureLineObserver();
+        stopWelcomeStatusPoller();
+
+        if (welcomeBackCallback != null) {
+            welcomeBackCallback.setEnabled(false);
+            welcomeBackCallback = null;
+        }
+        if (bottomNav != null) bottomNav.setVisibility(View.VISIBLE);
+
+        // 覆盖层由 Compose 点击回调触发移除：推迟到下一帧，避免在事件分发中途拆掉 Compose 树
+        final ComposeView overlay = welcomeOverlay;
+        welcomeOverlay = null;
+        if (overlay != null) {
+            overlay.post(() -> {
+                if (overlay.getParent() instanceof android.view.ViewGroup) {
+                    ((android.view.ViewGroup) overlay.getParent()).removeView(overlay);
+                }
+            });
+        }
+    }
+
+    /** 后台探测 ROOT（su 调用可能阻塞主线程，故放到工作线程回填状态）。 */
+    private void detectRootAsync() {
+        new Thread(() -> {
+            boolean root = hasRoot();
+            mStatusHandler.post(() -> uiWelcomeRoot.setValue(root));
+        }, "welcome-root-check").start();
+    }
+
+    /** HyperOS 版本（属性缺失时回落到 MIUI 版本号，读到空串则由 UI 显示「未检测到」）。 */
+    private static String hyperOsVersion() {
+        String v = SysProps.get("ro.mi.os.version.name", "");
+        if (v == null || v.isEmpty()) {
+            v = SysProps.get("ro.miui.ui.version.name", "");
+        }
+        return v == null ? "" : v;
+    }
+
+    /**
+     * 手势提示线（小白条）是否已关闭。
+     *
+     * <p>MIUI / HyperOS 把「手势提示线」的显隐存在 global 设置 <code>hide_gesture_line</code>：
+     * 1 = 已隐藏（即「关闭手势提示线」）、0 = 显示。该键与「设置 → 桌面 → 系统导航方式 →
+     * 显示手势提示线」「更多设置 → 全面屏 → 隐藏手势提示线」是同一个开关。
+     *
+     * <p>读不到（键不存在 / 读取异常 / 非 MIUI 系统）一律按「未关闭」处理——宁可少打一个勾，
+     * 也不误报「已关闭」。
+     */
+    private boolean isGestureLineHidden() {
+        try {
+            return Settings.Global.getInt(getContentResolver(), "hide_gesture_line", 0) == 1;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 注册对手势提示线开关的实时监听。
+     *
+     * <p>监听 {@link Settings.Global#CONTENT_URI}（notifyForDescendants=true），
+     * 任何 global 设置变更都会回调；仅当变更键为 {@code hide_gesture_line} 时（或无法分辨具体键时）
+     * 重新读取并刷新 {@link #uiWelcomeGestureLineHidden}，驱动 Compose 检查项即时重绘。
+     * 监听通过主线程 Handler 派发，更新 Compose 状态天然在主线程。
+     *
+     * <p>仅在欢迎引导展示期间注册；对应注销见 {@link #unregisterGestureLineObserver()}。
+     */
+    private void registerGestureLineObserver() {
+        if (gestureLineObserver != null) return;
+        gestureLineObserver = new ContentObserver(mStatusHandler) {
+            @Override
+            public void onChange(boolean selfChange, Uri uri) {
+                super.onChange(selfChange, uri);
+                // 模糊匹配：拿不到具体键（部分 ROM 回调基 URI）也刷新，避免漏更；
+                // 命中 hide_gesture_line 必然刷新。读取一次 int 成本极低，无性能负担。
+                String seg = uri != null ? uri.getLastPathSegment() : null;
+                if (seg == null || "hide_gesture_line".equals(seg)) {
+                    uiWelcomeGestureLineHidden.setValue(isGestureLineHidden());
+                }
+            }
+        };
+        getContentResolver().registerContentObserver(
+                Settings.Global.CONTENT_URI, true, gestureLineObserver);
+    }
+
+    /** 注销手势提示线实时监听（引导完成或 Activity 销毁时调用）。 */
+    private void unregisterGestureLineObserver() {
+        if (gestureLineObserver != null) {
+            getContentResolver().unregisterContentObserver(gestureLineObserver);
+            gestureLineObserver = null;
+        }
+    }
+
+    /**
+     * 启动引导期间的轻量状态轮询：每 {@link #WELCOME_POLL_MS} 重新向 libxposed 服务查询模块激活 /
+     * 作用域（廉价 binder IPC），使「在 LSPosed 激活模块」一项在用户于 LSPosed 中操作后即时反映，
+     * 无需退出 APP 重开。轮询仅当引导覆盖层展示期间运行，避免无谓开销；对应停止见
+     * {@link #stopWelcomeStatusPoller()}。
+     */
+    private void startWelcomeStatusPoller() {
+        stopWelcomeStatusPoller();
+        welcomeStatusPoller = new Runnable() {
+            @Override
+            public void run() {
+                refreshModuleStatus();
+                // 仅在引导仍展示时继续下一轮；覆盖层移除后自然停摆
+                if (welcomeOverlay != null) {
+                    mStatusHandler.postDelayed(this, WELCOME_POLL_MS);
+                }
+            }
+        };
+        mStatusHandler.postDelayed(welcomeStatusPoller, WELCOME_POLL_MS);
+    }
+
+    /** 停止引导状态轮询（引导完成或 Activity 销毁时调用）。 */
+    private void stopWelcomeStatusPoller() {
+        if (welcomeStatusPoller != null) {
+            mStatusHandler.removeCallbacks(welcomeStatusPoller);
+            welcomeStatusPoller = null;
+        }
     }
 
     // ---------------- 弹卡：模块状态（更新说明） ----------------
     private void showStatusSheet() {
         float density = getResources().getDisplayMetrics().density;
         TextView tv = new TextView(this);
-        tv.setText("bug 要一个一个修，代码要一行一行敲，催更无效，调试靠熬，不保证哪天更新，" +
-                "在这里感谢ROG、小米MiMo大模型、中国电信、国家电网对本项目的大力支持");
+        tv.setText(getString(R.string.sheet_status_body));
         tv.setTextColor(getColor(R.color.text_primary));
         tv.setTextSize(15f);
         tv.setLineSpacing(6 * density, 1f);
         tv.setPadding(0, (int) (4 * density), 0, 0);
-        BottomSheet.show(this, "友情提示", tv, true, null, null);
+        BottomSheet.show(this, getString(R.string.sheet_status_title), tv, true, null, null);
     }
 
-    // ---------------- 弹卡：更新日志（最近三版） ----------------
+    // ---------------- 弹卡：更新日志（最近几版） ----------------
     private void showChangelog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.addView(BottomSheet.buildVersionBlock(this, "V2.0",
-                "1. 全面重构模块 UI，界面简洁清爽，视觉体验升级\n" +
-                "2. 搭载液态玻璃导航，滑动手感更丝滑、触控更跟手\n" +
-                "3. 修复 HyperOS 剪贴板对第三方输入法适配异常问题\n" +
-                "4. 解决剪贴板与键盘功能区色差不一致问题\n" +
-                "5. 扩充信息展示面板，设备信息、模块运行状态直观可见\n" +
-                "6. 全新改版关于页面，内容丰富，使用便捷\n" +
-                "7. 关于页卡片布局重新排布，分区间距更舒展\n" +
-                "8. 关于页上滑时新增居中头部标题\n" +
-                "9. 关于页头部标题加渐隐背景板，上滑时卡片不再与标题重叠\n" +
-                "10. 关于页头部背景板下边缘改为柔和渐隐，滑动不再出现拖影"));
+                getString(R.string.changelog_v20)));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.13",
-                "新增优化剪贴板面板背景功能，优化剪贴板和常用语面板与功能区的取色问题"));
+                getString(R.string.changelog_v1413)));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.12",
-                "优化界面显示效果，修复部分错误"));
+                getString(R.string.changelog_v1412)));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.11",
-                "修复部分错误"));
+                getString(R.string.changelog_v1411)));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.10",
-                "修复部分输入法开启手势提示线后被异常抬高的bug\n" +
-                "新增启用全面屏优化功能开关\n" +
-                "新增解锁剪贴板数量限制上限"));
+                getString(R.string.changelog_v1410)));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.9",
-                "修复部分输入法因开启手势提示线导致的键盘抬高BUG\n" +
-                "新增对豆包输入法的支持\n" +
-                "社群开放，QQ群：1124180635"));
+                getString(R.string.changelog_v149)));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.8",
-                "重构模块UI，模块状态及设备信息一目了然\n" +
-                "模块正式更名为HyperFixClip\n" +
-                "修复因开启手势提示线后导致部分输入法被异常抬高的BUG\n" +
-                "支持豆包输入法（测试）"));
+                getString(R.string.changelog_v148)));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.7",
-                "1、修复跨设备剪贴板同步BUG，无需通过切换系统输入法进行预热\n" +
-                "2、新增对Gboard键盘的适配\n" +
-                "3、使用中如果出现键盘异常抬高的问题请尝试关闭小白条"));
-        BottomSheet.show(this, "更新日志", content, true, null, null);
+                getString(R.string.changelog_v147)));
+        BottomSheet.show(this, getString(R.string.sheet_changelog_title), content, true, null, null);
     }
 
     // ---------------- 弹卡：为爱发电（捐赠码 / 捐赠名单） ----------------
     private void showDonateSheet() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.addView(sheetRow(R.drawable.ic_heart, "向开发者捐赠",
-                "觉得有帮助到您，可以向开发者捐赠以此感谢", v -> showDonateQr()));
+        content.addView(sheetRow(R.drawable.ic_heart, getString(R.string.donate_qr_title),
+                getString(R.string.support_text), v -> showDonateQr()));
         content.addView(sheetDivider());
-        content.addView(sheetRow(R.drawable.ic_books, "捐赠名单",
-                "感谢每一位支持者", v -> showDonateList()));
-        BottomSheet.show(this, "为爱发电", content, true, null, null);
+        content.addView(sheetRow(R.drawable.ic_books, getString(R.string.donate_list_title),
+                getString(R.string.support_text), v -> showDonateList()));
+        BottomSheet.show(this, getString(R.string.sheet_donate_title), content, true, null, null);
     }
 
     private void showDonateQr() {
@@ -600,16 +924,16 @@ public class AboutActivity extends ComponentActivity {
         content.addView(img);
 
         TextView note = new TextView(this);
-        note.setText("打赏请备注昵称，如：酷安/XXX，微博/XXX");
+        note.setText(getString(R.string.donate_note));
         note.setTextColor(getColor(R.color.text_tertiary));
         note.setTextSize(14f);
         note.setGravity(android.view.Gravity.CENTER);
         note.setPadding(0, Math.round(12 * density), 0, 0);
         content.addView(note);
 
-        BottomSheet.show(this, "向开发者捐赠", content, true, "保存到相册", () -> {
+        BottomSheet.show(this, getString(R.string.donate_qr_title), content, true, getString(R.string.donate_save), () -> {
             if (saveQrToGallery(qr)) {
-                Toast.makeText(this, "二维码已保存到相册\n已打开微信，请用「扫一扫」→「相册」识别",
+                Toast.makeText(this, getString(R.string.donate_qr_saved),
                         Toast.LENGTH_LONG).show();
                 openWeChat();
             }
@@ -636,7 +960,7 @@ public class AboutActivity extends ComponentActivity {
             content.addView(t);
             content.addView(sheetDivider());
         }
-        BottomSheet.show(this, "捐赠名单", content, true, null, null);
+        BottomSheet.show(this, getString(R.string.donate_list_title), content, true, null, null);
     }
 
     // ---------------- 弹卡：致谢名单（蓝字可点击） ----------------
@@ -646,7 +970,7 @@ public class AboutActivity extends ComponentActivity {
         content.setOrientation(LinearLayout.VERTICAL);
 
         TextView link = new TextView(this);
-        link.setText("1、MIUI_IME_Unlock");
+        link.setText(getString(R.string.thanks_miui_ime));
         link.setTextColor(getColor(R.color.text_link));
         link.setTextSize(16f);
         link.setTypeface(null, Typeface.BOLD);
@@ -654,7 +978,7 @@ public class AboutActivity extends ComponentActivity {
         link.setOnClickListener(v -> openUrl("https://github.com/RC1844/MIUI_IME_Unlock"));
         content.addView(link);
 
-        BottomSheet.show(this, "致谢列表", content, true, null, null);
+        BottomSheet.show(this, getString(R.string.sheet_thanks_title), content, true, null, null);
     }
 
     // ---------------- 弹卡内通用行 / 分隔线 ----------------
@@ -731,6 +1055,11 @@ public class AboutActivity extends ComponentActivity {
                 scheduleStatusFallback();
             }
         }
+        // 引导展示期间：从 LSPosed / 授权管理器等返回时，重新探测 ROOT（su 已设 4s 短超时，
+        // 不会再卡 10s+），让「超级用户权限」一项即时刷新。
+        if (welcomeOverlay != null) {
+            detectRootAsync();
+        }
     }
 
     @Override
@@ -738,7 +1067,13 @@ public class AboutActivity extends ComponentActivity {
         if (sCurrent.get() == this) {
             sCurrent.clear();
         }
+        // 引导仍在展示时记录当前页，供配置变更 / recreate 后落回原页
+        if (welcomeOverlay != null) {
+            sWelcomePage = uiWelcomePage.getValue();
+        }
         mStatusHandler.removeCallbacksAndMessages(null);
+        unregisterGestureLineObserver();
+        stopWelcomeStatusPoller();
         super.onDestroy();
     }
 
@@ -784,7 +1119,7 @@ public class AboutActivity extends ComponentActivity {
             }
             return true;
         } catch (Exception e) {
-            Toast.makeText(this, "保存失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, getString(R.string.save_fail) + e.getMessage(), Toast.LENGTH_SHORT).show();
             return false;
         }
     }
@@ -793,7 +1128,7 @@ public class AboutActivity extends ComponentActivity {
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
         } catch (Exception e) {
-            Toast.makeText(this, "无法打开链接", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, getString(R.string.open_failed), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -806,7 +1141,9 @@ public class AboutActivity extends ComponentActivity {
         }
     }
 
-    /** 以 root 执行命令；su 未授权、不可用或超时一律返回 false。 */
+    /** 以 root 执行命令；su 未授权、不可用或超时一律返回 false。
+     *  <p>超时从 20s 收紧到 4s：曾经「等待 su 授权」会阻塞 10+ 秒才刷新引导页的 ROOT 勾选，
+     *  现改为快速返回（未授权/超时即判 false），配合 onResume 重探测实现实时刷新。 */
     private boolean runSu(String cmd) {
         Process p = null;
         try {
@@ -815,7 +1152,7 @@ public class AboutActivity extends ComponentActivity {
             os.writeBytes(cmd + "\n");
             os.writeBytes("exit\n");
             os.flush();
-            boolean finished = p.waitFor(20, TimeUnit.SECONDS);
+            boolean finished = p.waitFor(4, TimeUnit.SECONDS);
             return finished && p.exitValue() == 0;
         } catch (Throwable t) {
             return false;

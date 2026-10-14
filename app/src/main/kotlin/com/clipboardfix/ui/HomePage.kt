@@ -2,10 +2,8 @@ package com.clipboardfix.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,12 +19,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipboardfix.R
-import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Icon
@@ -52,7 +50,6 @@ fun HomePage(
     androidVersion: String,
     systemVersion: String,
     abiInfo: String,
-    onMustKnow: () -> Unit,
     onStatusCardClick: () -> Unit,
 ) {
     val colors = MiuixTheme.colorScheme
@@ -66,13 +63,13 @@ fun HomePage(
             .padding(top = 8.dp, bottom = 120.dp),
     ) {
         Text(
-            text = "主页",
+            text = stringResource(R.string.home_title),
             fontSize = 30.sp,
             fontWeight = FontWeight.Bold,
             color = colors.onSurface,
         )
         Text(
-            text = "HyperFixClip",
+            text = stringResource(R.string.home_subtitle),
             fontSize = 14.sp,
             color = colors.onSurfaceVariantSummary,
             modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
@@ -88,7 +85,7 @@ fun HomePage(
 
         Spacer(Modifier.height(18.dp))
 
-        // 信息卡（卡片本身不加内边距：可点击行的按压高亮需与卡片上下边缘齐平，
+        // 信息卡（卡片本身不加内边距：行的按压高亮需与卡片上下边缘齐平，
         // 与旧版 XML 一致；行间距由各行自身内边距负责——首行顶部 22dp、
         // 末行底部 22dp，均对齐旧版 fragment_home.xml）
         Card(
@@ -96,14 +93,13 @@ fun HomePage(
             colors = CardDefaults.defaultColors(color = cardContainerColor()),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                InfoRow("应用版本", appVersion, topPad = 22.dp)
-                InfoRow("设备机型", deviceModel)
-                InfoRow("Android 版本", androidVersion)
-                InfoRow("系统版本", systemVersion)
-                InfoRow("系统架构", abiInfo)
-                InfoRow("LSPosed API", "API 102")
-                InfoRow("构建日期", buildDate)
-                ClickableRow("您需了解", "请务必阅读", onMustKnow, chevron = true, bottomPad = 22.dp)
+                InfoRow(stringResource(R.string.info_app_version), appVersion, topPad = 22.dp)
+                InfoRow(stringResource(R.string.info_device), deviceModel)
+                InfoRow(stringResource(R.string.info_android), androidVersion)
+                InfoRow(stringResource(R.string.info_system), systemVersion)
+                InfoRow(stringResource(R.string.info_arch), abiInfo)
+                InfoRow(stringResource(R.string.info_lsposed), "API 102")
+                InfoRow(stringResource(R.string.info_build), buildDate, bottomPad = 22.dp)
             }
         }
     }
@@ -130,7 +126,7 @@ private fun StatusCard(statusText: String, imeCountText: String, statusEnabled: 
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(text = "模块状态", fontSize = 15.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                Text(text = stringResource(R.string.module_status), fontSize = 15.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                 Text(
                     text = statusText,
                     fontSize = 24.sp,
@@ -156,39 +152,10 @@ private fun StatusCard(statusText: String, imeCountText: String, statusEnabled: 
 }
 
 @Composable
-private fun InfoRow(title: String, value: String, topPad: Dp = 12.dp) {
+private fun InfoRow(title: String, value: String, topPad: Dp = 12.dp, bottomPad: Dp = 12.dp) {
     val colors = MiuixTheme.colorScheme
-    Column(modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = topPad, bottom = 12.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = topPad, bottom = bottomPad)) {
         Text(text = title, fontSize = 17.sp, color = colors.onSurface)
         Text(text = value, fontSize = 15.sp, color = colors.onSurfaceVariantSummary, modifier = Modifier.padding(top = 4.dp))
     }
-}
-
-@Composable
-private fun ClickableRow(
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-    chevron: Boolean = false,
-    bottomPad: Dp = 12.dp,
-) {
-    BasicComponent(
-        modifier = Modifier
-            .fillMaxWidth()
-            .rowPressClickable(onClick),
-        title = title,
-        summary = subtitle,
-        insideMargin = PaddingValues(start = 20.dp, end = 16.dp, top = 12.dp, bottom = bottomPad),
-        endActions = {
-            if (chevron) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_chevron),
-                    contentDescription = null,
-                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-        },
-        onClick = null,
-    )
 }

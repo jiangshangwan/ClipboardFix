@@ -74,18 +74,18 @@ public class UpdateChecker {
 
     /** 主动检查更新（用户点击触发，始终显示结果） */
     public void checkForUpdates() {
-        showMessage("正在检查更新...");
+        showMessage(context.getString(R.string.uc_checking));
         new Thread(() -> {
             try {
                 String json = httpGet(API_URL);
                 if (json == null) {
-                    handler.post(() -> showMessage("网络请求失败，请检查网络"));
+                    handler.post(() -> showMessage(context.getString(R.string.uc_net_fail)));
                     return;
                 }
                 ReleaseInfo release = parseRelease(json);
                 handler.post(() -> showResult(release));
             } catch (Exception e) {
-                handler.post(() -> showMessage("检查更新失败: " + e.getMessage()));
+                handler.post(() -> showMessage(context.getString(R.string.uc_check_fail) + e.getMessage()));
             }
         }).start();
     }
@@ -110,49 +110,49 @@ public class UpdateChecker {
         if (release.hasUpdate) {
             showUpdateDialog(release);
         } else {
-            showMessage("当前已是最新版本 v" + release.currentVersion);
+            showMessage(context.getString(R.string.uc_latest) + release.currentVersion);
         }
     }
     /** 更新提醒：改为与「更新日志 / 您需了解」一致的 BottomSheet 居中圆角卡片风格。 */
     private void showUpdateDialog(ReleaseInfo release) {
         // 兜底：理论上 UpdateChecker 仅由 Activity 构造；若上下文非 Activity 仍用系统弹窗
-        if (!(context instanceof Activity)) {
-            new AlertDialog.Builder(context)
-                    .setTitle("发现新版本 " + release.tagName)
-                    .setMessage("当前版本: v" + release.currentVersion
-                            + "\n\n更新内容:\n" + stripMarkdown(release.body))
-                    .setPositiveButton("立即更新", (d, w) -> downloadAndInstall(release))
-                    .setNegativeButton("稍后", null)
-                    .setCancelable(true)
-                    .show();
-            return;
+            if (!(context instanceof Activity)) {
+                new AlertDialog.Builder(context)
+                        .setTitle(context.getString(R.string.uc_new_version) + " " + release.tagName)
+                        .setMessage(context.getString(R.string.uc_current) + release.currentVersion
+                                + "\n\n" + context.getString(R.string.uc_update_content) + "\n" + stripMarkdown(release.body))
+                        .setPositiveButton(context.getString(R.string.uc_update_now), (d, w) -> downloadAndInstall(release))
+                        .setNegativeButton(context.getString(R.string.uc_later), null)
+                        .setCancelable(true)
+                        .show();
+                return;
+            }
+            Activity activity = (Activity) context;
+            float density = activity.getResources().getDisplayMetrics().density;
+
+            LinearLayout content = new LinearLayout(activity);
+            content.setOrientation(LinearLayout.VERTICAL);
+
+            TextView tvCurrent = new TextView(activity);
+            tvCurrent.setText(activity.getString(R.string.uc_current) + release.currentVersion);
+            tvCurrent.setTextColor(activity.getColor(R.color.text_tertiary));
+            tvCurrent.setTextSize(14f);
+            tvCurrent.setPadding(0, 0, 0, Math.round(8 * density));
+            content.addView(tvCurrent);
+
+            TextView tvBody = new TextView(activity);
+            tvBody.setText(activity.getString(R.string.uc_update_content) + "\n" + stripMarkdown(release.body));
+            tvBody.setTextColor(activity.getColor(R.color.text_primary));
+            tvBody.setTextSize(15f);
+            tvBody.setLineSpacing(4 * density, 1f);
+            content.addView(tvBody);
+
+            View actions = BottomSheet.buildTwoButtonRow(activity,
+                    activity.getString(R.string.uc_later), null,
+                    activity.getString(R.string.uc_update_now), () -> downloadAndInstall(release));
+
+            BottomSheet.show(activity, activity.getString(R.string.uc_new_version) + " " + release.tagName, content, true, actions);
         }
-        Activity activity = (Activity) context;
-        float density = activity.getResources().getDisplayMetrics().density;
-
-        LinearLayout content = new LinearLayout(activity);
-        content.setOrientation(LinearLayout.VERTICAL);
-
-        TextView tvCurrent = new TextView(activity);
-        tvCurrent.setText("当前版本: v" + release.currentVersion);
-        tvCurrent.setTextColor(activity.getColor(R.color.text_tertiary));
-        tvCurrent.setTextSize(14f);
-        tvCurrent.setPadding(0, 0, 0, Math.round(8 * density));
-        content.addView(tvCurrent);
-
-        TextView tvBody = new TextView(activity);
-        tvBody.setText("更新内容:\n" + stripMarkdown(release.body));
-        tvBody.setTextColor(activity.getColor(R.color.text_primary));
-        tvBody.setTextSize(15f);
-        tvBody.setLineSpacing(4 * density, 1f);
-        content.addView(tvBody);
-
-        View actions = BottomSheet.buildTwoButtonRow(activity,
-                "稍后", null,
-                "立即更新", () -> downloadAndInstall(release));
-
-        BottomSheet.show(activity, "发现新版本 " + release.tagName, content, true, actions);
-    }
 
     private void downloadAndInstall(ReleaseInfo release) {
         // 兜底：理论上 UpdateChecker 仅由 Activity 构造；非 Activity 上下文仍用系统弹窗
@@ -163,7 +163,7 @@ public class UpdateChecker {
         final Activity activity = (Activity) context;
         final CancelToken token = new CancelToken();
         final BottomSheet.ProgressSheet sheet = BottomSheet.showProgress(
-                activity, "正在下载更新", "HyperFixClip " + release.tagName, () -> {
+                activity, activity.getString(R.string.uc_downloading), "HyperClipFix " + release.tagName, () -> {
                     token.cancelled = true;
                     java.net.HttpURLConnection c = token.conn;
                     if (c != null) c.disconnect();
@@ -176,7 +176,7 @@ public class UpdateChecker {
                 downloadFile(release.downloadUrl, apkFile, token, (read, total) -> {
                     if (total > 0 && !sizeKnown[0]) {
                         sizeKnown[0] = true;
-                        sheet.setSubTitle("HyperFixClip " + release.tagName + " · 共 " + formatMb(total));
+                        sheet.setSubTitle("HyperClipFix " + release.tagName + " · 共 " + formatMb(total));
                     }
                     sheet.setProgress(total > 0 ? (int) (read * 100 / total) : 0, read, total);
                 });
@@ -197,7 +197,7 @@ public class UpdateChecker {
                 android.util.Log.e("ClipboardFix", "downloadAndInstall failed", e);
                 handler.post(() -> {
                     sheet.dismiss();
-                    showMessage("下载失败: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                    showMessage(context.getString(R.string.uc_download_fail) + e.getClass().getSimpleName() + ": " + e.getMessage());
                 });
             }
         }, "cf-apk-download").start();
@@ -206,7 +206,7 @@ public class UpdateChecker {
     /** 非 Activity 上下文的兜底下载（保留系统 ProgressDialog）。 */
     private void legacyDownloadAndInstall(ReleaseInfo release) {
         final ProgressDialog dialog = new ProgressDialog(context);
-        dialog.setMessage("正在下载更新...");
+        dialog.setMessage(context.getString(R.string.uc_downloading));
         dialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
         dialog.setMax(100);
         dialog.setCancelable(false);
@@ -227,7 +227,7 @@ public class UpdateChecker {
                 android.util.Log.e("ClipboardFix", "legacyDownloadAndInstall failed", e);
                 handler.post(() -> {
                     dialog.dismiss();
-                    showMessage("下载失败: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                    showMessage(context.getString(R.string.uc_download_fail) + e.getClass().getSimpleName() + ": " + e.getMessage());
                 });
             }
         }, "cf-apk-download").start();
@@ -299,7 +299,7 @@ public class UpdateChecker {
         // Android 8+ 需要 REQUEST_INSTALL_PACKAGES 权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!context.getPackageManager().canRequestPackageInstalls()) {
-                showMessage("请先开启「安装未知应用」权限");
+                showMessage(context.getString(R.string.uc_install_perm));
                 Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
                 settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 context.startActivity(settings);

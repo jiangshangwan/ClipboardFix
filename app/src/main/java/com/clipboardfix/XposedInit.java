@@ -129,6 +129,13 @@ public class XposedInit extends XposedModule {
             PanelColorHook.init(param);
         }
 
+        // 剪贴板条目置顶（右滑置顶 / 清空保留）：同样装在输入法进程
+        // （查询重排 + 右滑手势 + 清空写回全部发生在默认输入法侧）。
+        // 由「开启剪贴板条目置顶」开关控制，默认关闭。
+        if (ModulePrefs.isClipboardPinEnabled()) {
+            ClipboardPinHook.init(param);
+        }
+
         if (PKG_PHRASE.equals(pkg)) {
             log("phrase: v" + BuildConfig.VERSION_NAME);
             ClipboardHook.init();
