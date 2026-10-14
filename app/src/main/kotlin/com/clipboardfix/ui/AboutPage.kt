@@ -48,6 +48,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.clipboardfix.AboutLogoView
 import com.clipboardfix.R
+import com.kyant.backdrop.backdrops.layerBackdrop
+// 与 Miuix blur 的同名函数重名，起别名区分（本页毛玻璃卡片用 Miuix 的，Snackbar 用 Kyant 的）
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop as rememberKyantLayerBackdrop
 import dev.chrisbanes.haze.HazeProgressive
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
@@ -124,6 +127,10 @@ fun AboutPage(
     // 故极光必须是 Compose 节点而非 AndroidView）
     val aurora = remember(night) { AuroraState(night) }
     val backdrop = rememberLayerBackdrop()
+    // Kyant 折射源：Snackbar 的柔光玻璃面板用（与下拉弹卡同款材质）。
+    // 关于页已有 Haze + Miuix 两条录制链，这里只挂「来源容器」一整层，
+    // Snackbar 出现时才对同一份内容取样，不新增每帧录制成本之外的常驻开销。
+    val snackbarBackdrop = rememberKyantLayerBackdrop()
     // Haze 渐进模糊状态：头部条 ④ 据此模糊背后滚动内容（同帧录制，无拖影）
     val hazeState = rememberHazeState()
 
@@ -179,7 +186,7 @@ fun AboutPage(
     Box(modifier = Modifier.fillMaxSize()) {
         // 模糊来源（①+②+③ 整体）：Haze 据此实时录制并模糊，供头部条 ④ 的 hazeEffect 消费；
         // 模糊副本与来源**同帧**生成（不像 Miuix layerBackdrop 滞后 2~3 帧），快速滑动无拖影。
-        Box(modifier = Modifier.fillMaxSize().hazeSource(hazeState)) {
+        Box(modifier = Modifier.fillMaxSize().hazeSource(hazeState).layerBackdrop(snackbarBackdrop)) {
         // ① 极光背景（Compose AGSL，铺满整屏；滚动整体淡出；挂 layerBackdrop 供卡片模糊）
         AuroraBackground(
             state = aurora,
@@ -331,6 +338,9 @@ fun AboutPage(
                     .padding(top = 22.dp, bottom = BAR_BOTTOM_PAD_DP.dp),
             )
         }
+
+        // Snackbar 宿主：玻璃面板折射本页内容（与毛玻璃卡片同源），浮在底部导航条上方
+        PageSnackbarHost(backdrop = snackbarBackdrop)
     }
 }
 

@@ -15,9 +15,10 @@ import android.provider.Settings;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
+
+import com.clipboardfix.ui.ClipboardFixUi;
 
 import org.json.JSONObject;
 
@@ -48,7 +49,7 @@ public class UpdateChecker {
     private final Context context;
     private final Handler handler;
 
-    /** 结果提示出口：默认系统 Toast，Activity 可替换为深色胶囊提示（对齐 HyperIsland）。 */
+    /** 结果提示出口：默认走全局 Snackbar（Miuix 组件），Activity 可替换为自定义渲染。 */
     public interface MessageSink {
         void show(String text);
     }
@@ -68,7 +69,7 @@ public class UpdateChecker {
         if (sink != null) {
             sink.show(text);
         } else {
-            Toast.makeText(context, text, Toast.LENGTH_SHORT).show();
+            ClipboardFixUi.showSnack(text);
         }
     }
 

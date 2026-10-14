@@ -59,7 +59,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.roundToInt
 
 /**
- * 语言 / 主题的「液体玻璃」下拉弹卡。
+ * 语言 / 主题 / 重启或重载的「液体玻璃」下拉弹卡。
  *
  * 玻璃材质与动画节奏完全对齐 HyperOS 系统级柔光玻璃观感：
  * 在 `drawBackdrop` 的效果链里依次做
@@ -80,32 +80,32 @@ import kotlin.math.roundToInt
  */
 
 /** 弹卡圆角。 */
-private val GLASS_CORNER_DP = 25.dp
+internal val GLASS_CORNER_DP = 25.dp
 /**
  * 弹卡四周留白：投影与高光都会画到卡片外，必须给它留出绘制空间，
  * 否则会被父布局裁掉（这也是弹卡定位时要整体外扩的量）。
  */
-private val GLASS_SHADOW_PAD_DP = 28.dp
+internal val GLASS_SHADOW_PAD_DP = 28.dp
 /** 表面铺色透明度：越实越不透明，模糊透出越少。 */
-private const val GLASS_TINT_ALPHA = 0.80f
+internal const val GLASS_TINT_ALPHA = 0.80f
 /** 表面铺色在浅色主题下固定用近白，深色主题直接取主题容器色。 */
-private val GLASS_TINT_LIGHT = Color(0xFFF8F8F8)
+internal val GLASS_TINT_LIGHT = Color(0xFFF8F8F8)
 
 /** 基础模糊半径（px 由 dp 换算）。 */
-private val GLASS_BLUR_DP = 4.dp
+internal val GLASS_BLUR_DP = 4.dp
 /** 边缘透镜：折射高度 / 折射强度。 */
-private val GLASS_LENS_HEIGHT_DP = 10.dp
-private val GLASS_LENS_AMOUNT_DP = 28.dp
+internal val GLASS_LENS_HEIGHT_DP = 10.dp
+internal val GLASS_LENS_AMOUNT_DP = 28.dp
 /** 高光描边不透明度。 */
-private const val GLASS_HIGHLIGHT_ALPHA = 0.70f
+internal const val GLASS_HIGHLIGHT_ALPHA = 0.70f
 /** 投影半径 / 不透明度。 */
-private val GLASS_SHADOW_RADIUS_DP = 12.dp
-private const val GLASS_SHADOW_ALPHA = 0.35f
+internal val GLASS_SHADOW_RADIUS_DP = 12.dp
+internal const val GLASS_SHADOW_ALPHA = 0.35f
 
 /** 弹卡固定宽度（= Miuix DropdownDefaults.MinWidth，与系统下拉菜单一致的小卡）。 */
-private val GLASS_MIN_WIDTH_DP = 200.dp
+internal val GLASS_MIN_WIDTH_DP = 200.dp
 /** 弹卡与锚点行的相对位置：从锚点行顶部再往下这个比例处开始（菜单「盖住」触发行的观感）。 */
-private const val GLASS_ANCHOR_TOP_RATIO = 0.10f
+internal const val GLASS_ANCHOR_TOP_RATIO = 0.10f
 /** 弹卡距屏幕上 / 下边缘的最小留白。 */
 private const val DROPDOWN_EDGE_DP = 20f
 /** 单项最小高度（与行高一致，点起来不局促）。 */
@@ -120,7 +120,7 @@ private const val ITEM_CHECK_GAP_DP = 12f
 private const val ENTER_STIFFNESS = 232f
 /** 收起：更硬更快（stiffness 400）。 */
 private const val EXIT_STIFFNESS = 400f
-private const val GLASS_SPRING_DAMPING = 0.78f
+internal const val GLASS_SPRING_DAMPING = 0.78f
 /** 起止缩放：0.24 → 1，从锚点顶部「展开」。 */
 private const val SCALE_MIN = 0.24f
 /** 透明度时长：进场更快、退场更慢。 */
@@ -142,6 +142,9 @@ internal class DropdownRequest(
  * 下拉行：外观与 Miuix 的 DropdownPreference 一致（标题 + 当前值 + 下箭头），
  * 点击时把锚点位置（根坐标 px）与选项打包成 [DropdownRequest] 交给页面覆盖层渲染。
  *
+ * 尾栏默认显示当前选中项；传入 [summary] 时改为显示该摘要文本——用于「重启或者重载」
+ * 这类没有持久当前值的动作行（例如显示「需要 ROOT 权限」提示）。
+ *
  * 锚点坐标存在**非状态**容器里：onGloballyPositioned 在滚动时每帧回调，
  * 若存进 state 会导致滚动时整页重组；这里只在点击那一刻读取。
  */
@@ -152,6 +155,7 @@ internal fun GlassDropdownRow(
     selectedIndex: Int,
     onSelected: (Int) -> Unit,
     onOpen: (DropdownRequest) -> Unit,
+    summary: String? = null,
 ) {
     val colors = MiuixTheme.colorScheme
     val anchor = remember { arrayOfNulls<LayoutCoordinates>(1) }
@@ -166,7 +170,9 @@ internal fun GlassDropdownRow(
                 onOpen(
                     DropdownRequest(
                         items = items,
-                        selectedIndex = idx,
+                        // 透传原始选中下标：-1 表示「无默认选中」（如重启或者重载），
+                        // 弹卡不画勾；语言/主题行传合法下标，行为不变
+                        selectedIndex = selectedIndex,
                         anchorLeft = p.x,
                         anchorTop = p.y,
                         anchorWidth = c.size.width,
@@ -179,7 +185,7 @@ internal fun GlassDropdownRow(
         insideMargin = PaddingValues(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
         endActions = {
             Text(
-                text = items[idx],
+                text = summary ?: items[idx],
                 fontSize = 15.sp,
                 color = colors.onSurfaceVariantSummary,
             )

@@ -25,8 +25,6 @@
     <color name="row_highlight">#33000000</color>
 
     <!-- 胶囊提示：深色底白字 + 浅色模式用边框勾边，避免与背景融为一体 -->
-    <color name="snack_bg">#E61E1E22</color>
-    <color name="snack_stroke">#33FFFFFF</color>
 
     <!-- 底部弹卡：遮罩 + 可点击蓝色链接（对齐 PPT 强调蓝） -->
     <color name="sheet_scrim">#59000000</color>

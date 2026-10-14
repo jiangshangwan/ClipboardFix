@@ -8,6 +8,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
 import android.view.inputmethod.InputMethodManager;
 
 import java.lang.reflect.Method;
@@ -23,8 +24,8 @@ import dalvik.system.BaseDexClassLoader;
 /**
  * 解锁 MIUI 全面屏优化（第三方输入法底部常用语/剪贴板入口）。
  *
- * <p>逻辑移植自 RC1844/MIUI_IME_Unlock 及 Yizhou147/HyperOS-IME-Unlock，
- * 由 Kotlin + EzXHelper 改写为纯 Java。只在第三方输入法进程内安装，
+ * <p>逻辑参考了公开的 IME 全面屏解锁方案思路，
+ * 由 Kotlin 实现改写为纯 Java。只在第三方输入法进程内安装，
  * 小米定制版输入法跳过大部分 hook。
  *
  * <p>键盘「异常增高 / 抬高」的修复策略（2026-09-22 移植参考项目定稿）：
@@ -71,6 +72,14 @@ public final class ImeUnlockHook {
     private static final Map<ViewGroup, WeakReference<View>> ADJUSTED_CONTENT_VIEWS = new WeakHashMap<>();
     /** 每个 inputFrame 对应的 fullscreenArea / rootView / bottomArea 引用。 */
     private static final Map<ViewGroup, MiuiBottomFrame> MIUI_BOTTOM_FRAMES = new WeakHashMap<>();
+    /** 已剥离冗余导航 padding 的视图，按 inputFrame 记录（用于还原）。 */
+    private static final Map<ViewGroup, WeakReference<View>> ADJUSTED_NAV_PADDING_VIEWS = new WeakHashMap<>();
+    /** 被剥离视图的原始 bottom padding，用于还原。 */
+    private static final Map<View, Integer> ORIGINAL_NAV_PADDING_BOTTOMS = new WeakHashMap<>();
+    /** 查找冗余导航 padding 宿主时的最大下钻深度。 */
+    private static final int NAV_PADDING_MAX_DEPTH = 6;
+    /** 冗余导航 padding 判定容差（px）。 */
+    private static final int NAV_PADDING_TOLERANCE = 2;
 
     private ImeUnlockHook() {
     }
@@ -82,6 +91,10 @@ public final class ImeUnlockHook {
                 + ", device=" + Build.DEVICE
                 + ", miui=" + SysProps.get("ro.miui.ui.version.name", "?"));
 
+        // 让输入法窗口 edge-to-edge（Android 15+ 上 targetSdk<35 的输入法窗口默认不是
+        // edge-to-edge，系统给内容容器设 marginBottom=导航栏高度，导致 MIUI 底栏被整体抬高）。
+        hookImeWindowEdgeToEdge();
+
         if (isNonCustomize) {
             Class<?> injector = Reflect.findClassIfExists(
                     "android.inputmethodservice.InputMethodServiceInjector", cl);
@@ -91,14 +104,9 @@ public final class ImeUnlockHook {
                         cl);
             }
             if (injector != null) {
-                // 关键：把「MIUI 工具栏所占的底部安全区」从输入法内容的 insets 里裁掉。
-                // 这是「键盘被抬高 / 底部安全区被重复计算」的正解——不去改键盘视图的
-                // padding/LayoutParams/translationY，而是在 insets 分发链上精确剔除那几类
-                // inset 的 bottom 值，让整棵输入法子树自然不再为「已由 MIUI 工具栏占用的
-                // 区域」二次避让。
-                // 旧实现（hookImeWindowEdgeToEdge / hookMiuiBottomInsetCompatibility）已被
-                // 本方案取代，保留在文件末尾仅供追溯，不再调用。
-                ImeInsetsHook.registerManager(injector);
+                // 键盘抬高修复统一走 reconcileMiuiBottomFrame（addMiuiBottomView 触发）：
+                // 内容视图填满 inputFrame 时把其 bottom padding 减去导航栏 inset，并剥离
+                // MIUI 工具栏注入的冗余导航 padding。
                 hookSIsImeSupport(injector);
                 hookIsXiaoAiEnable(injector);
                 setPhraseBgColor(injector, cl);
@@ -137,7 +145,7 @@ public final class ImeUnlockHook {
      *   <li>hook 方法 {@code isImeSupport()} 恒返回 true——与赋值时机无关，服务重建后依然有效。</li>
      * </ol>
      *
-     * <p>第 2 点参照 RC1844/MIUI_IME_Unlock v1.17（PR #34「Fix IME support hook after service
+     * <p>第 2 点参照社区方案 v1.17（PR #34「Fix IME support hook after service
      * recreation」）。只改静态字段是一次性赋值：输入法服务重建、类被重新初始化或别处重新
      * 计算该字段时，值会被写回 false，底部常用语入口随之消失且必须重启输入法进程才恢复。
      * 改为拦截判断方法后，任何调用点拿到的恒为 true，不受重置时机影响。
@@ -332,9 +340,10 @@ public final class ImeUnlockHook {
                 Class<?> bottom = Reflect.findClassIfExists(
                         "com.miui.inputmethod.InputMethodBottomManager", loader);
                 if (bottom != null) {
-                    // 键盘抬高修复：把底部安全区从输入法 insets 里裁掉（对所有输入法通用，
-                    // 是否真正生效由 ImeInsetsHook 内部的 isActive() 严格约束）。
-                    ImeInsetsHook.registerManager(bottom);
+                    // 键盘抬高修复：hook addMiuiBottomView，由 reconcileMiuiBottomFrame 在
+                    // 内容视图填满 inputFrame、或 MIUI 工具栏注入冗余底部安全区时，把对应视图
+                    // 的 bottom padding 减去导航栏 inset，并剥离冗余导航 padding。
+                    hookMiuiBottomInsetCompatibility(bottom);
                     if (isNonCustomize) {
                         hookSIsImeSupport(bottom);
                         hookIsXiaoAiEnable(bottom);
@@ -457,7 +466,7 @@ public final class ImeUnlockHook {
     }
 
     // ---------------------------------------------------------------
-    // 键盘「异常增高 / 抬高」修复（移植 Yizhou147/HyperOS-IME-Unlock）
+    // 键盘「异常增高 / 抬高」修复（2026-10-14 合并上游键盘抬高修复解法的关键增量）
     //
     // 现象：部分机型（澎湃 OS4 / 小米 17 Pro Max、15 Ultra）上第三方输入法
     //（微信 / 讯飞 / 搜狗 / 豆包 / Gboard）解锁全面屏优化后键盘底部出现多余空白、
@@ -468,12 +477,16 @@ public final class ImeUnlockHook {
     // 可见 navigationBarBackground，导致 MIUI 底栏被整体抬高；而部分输入法（微信 3.5.2、
     // Gboard 等）又把内容视图填满 inputFrame，把键盘顶入导航栏区域「异常增高」。
     //
-    // 修法（2026-09-22 定稿）：
+    // 修法（2026-10-14 定稿，含上游最新增量）：
     //   1. hookImeWindowEdgeToEdge —— setDecorFitsSystemWindows(false) 让窗口延伸到底部；
     //   2. compensateLegacyWindowInsets —— 兜底归零残留 bottomMargin + 隐藏 navigationBarBackground；
     //   3. hookMiuiBottomInsetCompatibility —— 在 addMiuiBottomView 时，若内容视图填满
     //      inputFrame，把内容视图底部 padding 减导航栏 inset、fullscreenArea 高度加导航栏 inset，
     //      把被顶高的空间让还给 MIUI 底栏；底栏隐藏/异常时自动还原。
+    //   4. stripRedundantNavigationPadding —— 在 reconcile 收尾时，于视图树里查找 MIUI 工具栏
+    //      注入的「冗余导航 padding 宿主」（bottom padding == 导航栏 inset 且子视图未填满该区域），
+    //      把它的 bottom padding 减去导航栏 inset。这是键盘被抬高的真正根因之一，原 ImeInsetsHook
+    //      方案未覆盖；anchorCandidatesAreaToKeyboard 先把候选区贴上键盘，避免被误判为增高。
     // 全程弱引用、幂等，仅在真正出现增高时干预，不与输入法 layout 死循环。
     // ---------------------------------------------------------------
 
@@ -724,6 +737,8 @@ public final class ImeUnlockHook {
 
         // 兼容 legacy（targetSdk<35）输入法：先修正被系统收缩的窗口内容区与底栏 margin
         compensateLegacyWindowInsets(rootView, bottomArea);
+        // 让候选区贴合键盘（部分输入法候选区上方留白会被误判为增高）
+        anchorCandidatesAreaToKeyboard(fullscreenArea);
 
         View contentView = null;
         for (int i = 0; i < inputFrame.getChildCount(); i++) {
@@ -737,9 +752,10 @@ public final class ImeUnlockHook {
         int navigationInset = 0;
         boolean hasInset = false;
         try {
-            android.view.WindowInsets ins = rootView.getRootWindowInsets();
+            WindowInsets ins = rootView.getRootWindowInsets();
             if (ins != null) {
-                int b = ins.getSystemWindowInsetBottom();
+                int b = ins.getInsets(WindowInsets.Type.navigationBars()).bottom;
+                if (b <= 0) b = ins.getSystemWindowInsetBottom();
                 if (b > 0) {
                     navigationInset = b;
                     hasInset = true;
@@ -754,10 +770,12 @@ public final class ImeUnlockHook {
 
         if (!bottomAreaActive) {
             restoreMiuiBottomFrame(inputFrame, fullscreenArea);
+            restoreNavigationPadding(inputFrame);
             return;
         }
         if (contentView == null) {
             restoreMiuiBottomFrame(inputFrame, fullscreenArea);
+            restoreNavigationPadding(inputFrame);
             return;
         }
 
@@ -781,6 +799,8 @@ public final class ImeUnlockHook {
         if (!fillsInputFrame
                 || (contentView.getPaddingBottom() != navigationInset && !isAlreadyAdjusted)) {
             if (isCurrentContentAdjusted) restoreMiuiBottomFrame(inputFrame, fullscreenArea);
+            // 即便内容视图未填满 inputFrame，也尝试剥离冗余导航 padding
+            stripRedundantNavigationPadding(inputFrame, navigationInset);
             return;
         }
 
@@ -798,6 +818,8 @@ public final class ImeUnlockHook {
         if (!expandFullscreenArea(fullscreenArea, navigationInset)) {
             restoreMiuiBottomFrame(inputFrame, fullscreenArea);
         }
+        // 剥离 MIUI 工具栏注入的冗余底部安全区（键盘被抬高的真正根因之一）
+        stripRedundantNavigationPadding(inputFrame, navigationInset);
     }
 
     private static boolean expandFullscreenArea(ViewGroup fullscreenArea, int navigationInset) {
@@ -849,6 +871,118 @@ public final class ImeUnlockHook {
         if (params.height == height[2]) {
             params.height = height[0];
             fullscreenArea.setLayoutParams(params);
+        }
+    }
+
+    /**
+     * 让候选区贴合键盘：清零 fullscreenArea 的 top padding，并在候选区与底栏之间出现过大间隙
+     * （extractArea 被 GONE 掉）时把它改成 INVISIBLE，避免被误判为「键盘增高」。
+     */
+    private static void anchorCandidatesAreaToKeyboard(ViewGroup fullscreenArea) {
+        if (fullscreenArea.getPaddingTop() != 0) {
+            fullscreenArea.setPadding(fullscreenArea.getPaddingLeft(), 0,
+                    fullscreenArea.getPaddingRight(), fullscreenArea.getPaddingBottom());
+        }
+        View candidatesArea = null;
+        View extractArea = null;
+        for (int i = 0; i < fullscreenArea.getChildCount(); i++) {
+            View child = fullscreenArea.getChildAt(i);
+            String name = idName(child);
+            if ("candidatesArea".equals(name)) {
+                if (child instanceof ViewGroup && child.getVisibility() == View.VISIBLE) {
+                    candidatesArea = child;
+                }
+            } else if ("extractArea".equals(name)) {
+                extractArea = child;
+            }
+        }
+        if (candidatesArea != null && extractArea != null) {
+            int gap = fullscreenArea.getHeight() - candidatesArea.getHeight();
+            if (candidatesArea.getHeight() > 0 && gap > 50) {
+                if (extractArea.getVisibility() == View.GONE) {
+                    log("bottom-inset: anchor gap=" + gap + " extractArea GONE->INVISIBLE");
+                    extractArea.setVisibility(View.INVISIBLE);
+                }
+            }
+        }
+    }
+
+    /**
+     * 在视图树里（最多下钻 {@link #NAV_PADDING_MAX_DEPTH} 层）查找一个「冗余导航 padding 宿主」：
+     * 其 bottom padding 恰好等于导航栏 inset，且其子视图并未填满该 padding 区域——即 MIUI 注入的
+     * 重复底部安全区。返回该视图，找不到返回 null。
+     */
+    private static View findNavigationPaddingOwner(View start, int navigationInset, int depth) {
+        if (depth > NAV_PADDING_MAX_DEPTH) return null;
+        if (!(start instanceof ViewGroup)) return null;
+        ViewGroup group = (ViewGroup) start;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child.getVisibility() != View.VISIBLE) continue;
+            if (child.getPaddingBottom() != navigationInset) continue;
+            if (!(child instanceof ViewGroup)) continue;
+            if (child.getHeight() <= navigationInset) continue;
+            ViewGroup childGroup = (ViewGroup) child;
+            int maxBottom = 0;
+            for (int j = 0; j < childGroup.getChildCount(); j++) {
+                View grandChild = childGroup.getChildAt(j);
+                if (grandChild.getVisibility() != View.VISIBLE) continue;
+                int b = grandChild.getBottom();
+                maxBottom = Math.max(maxBottom, b);
+            }
+            int h = child.getHeight();
+            int p = child.getPaddingBottom();
+            if ((h - p + 2) >= maxBottom) return child;
+        }
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            View r = findNavigationPaddingOwner(child, navigationInset, depth + 1);
+            if (r != null) return r;
+        }
+        return null;
+    }
+
+    /**
+     * 剥离 MIUI 工具栏注入的冗余底部安全区：找到 bottom padding 等于导航栏 inset、且其子视图
+     * 未填满该区域的视图，把它的 bottom padding 减去导航栏 inset。修复「键盘被抬高」的真正根因之一。
+     */
+    private static void stripRedundantNavigationPadding(ViewGroup inputFrame, int navigationInset) {
+        WeakReference<View> adjustedRef =
+                (WeakReference<View>) ADJUSTED_NAV_PADDING_VIEWS.get(inputFrame);
+        View adjusted = adjustedRef != null ? adjustedRef.get() : null;
+        if (adjusted != null) {
+            if (adjusted.getPaddingBottom() == 0) return;
+            ADJUSTED_NAV_PADDING_VIEWS.remove(inputFrame);
+            restoreNavigationPaddingTo(adjusted);
+        }
+        View target = findNavigationPaddingOwner(inputFrame, navigationInset, 0);
+        if (target == null) return;
+        if (!ORIGINAL_NAV_PADDING_BOTTOMS.containsKey(target)) {
+            ORIGINAL_NAV_PADDING_BOTTOMS.put(target, target.getPaddingBottom());
+        }
+        ADJUSTED_NAV_PADDING_VIEWS.put(inputFrame, new WeakReference<>(target));
+        log("bottom-inset: navPadding " + idName(target) + " paddingBottom "
+                + target.getPaddingBottom() + " -> " + (target.getPaddingBottom() - navigationInset));
+        target.setPadding(target.getPaddingLeft(), target.getPaddingTop(),
+                target.getPaddingRight(), target.getPaddingBottom() - navigationInset);
+    }
+
+    private static void restoreNavigationPadding(ViewGroup inputFrame) {
+        WeakReference<View> ref =
+                (WeakReference<View>) ADJUSTED_NAV_PADDING_VIEWS.remove(inputFrame);
+        if (ref != null) {
+            View v = ref.get();
+            if (v != null) restoreNavigationPaddingTo(v);
+        }
+    }
+
+    private static void restoreNavigationPaddingTo(View view) {
+        if (view == null) return;
+        Integer paddingBottom = (Integer) ORIGINAL_NAV_PADDING_BOTTOMS.remove(view);
+        if (paddingBottom == null) return;
+        if (view.getPaddingBottom() != 0) {
+            view.setPadding(view.getPaddingLeft(), view.getPaddingTop(),
+                    view.getPaddingRight(), paddingBottom);
         }
     }
 

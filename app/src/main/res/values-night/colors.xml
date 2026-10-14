@@ -23,8 +23,6 @@
     <color name="row_highlight">#26FFFFFF</color>
 
     <!-- 胶囊提示：深色模式下用更亮的表面容器 + 明显边框，避免和背景融为一体 -->
-    <color name="snack_bg">#E62C2C2E</color>
-    <color name="snack_stroke">#4DFFFFFF</color>
 
     <!-- 底部弹卡：遮罩 + 可点击蓝色链接（深色下仍用强调蓝，保证可读） -->
     <color name="sheet_scrim">#99000000</color>

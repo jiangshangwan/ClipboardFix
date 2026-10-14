@@ -31,7 +31,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
@@ -42,6 +41,7 @@ import java.io.DataOutputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -88,6 +88,10 @@ public class AboutActivity extends ComponentActivity {
     public final MutableState<Boolean> uiSwClipboardPin = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_CLIPBOARD_PIN);
     public final MutableState<Boolean> uiIconHidden = ClipboardFixUi.stateOf(false);
     public final MutableState<Boolean> uiUpdateDisabled = ClipboardFixUi.stateOf(false);
+    /** 主题模式（跟随系统/浅色/深色）。用可观察状态而非普通 Int：系统深浅色未变时
+     *  （如「默认(浅色)」再选「浅色」）不会触发 Activity 重建，行内选中值需自行刷新。 */
+    public final MutableState<Integer> uiThemeMode =
+            ClipboardFixUi.stateOf(AppConfig.MODE_SYSTEM);
 
     // ---- 欢迎引导（首次进入的三页覆盖层）----
     /** 引导当前页下标（0/1/2）。跨 Activity 重建保留：语言切换会 recreate，不能把用户踢回第一页。 */
@@ -114,10 +118,15 @@ public class AboutActivity extends ComponentActivity {
     private ImageView navIconHome, navIconFeature, navIconAbout, navIconSettings;
     private TextView navLabelHome, navLabelFeature, navLabelAbout, navLabelSettings;
     private int currentTab = 0;
+    /**
+     * selectTab 是否已初始化过。onCreate 里的首次调用是「恢复上次页签」
+     * （切主题/语言导致 Activity 重建时尤其明显），必须直接落位：
+     * 若走动画，设置页会从 alpha 0 滑入，期间主页（XML 默认可见）先露一面，
+     * 就是用户看到的「从主页闪一下再回到设置页」。
+     */
+    private boolean mTabInitialized = false;
     /** 跨重建（切换语言/主题 recreate）保留当前 Tab，避免跳回主页。 */
     private static int sLastTab = 0;
-
-    private TextView mSnackView;
 
     // 模块启用状态（通过 libxposed:service 实时查询 LSPosed）
     private static final String MODULE_PKG = "com.clipboardfix";
@@ -212,7 +221,7 @@ public class AboutActivity extends ComponentActivity {
                 this::onTogglePanelColor,
                 this::onToggleClipboardPin,
                 checked -> onToggleHideIcon(checked),
-                this::rebootDevice,
+                which -> onRebootOrReload(which),
                 () -> openUrl("https://www.coolapk.com/u/3019478"),
                 () -> openUrl("https://weibo.com/u/3725737792"),
                 () -> openUrl("https://github.com/jiangshangwan/ClipboardFix"),
@@ -221,7 +230,7 @@ public class AboutActivity extends ComponentActivity {
                 () -> openUrl(TELEGRAM_URL),
                 this::showThanksSheet,
                 () -> openUrl(MIUIX_URL),
-                AppConfig.getThemeMode(this), AppConfig.getLangMode(this), uiUpdateDisabled,
+                uiThemeMode, AppConfig.getLangMode(this), uiUpdateDisabled,
                 mode -> selectTheme(mode), mode -> selectLanguage(mode), this::onToggleUpdateDisabled);
 
         // 模块启用状态实时查询
@@ -279,11 +288,13 @@ public class AboutActivity extends ComponentActivity {
      *
      * 动画：新页按导航方向淡入 + 轻微横向位移 + 0.985→1 缩放（260ms 减速），
      * 旧页反向淡出并位移（180ms 加速）后 GONE——对齐参考项目的页面切换观感。
-     * 首次进入（idx == currentTab）不做动画，直接落位。
+     * 两种不播动画的情况：目标就是当前页；onCreate 里恢复上次页签（见 mTabInitialized）。
      */
     private void selectTab(int idx) {
         int prev = currentTab;
-        boolean animate = (idx != prev);
+        // 首次调用（onCreate 恢复页签）不播动画，直接落位，避免重建时闪现主页
+        boolean animate = mTabInitialized && (idx != prev);
+        mTabInitialized = true;
         currentTab = idx;
         sLastTab = idx;
 
@@ -349,7 +360,8 @@ public class AboutActivity extends ComponentActivity {
         applyNavItem(navIconFeature, navLabelFeature, currentTab == 1);
         applyNavItem(navIconSettings, navLabelSettings, currentTab == 2);
         applyNavItem(navIconAbout, navLabelAbout, currentTab == 3);
-        bottomNav.setSelectedIndex(idx, true);
+        // 恢复页签（首次调用）不播动画：否则重建后导航胶囊会从主页滑到目标页
+        bottomNav.setSelectedIndex(idx, animate);
     }
 
     private void applyNavItem(ImageView icon, TextView label, boolean selected) {
@@ -446,42 +458,16 @@ public class AboutActivity extends ComponentActivity {
     }
 
     /**
-     * 深色胶囊提示（对齐 HyperIsland 的检查更新样式）：浮在导航栏上方，
-     * 淡入停留 2 秒后淡出。替代系统 Toast / 进度弹窗。
+     * 提示条（Miuix Snackbar，短时长）：浮在底部导航上方，可滑动关闭。
+     * 消息经 SnackbarBridge 投递，由根布局上的 Snackbar 覆盖层渲染；线程无关。
      */
     private void showSnack(String text) {
-        FrameLayout root = (FrameLayout) findViewById(android.R.id.content);
-        if (root == null) return;
-        if (mSnackView != null) {
-            root.removeView(mSnackView);
-            mSnackView = null;
-        }
-        float density = getResources().getDisplayMetrics().density;
-        TextView snack = new TextView(this);
-        snack.setText(text);
-        snack.setTextColor(0xFFFFFFFF);
-        snack.setTextSize(15f);
-        snack.setGravity(android.view.Gravity.CENTER);
-        int padV = Math.round(14 * density);
-        int padH = Math.round(24 * density);
-        snack.setPadding(padH, padV, padH, padV);
-        snack.setBackgroundResource(R.drawable.snack_bg);
-        snack.setElevation(8f * density);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
-                android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL);
-        lp.bottomMargin = Math.round(110 * density);
-        snack.setAlpha(0f);
-        root.addView(snack, lp);
-        mSnackView = snack;
-        snack.animate().alpha(1f).setDuration(180).start();
-        snack.postDelayed(() -> snack.animate().alpha(0f).setDuration(220)
-                .withEndAction(() -> {
-                    root.removeView(snack);
-                    if (mSnackView == snack) {
-                        mSnackView = null;
-                    }
-                }).start(), 2000);
+        ClipboardFixUi.showSnack(text);
+    }
+
+    /** 提示条（Miuix Snackbar，长时长），用于需停留更久的信息。 */
+    private void showSnackLong(String text) {
+        ClipboardFixUi.showSnackLong(text);
     }
 
     // ---------------- 功能开关 ----------------
@@ -497,6 +483,7 @@ public class AboutActivity extends ComponentActivity {
                 ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN));
         uiUpdateDisabled.setValue(prefs.getBoolean(
                 AppConfig.KEY_DISABLE_UPDATE, false));
+        uiThemeMode.setValue(AppConfig.getThemeMode(this));
     }
 
     private void onToggleImeUnlock(boolean checked) {
@@ -527,7 +514,9 @@ public class AboutActivity extends ComponentActivity {
                 .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, uiSwClipboardPin.getValue())
                 .apply();
         pushFeaturePrefs();
-        showSnack("已保存，重启手机后生效");
+        // 四个功能开关的 hook 全部装在 com.miui.phrase / 输入法进程内（进程启动时读开关），
+        // 故重载进程即可生效，无需整机重启
+        showSnack(getString(R.string.snack_changed_reload));
     }
 
     /**
@@ -581,8 +570,15 @@ public class AboutActivity extends ComponentActivity {
         // 只写本地偏好、不重建 Activity：即时生效（无需重启手机），也无弹窗提醒
     }
 
-    /** 主题选择：保存并应用（系统 Application Night Mode 触发 Activity 重建）。 */
+    /**
+     * 主题选择：保存并应用（系统 Application Night Mode 触发 Activity 重建）。
+     *
+     * <p>先更新可观察状态再应用：当选中的主题与当前生效的深浅色相同时
+     * （如「默认(浅色)」再选「浅色」），系统不会派发配置变更、Activity 不重建，
+     * 行内的选中值需要靠状态自行刷新（HyperOS 系统下拉同款问题）。
+     */
     private void selectTheme(int mode) {
+        uiThemeMode.setValue(mode);
         AppConfig.setThemeMode(this, mode);
     }
 
@@ -625,11 +621,15 @@ public class AboutActivity extends ComponentActivity {
                     hide ? PackageManager.COMPONENT_ENABLED_STATE_DISABLED
                             : PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                     PackageManager.DONT_KILL_APP);
-            Toast.makeText(this,
-                    hide ? getString(R.string.hide_icon_hidden) : getString(R.string.hide_icon_restored),
-                    hide ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT).show();
+            String msg = hide ? getString(R.string.hide_icon_hidden)
+                    : getString(R.string.hide_icon_restored);
+            if (hide) {
+                showSnackLong(msg);
+            } else {
+                showSnack(msg);
+            }
         } catch (Exception e) {
-            Toast.makeText(this, getString(R.string.op_failed) + e.getMessage(), Toast.LENGTH_SHORT).show();
+            showSnack(getString(R.string.op_failed) + e.getMessage());
         } finally {
             updateHideRow();
         }
@@ -637,15 +637,71 @@ public class AboutActivity extends ComponentActivity {
 
     private void rebootDevice() {
         if (!hasRoot()) {
-            Toast.makeText(this, getString(R.string.root_required), Toast.LENGTH_LONG).show();
+            showSnackLong(getString(R.string.root_required));
             return;
         }
-        Toast.makeText(this, getString(R.string.rebooting), Toast.LENGTH_SHORT).show();
+        showSnack(getString(R.string.rebooting));
         try {
             Runtime.getRuntime().exec(new String[]{"su", "-c", "reboot"});
         } catch (Exception e) {
-            Toast.makeText(this, getString(R.string.reboot_fail) + e.getMessage(), Toast.LENGTH_SHORT).show();
+            showSnack(getString(R.string.reboot_fail) + e.getMessage());
         }
+    }
+
+    /**
+     * 设置页「重启或者重载」下拉卡：0 = 重启手机，1 = 重载所有进程。
+     */
+    private void onRebootOrReload(int which) {
+        if (which == 0) {
+            rebootDevice();
+        } else {
+            reloadAllProcesses();
+        }
+    }
+
+    /**
+     * 重载所有进程：把剪贴板宿主 {@code com.miui.phrase} 与当前设备安装的所有输入法
+     * （{@link InputMethodManager#getInputMethodList()}）进程 force-stop 掉。
+     *
+     * <p>LSPosed 只在进程启动时注入，所以杀掉这些进程后，下次被系统拉起时会带着最新
+     * 代码重新跑一遍 hook——等效于「不整机重启就让改动生效」。system_server 内的
+     * 输入法权限放行不受影响（那条本来就要重启手机）。
+     */
+    private void reloadAllProcesses() {
+        if (!hasRoot()) {
+            showSnackLong(getString(R.string.root_required));
+            return;
+        }
+        showSnack(getString(R.string.reloading));
+        new Thread(() -> {
+            String err = null;
+            try {
+                // 目标进程：剪贴板/常用短语宿主 + 所有已安装输入法（按包名去重）
+                LinkedHashSet<String> pkgs = new LinkedHashSet<>();
+                pkgs.add("com.miui.phrase");
+                InputMethodManager imm = getSystemService(InputMethodManager.class);
+                if (imm != null) {
+                    for (InputMethodInfo info : imm.getInputMethodList()) {
+                        pkgs.add(info.getPackageName());
+                    }
+                }
+                for (String pkg : pkgs) {
+                    Runtime.getRuntime()
+                            .exec(new String[]{"su", "-c", "am force-stop " + pkg})
+                            .waitFor();
+                }
+            } catch (Exception e) {
+                err = e.getMessage();
+            }
+            final String fErr = err;
+            runOnUiThread(() -> {
+                if (fErr == null) {
+                    showSnackLong(getString(R.string.reload_done));
+                } else {
+                    showSnackLong(getString(R.string.reload_fail) + fErr);
+                }
+            });
+        }).start();
     }
 
     private boolean hasRoot() {
@@ -933,8 +989,7 @@ public class AboutActivity extends ComponentActivity {
 
         BottomSheet.show(this, getString(R.string.donate_qr_title), content, true, getString(R.string.donate_save), () -> {
             if (saveQrToGallery(qr)) {
-                Toast.makeText(this, getString(R.string.donate_qr_saved),
-                        Toast.LENGTH_LONG).show();
+                showSnackLong(getString(R.string.donate_qr_saved));
                 openWeChat();
             }
         });
@@ -1119,7 +1174,7 @@ public class AboutActivity extends ComponentActivity {
             }
             return true;
         } catch (Exception e) {
-            Toast.makeText(this, getString(R.string.save_fail) + e.getMessage(), Toast.LENGTH_SHORT).show();
+            showSnack(getString(R.string.save_fail) + e.getMessage());
             return false;
         }
     }
@@ -1128,7 +1183,7 @@ public class AboutActivity extends ComponentActivity {
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
         } catch (Exception e) {
-            Toast.makeText(this, getString(R.string.open_failed), Toast.LENGTH_SHORT).show();
+            showSnack(getString(R.string.open_failed));
         }
     }
 

@@ -29,8 +29,8 @@
     <string name="show_icon">显示桌面图标</string>
     <string name="hide_icon_sub_hidden">当前已隐藏，点击恢复</string>
     <string name="hide_icon_sub_default">LSPosed 内仍可打开模块设置</string>
-    <string name="reboot_title">立即重启手机</string>
-    <string name="reboot_sub">需要 ROOT 权限</string>
+    <string name="reboot_reload_title">重启或者重载</string>
+    <string name="reboot_reload_sub">需要 ROOT 权限</string>
     <string name="sec_feature">功能设置</string>
     <string name="sw_ime_unlock">启用全面屏优化功能</string>
     <string name="sw_unlimit">解锁剪贴板数量上限</string>
@@ -80,17 +80,11 @@
 
     <!-- 弹卡：友情提示 -->
     <string name="sheet_status_title">友情提示</string>
-    <string name="sheet_status_body">bug 要一个一个修，代码要一行一行敲，催更无效，调试靠熬，不保证哪天更新，在这里感谢ROG、小米MiMo大模型、中国电信、国家电网对本项目的大力支持</string>
+    <string name="sheet_status_body">为保证完美运行，请关闭手势提示线，开启手势提示线后可能会出现键盘抬高的故障，后续会看心情修，也有可能不修</string>
 
     <!-- 弹卡：更新日志 -->
     <string name="sheet_changelog_title">更新日志</string>
-    <string name="changelog_v20">1. 全面重构模块 UI，界面简洁清爽，视觉体验升级\n2. 搭载液态玻璃导航，滑动手感更丝滑、触控更跟手\n3. 修复 HyperOS 剪贴板对第三方输入法适配异常问题\n4. 解决剪贴板与键盘功能区色差不一致问题\n5. 扩充信息展示面板，设备信息、模块运行状态直观可见\n6. 全新改版关于页面，内容丰富，使用便捷\n7. 关于页卡片布局重新排布，分区间距更舒展\n8. 关于页上滑时新增居中头部标题\n9. 关于页头部标题加渐隐背景板，上滑时卡片不再与标题重叠\n10. 关于页头部标题背景改为实时渐进模糊（顶栏磨砂，下边缘柔和化入内容，快速滑动无拖影）\n11. 新增剪贴板条目置顶：右滑条目轻轻一划露出置顶按钮，点击置顶（对已置顶条目再点一次取消），最多同时置顶一条，清空剪贴板时置顶条目保留\n12. 置顶条目新增（已置顶）提醒：云端条目标在来源标注后，本地条目显示在正文上方，取消置顶后自动消失
-13. 修复左滑删除剪贴板条目后，重新打开面板被删条目复活的问题
-14. 修复本地剪贴板条目内容过长时（已置顶）提醒被截断不显示的问题，改为显示在正文上方
-15. 修复本地置顶条目标记位置偏高的问题：标记与云端条目的（来源标注→正文）间距保持一致
-16. 修复云端置顶条目正文与「来自我的电脑」来源标注重叠的问题（关闭面板重开才恢复正常）
-17. 修复开启系统「手势提示线」（全面屏手势导航）后第三方输入法键盘被整体抬高、底部留白的问题：清理手势区 inset 的底部 padding，并让键盘视图撑满父容器消除无用留白（豆包、搜狗等）
-18. 修复本地置顶的条目卡片被撑高、比其它条目明显更高的问题：置顶时把正文上下内边距对齐云端条目（本地条目正文本身自带内边距，云端没有），本地置顶条目与云端条目现完全等高</string>
+    <string name="changelog_v20">1. 全面重构模块 UI，界面简洁清爽，视觉体验升级\n2. 新增液态玻璃导航，滑动更丝滑、触控更跟手\n3. 持续修复第三方输入法无法使用系统剪贴板的问题\n4. 新增【优化剪贴板面板背景】开关，开启后可统一剪贴板和键盘功能区的颜色\n5. 新增【开启剪贴板条目置顶】功能，剪贴板面板内右滑可选择置顶条目(最多置顶一条)\n6. 新增【停用更新检测】功能，开启后模块可完全脱离网络运行(开启后您将无法收到更新推送)\n7. 新增【重载进程】功能，模块更新后可通过重新进程加载最新hook(首次安装使用请重启手机)\n8. 新增【设置】页面，模块设置与功能设置独立展示\n9. 扩充主页信息展示面板，设备信息、模块运行状态直观可见\n10. 全新改版关于页面，内容丰富，使用便捷</string>
     <string name="changelog_v1413">新增优化剪贴板面板背景功能，优化剪贴板和常用语面板与功能区的取色问题</string>
     <string name="changelog_v1412">优化界面显示效果，修复部分错误</string>
     <string name="changelog_v1411">修复部分错误</string>
@@ -115,12 +109,17 @@
     <string name="open_failed">无法打开链接</string>
     <string name="hide_icon_restored">桌面图标已恢复</string>
     <string name="hide_icon_hidden">桌面图标已隐藏\n（LSPosed 内仍可打开模块设置）</string>
-    <string name="root_required">需要 ROOT 权限才能重启手机</string>
+    <string name="root_required">需要 ROOT 权限</string>
     <string name="rebooting">即将重启手机…</string>
     <string name="reboot_fail">重启失败：</string>
+    <string name="opt_reboot_phone">重启手机</string>
+    <string name="opt_reload_all">重载所有进程</string>
+    <string name="reloading">正在重载所有进程…</string>
+    <string name="reload_done">重载完成，下次唤起即生效</string>
+    <string name="reload_fail">重载失败：</string>
+    <string name="snack_changed_reload">已更改，重载进程后生效</string>
     <string name="op_failed">操作失败：</string>
     <string name="save_fail">保存失败：</string>
-    <string name="save_snack">已保存，重启手机后生效</string>
     <string name="update_disabled_msg">您已停用更新功能，如需更新请关闭【停用更新检测】</string>
 
     <!-- 更新检查（UpdateChecker） -->

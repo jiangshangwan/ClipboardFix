@@ -31,7 +31,7 @@ fun <T> stateOf(value: T, policy: SnapshotMutationPolicy<T> = structuralEquality
  * 把三页 Miuix 界面装配进各自的 ComposeView（由 View 外壳 activity_about.xml 承载，
  * 底部液态玻璃导航 LiquidGlassBarView 保持不变）。
  *
- * Java 侧只传「可观察状态」（androidx State）与「动作回调」（Runnable / BoolAction）；
+ * Java 侧只传「可观察状态」（androidx State）与「动作回调」（Runnable / BoolAction / IntAction）；
  * 在每个 ComposeView 的 setContent 里读取 State.value，从而获得响应式刷新。
  */
 fun installPages(
@@ -60,7 +60,7 @@ fun installPages(
     onTogglePanelColor: BoolAction,
     onToggleClipboardPin: BoolAction,
     onHideIcon: BoolAction,
-    onReboot: Runnable,
+    onRebootOrReload: IntAction,
     onOpenCoolapk: Runnable,
     onOpenWeibo: Runnable,
     onOpenGithub: Runnable,
@@ -69,13 +69,15 @@ fun installPages(
     onOpenTelegram: Runnable,
     onUpstream: Runnable,
     onOpenMiuix: Runnable,
-    themeMode: Int,
+    themeMode: State<Int>,
     langMode: Int,
     updateDisabled: State<Boolean>,
     onThemeSelect: IntAction,
     onLanguageSelect: IntAction,
     onToggleUpdateDisabled: BoolAction,
 ) {
+    // Snackbar 队列泵（幂等）：四个页面共享宿主状态，集中驱动，Activity 重建不重排
+    SnackbarBridge.start()
     home.setContent {
         ClipboardFixTheme {
             HomePage(
@@ -133,10 +135,23 @@ fun installPages(
                 onLanguageSelect = { onLanguageSelect.invoke(it) },
                 onToggleUpdateDisabled = { onToggleUpdateDisabled.invoke(it) },
                 onHideIcon = { onHideIcon.invoke(it) },
-                onReboot = { onReboot.run() },
+                onRebootOrReload = { onRebootOrReload.invoke(it) },
             )
         }
     }
+}
+
+/**
+ * Java 侧投递 Snackbar 提示（替代系统 Toast），短时长（约 4s）。
+ * 线程无关：后台线程可直接调用。
+ */
+fun showSnack(text: String) {
+    SnackbarBridge.show(text, false)
+}
+
+/** Java 侧投递长时长 Snackbar 提示（约 10s），用于需要停留更久的信息。 */
+fun showSnackLong(text: String) {
+    SnackbarBridge.show(text, true)
 }
 
 /**

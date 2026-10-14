@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -25,6 +26,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipboardfix.R
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Icon
@@ -53,55 +56,62 @@ fun HomePage(
     onStatusCardClick: () -> Unit,
 ) {
     val colors = MiuixTheme.colorScheme
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(pageBackgroundColor())
-            .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp)
-            .padding(top = 8.dp, bottom = 120.dp),
-    ) {
-        Text(
-            text = stringResource(R.string.home_title),
-            fontSize = 30.sp,
-            fontWeight = FontWeight.Bold,
-            color = colors.onSurface,
-        )
-        Text(
-            text = stringResource(R.string.home_subtitle),
-            fontSize = 14.sp,
-            color = colors.onSurfaceVariantSummary,
-            modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
-        )
+    // 玻璃折射源：整页内容登记进 layerBackdrop，供 Snackbar 的柔光玻璃面板实时折射
+    val snackbarBackdrop = rememberLayerBackdrop()
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .layerBackdrop(snackbarBackdrop)
+                .background(pageBackgroundColor())
+                .statusBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+                .padding(top = 8.dp, bottom = 120.dp),
+            ) {
+            Text(
+                text = stringResource(R.string.home_title),
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.onSurface,
+            )
+            Text(
+                text = stringResource(R.string.home_subtitle),
+                fontSize = 14.sp,
+                color = colors.onSurfaceVariantSummary,
+                modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
+            )
 
-        // 模块状态卡：整卡可按压（Miuix Tilt 倾斜反馈），点击弹出更新说明弹卡
-        StatusCard(
-            statusText = statusText,
-            imeCountText = imeCountText,
-            statusEnabled = statusEnabled,
-            onClick = onStatusCardClick,
-        )
+            // 模块状态卡：整卡可按压（Miuix Tilt 倾斜反馈），点击弹出更新说明弹卡
+            StatusCard(
+                statusText = statusText,
+                imeCountText = imeCountText,
+                statusEnabled = statusEnabled,
+                onClick = onStatusCardClick,
+            )
 
-        Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(18.dp))
 
-        // 信息卡（卡片本身不加内边距：行的按压高亮需与卡片上下边缘齐平，
-        // 与旧版 XML 一致；行间距由各行自身内边距负责——首行顶部 22dp、
-        // 末行底部 22dp，均对齐旧版 fragment_home.xml）
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.defaultColors(color = cardContainerColor()),
-        ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                InfoRow(stringResource(R.string.info_app_version), appVersion, topPad = 22.dp)
-                InfoRow(stringResource(R.string.info_device), deviceModel)
-                InfoRow(stringResource(R.string.info_android), androidVersion)
-                InfoRow(stringResource(R.string.info_system), systemVersion)
-                InfoRow(stringResource(R.string.info_arch), abiInfo)
-                InfoRow(stringResource(R.string.info_lsposed), "API 102")
-                InfoRow(stringResource(R.string.info_build), buildDate, bottomPad = 22.dp)
+            // 信息卡（卡片本身不加内边距：行的按压高亮需与卡片上下边缘齐平，
+            // 与旧版 XML 一致；行间距由各行自身内边距负责——首行顶部 22dp、
+            // 末行底部 22dp，均对齐旧版 fragment_home.xml）
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.defaultColors(color = cardContainerColor()),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    InfoRow(stringResource(R.string.info_app_version), appVersion, topPad = 22.dp)
+                    InfoRow(stringResource(R.string.info_device), deviceModel)
+                    InfoRow(stringResource(R.string.info_android), androidVersion)
+                    InfoRow(stringResource(R.string.info_system), systemVersion)
+                    InfoRow(stringResource(R.string.info_arch), abiInfo)
+                    InfoRow(stringResource(R.string.info_lsposed), "API 102")
+                    InfoRow(stringResource(R.string.info_build), buildDate, bottomPad = 22.dp)
+                }
             }
         }
+        // Snackbar 宿主：玻璃面板折射本页内容，浮在底部导航条上方
+        PageSnackbarHost(backdrop = snackbarBackdrop)
     }
 }
 
