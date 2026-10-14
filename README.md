@@ -6,6 +6,9 @@
 <a href="https://qun.qq.com/universal-share/share?ac=1&authKey=7RA6XALH28j%2BzzCdYaEn5MmfZkkXlo9zolkwp4hPf5PwMrmNd7SQBh7FCsCa0cAC&busi_data=eyJncm91cENvZGUiOiIxMTIwNjM1IiwidG9rZW4iOiJXSEJsQi8veExjZkk3c2h5c2h6ZGFXb0hwcTRMUFJrUkd5Vjl4dzRjd3JBTW9VTWpMelo1dXFpenVsRUZnc0xJIiwidWluIjoiOTAzNzU1MzQ1In0=&data=8dRN21TZ3TPg67Muu8SeZK2H5364vaqNnSciPEaAOjc8A6qUkZ_GVNTue1XwsXStdd63ICjEw_rbzq0vad0VBQ&svctype=4&tempid=h5_group_info"><img src="https://img.shields.io/badge/QQ交流群-blue?style=flat-square&logo=qq&logoColor=white"></a> 
 <a href="https://github.com/jiangshangwan/ClipboardFix"><img src="https://img.shields.io/badge/GitHub仓库-black?style=flat-square&logo=github&logoColor=white"></a> 
 <a href="https://github.com/Xposed-Modules-Repo/com.clipboardfix"><img src="https://img.shields.io/badge/LSPosed仓库-orange?style=flat-square&logo=xdadevelopers&logoColor=white"></a>
+
+  <a href="https://weibo.com/u/3725737792"><img src="https://img.shields.io/badge/微博-李十六的日记本-red?style=flat-square&logo=sinaweibo&logoColor=white"></a>
+<a href="https://www.coolapk.com/u/3019478"><img src="https://img.shields.io/badge/酷安-江上晚-green?style=flat-square&logo=fishshell&logoColor=white"></a>
 </div>
 🛠️ 修复 HyperOS 3.0+ 第三方输入法无法使用系统剪贴板历史的问题，并解锁第三方输入法全面屏优化（底部常用语 / 剪贴板入口）
 
