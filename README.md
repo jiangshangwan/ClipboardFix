@@ -1,4 +1,6 @@
-# HyperClipFix（HyperOS剪贴板功能补全）
+<div align="center">
+<h1>HyperClipFix</h1>
+
 
 
 <a href="https://www.android.com/"><img src="https://img.shields.io/badge/Android-16--17-brightgreen?style=flat-square&logo=android&logoColor=white"></a> 
