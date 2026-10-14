@@ -13,7 +13,7 @@ android {
         // minSdk 抬到 33：HyperOS 即 Android 13+；借此可直接用标准 AGSL（RuntimeShader）实现「关于」页动态渐变。
         minSdk 33
         targetSdk 35
-        versionCode 110
+        versionCode 112
         versionName "2.0"
         // 构建日期：编译时写入，供「关于/主页」展示
         buildConfigField "String", "BUILD_DATE", "\"${new Date().format('yyyy-MM-dd')}\""
@@ -96,6 +96,9 @@ android {
     packagingOptions {
         // 依赖自带的 META-INF 元数据排除掉，但保留我们自己的 META-INF/xposed 模块声明
         exclude 'META-INF/LICENSE*'
+        // AAR 里的 LICENSE.txt 藏在二级目录（如 META-INF/androidx/annotation/annotation/LICENSE.txt），
+        // 上面的 LICENSE* 通配符不跨目录、匹配不到，4 份共约 40KB 全被打进包；这里补一刀。
+        exclude 'META-INF/**/LICENSE.txt'
         exclude 'META-INF/NOTICE*'
         exclude 'META-INF/*.version'
         exclude 'META-INF/*.md'

@@ -43,9 +43,12 @@ import io.github.libxposed.api.XposedModuleInterface;
  *   <li>置顶条目显示「（已置顶）」提醒：云端条目标在其来源标注（「来自我的电脑」）
  *       后；本地条目借来源标注位把提醒放到<b>正文上方</b>（避免长文本把追加在
  *       正文后的提醒 ellipsize 掉）；取消置顶后随列表刷新消失。</li>
- *   <li>本地置顶条目会把正文上提 {@link #PIN_HEADER_TUCK_DP}dp 以对齐云端条目的
- *       「来源标注→正文」间距；该边距由 {@link #sTuckSaved} 记账，ViewHolder 复用
- *       或状态翻转时精确复位，避免残留负边距压住来源标注。</li>
+ *   <li>本地条目正文自带上下内边距（真机实测 padT=padB=22px，是系统给「无来源标注」
+ *       的本地条目留的呼吸空间），云端条目没有（padT=padB=0）。本地置顶借来源标注位
+ *       加了「（已置顶）」行后，这个内边距会把整条撑高（实测 165px vs 云端 152px，
+ *       用户反馈「置顶条目明显比别的条目高」）。故本地置顶时把正文内边距对齐云端
+ *       （通常为 0）；该改动由 {@link #sPadSaved} 记账，ViewHolder 复用或状态翻转时
+ *       精确复位，避免残留影响非置顶条目。</li>
  * </ul>
  *
  * <p><b>方向说明</b>：系统自带的删除是<b>左滑</b>（主视图向左移、露出右侧删除按钮，
@@ -130,13 +133,36 @@ public final class ClipboardPinHook {
     private static final String PIN_MARK = "（已置顶）";
 
     /**
-     * 本地置顶时把正文上提的间距（dp）。
+     * 云端条目正文的上下内边距（px）——首次见到云端条目时记录。
      *
-     * <p>系统给云端条目的正文设了负的上边距，让它紧贴来源标注；本地条目复用来源标注
-     * 容器后没这个负边距，正文被顶得更低，「（已置顶）」看着离正文太远（code 92 真机
-     * 实测：本地标记→正文 81px、云端 49px，差约 12dp）。补上同样的收紧即与云端一致。
+     * <p>真机实测：本地条目正文带 22px 上下内边距（系统给「无来源标注」条目留的
+     * 呼吸空间），云端条目正文为 0。本地置顶借来源标注位加了「（已置顶）」行后，
+     * 这个内边距会把整条撑高（本地 165px vs 云端 152px）。把本地正文的内边距对齐
+     * 云端（实测为 0），本地置顶条目即与云端条目等高。默认 0（未捕获时按 0）。
      */
-    private static final float PIN_HEADER_TUCK_DP = 12f;
+    private static int sCloudContentPadT = 0;
+    private static int sCloudContentPadB = 0;
+
+    /** 是否已捕获云端正文内边距（抓一次即可）。 */
+    private static boolean sCloudContentPadCaptured = false;
+
+    /**
+     * 云端「来源标注」的实测字号（px）与颜色——首次见到云端条目时记录。
+     *
+     * <p>本地置顶复用同一个 tip 容器，若不套用云端那套「小字 + 灰色」，标记会以 tip
+     * TextView 的默认大字渲染，整行比云端条目高一截（用户实拍：本地置顶条目明显高于
+     * 云端条目）。故记下云端来源标注样式，本地标记套用同款，使行高一致。
+     */
+    private static float sSrcLabelSizePx = 0f;
+    private static int sSrcLabelColor = 0xFFFFFFFF;
+
+    /**
+     * 诊断开关：置 true 时打印置顶标记几何（字号/行高/条目高），真机校准用，稳定后关掉。
+     *
+     * <p>已用它定位并修掉「本地置顶条目被撑高」：真机实测本地正文 padT=padB=22px、
+     * 云端 0px，正文字内边距差 44px 正是条目高差（165px vs 152px）的来源。
+     */
+    private static final boolean PIN_DIAG = false;
 
     /** 来源标注容器（phrase 包 id 名）：云条目显示「来自我的电脑」+云图标，本地条目 GONE。 */
     private static final String ID_TIP_BOX = "clipboard_across_devices_tip";
@@ -229,12 +255,13 @@ public final class ClipboardPinHook {
     private static final WeakHashMap<View, Integer> sBindMap = new WeakHashMap<>();
 
     /**
-     * 记录「我们」给哪些 itemView 施加过正文上提（tuck），及其被改前的原始
-     * {@code topMargin}（{@code {top, bottom}}）。ViewHolder 复用或状态翻转时，
-     * 用它精确复位——否则残留的负边距会把新条目的正文上移压住来源标注
-     * （实测：云端条目置顶后正文与「来自我的电脑」重叠，关面板重开才正常）。
+     * 记录「我们」把哪些 itemView 的正文内边距改过，及其被改前的原值。
+     *
+     * <p>键为 itemView，值为 {@code {top.padT, top.padB, bottom.padT, bottom.padB}}。
+     * ViewHolder 复用或状态翻转时用它精确复位——否则残留的「已归零内边距」会让
+     * 下一个复用此 itemView 的非置顶条目少了呼吸空间，与其它条目高度不一致。
      */
-    private static final WeakHashMap<View, int[]> sTuckSaved = new WeakHashMap<>();
+    private static final WeakHashMap<View, int[]> sPadSaved = new WeakHashMap<>();
 
     private ClipboardPinHook() {
     }
@@ -1191,43 +1218,117 @@ public final class ClipboardPinHook {
             stripMark(tip);
             stripMark(top);
             stripMark(bottom);
-            // 复位上一轮「我们」施加的正文上提：ViewHolder 复用或状态翻转（如那次
-            // bind 时来源容器还 GONE、被误判成本地条目而套了负边距）后，若不还原，
-            // 残留的负边距会把本条目的正文上移压住来源标注（实测：云端置顶条目正文
-            // 与「来自我的电脑」重叠，关面板重开才正常）。只还原我们改过的 View，
-            // 绝不触碰系统自管的边距。
-            boolean untucked = restoreHeaderTuck(itemView, top, bottom);
             // MIUI 刚 bind 完：来源容器可见即云条目（本地条目被它置 GONE）
             boolean cloud = tip != null && effectivelyVisible(tip);
             if (cloud && tipIcon != null) {
                 // 云条目图标恒显示——恢复可能被上一次「本地置顶」改成的 GONE
                 tipIcon.setVisibility(View.VISIBLE);
             }
+            // 首次见到云端来源标注：记下它的字号与颜色（此刻 tip 是系统原文，未被我们改过）。
+            // 本地置顶复用同一容器时套用这套「小字 + 灰色」，标记行高才与云端条目一致。
+            if (cloud && tip != null && sSrcLabelSizePx <= 0f) {
+                float sz = tip.getTextSize();
+                if (sz > 0f) {
+                    sSrcLabelSizePx = sz;
+                    sSrcLabelColor = tip.getCurrentTextColor();
+                    log("captured source-label style: sizePx=" + sz
+                            + " color=" + Integer.toHexString(sSrcLabelColor));
+                }
+            }
+            // 首次见到云端正文：记下它的上下内边距（本地条目正文自带 22px 呼吸内边距，
+            // 云端为 0；本地置顶借来源标注位加行后靠对齐这个值才能与云端等高）。
+            if (cloud && !sCloudContentPadCaptured) {
+                TextView cv = hasText(top) ? top : (hasText(bottom) ? bottom : null);
+                if (cv != null) {
+                    sCloudContentPadT = cv.getPaddingTop();
+                    sCloudContentPadB = cv.getPaddingBottom();
+                    sCloudContentPadCaptured = true;
+                    log("captured cloud content padding: t=" + sCloudContentPadT
+                            + " b=" + sCloudContentPadB);
+                }
+            }
+            // 复位上一轮「我们」改过的正文内边距：ViewHolder 复用或状态翻转后，若不还原，
+            // 残留的「已归零内边距」会让复用此 itemView 的非置顶本地条目少了呼吸空间。
+            // 只在本地条目上复位——云端条目的内边距是系统自管的（实测为 0），绝不触碰。
+            boolean restored = !cloud && restoreContentPadding(itemView, top, bottom);
+            if (PIN_DIAG) {
+                log("pin-diag: pinned=" + pinned + " cloud=" + cloud
+                        + " tipSizePx=" + (tip != null ? tip.getTextSize() : -1f)
+                        + " tipColor=" + (tip != null ? Integer.toHexString(tip.getCurrentTextColor()) : "-")
+                        + " tipVis=" + visibilityOf(tip)
+                        + " tipBoxVis=" + visibilityOf(tipBox)
+                        + " iconVis=" + visibilityOf(tipIcon)
+                        + " itemH=" + itemView.getHeight());
+                final View fItem = itemView;
+                final View fTipBox = tipBox;
+                final TextView fTip = tip, fTop = top, fBot = bottom;
+                final boolean fCloud = cloud;
+                final boolean fPinned = pinned;
+                itemView.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            log("pin-diag(G): pinned=" + fPinned + " cloud=" + fCloud
+                                    + viewDiag("item", fItem)
+                                    + viewDiag("tipBox", fTipBox)
+                                    + tvDiag("tip", fTip)
+                                    + tvDiag("top", fTop)
+                                    + tvDiag("bot", fBot)
+                                    + " tipBoxParent=" + (fTipBox != null
+                                        && fTipBox.getParent() instanceof View
+                                        ? ((View) fTipBox.getParent()).getClass().getSimpleName()
+                                        : "-")
+                                    + " topParent=" + (fTop != null
+                                        && fTop.getParent() instanceof View
+                                        ? ((View) fTop.getParent()).getClass().getSimpleName()
+                                        : "-"));
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                });
+            }
             if (!pinned) {
                 return;
             }
             if (cloud) {
-                // 云条目：提醒追加在来源标注（「来自我的电脑」）后——本就在正文上方
+                // 云条目：提醒追加在来源标注（「来自我的电脑」）后——本就在正文上方；
+                // 顺手把字号/颜色锁回云端原款（可能被上一轮本地标记改过）。
+                if (sSrcLabelSizePx > 0f) {
+                    tip.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, sSrcLabelSizePx);
+                    tip.setTextColor(sSrcLabelColor);
+                }
                 appendMark(tip);
-                log("pinned source marked: tip time=" + rowTime + (untucked ? " untucked" : ""));
+                log("pinned source marked: tip time=" + rowTime + (restored ? " restored" : ""));
             } else if (tipBox != null && tip != null) {
-                // 本地条目：借来源标注容器把提醒放到正文上方，隐藏云图标
+                // 本地条目：借来源标注容器把提醒放到正文上方，隐藏云图标；
+                // 并套用云端来源标注的字号/颜色 —— 否则标记会以 tip 默认大字渲染，整行被撑高。
                 if (tipIcon != null) {
                     tipIcon.setVisibility(View.GONE);
                 }
                 tip.setText(PIN_MARK);
-                tipBox.setVisibility(View.VISIBLE);
-                // 收紧正文：让本地条目的「标记→正文」间距与云端一致（code 92 实测本地
-                // 81px、云端 49px，差约 12dp）。记录改前的原始边距，供复用/翻转时复位。
-                float density = itemView.getResources().getDisplayMetrics().density;
-                int tuck = (int) (-PIN_HEADER_TUCK_DP * density);
-                int[] saved = new int[]{marginTopOf(top), marginTopOf(bottom)};
-                setMarginTop(top, tuck);
-                setMarginTop(bottom, tuck);
-                synchronized (sTuckSaved) {
-                    sTuckSaved.put(itemView, saved);
+                if (sSrcLabelSizePx > 0f) {
+                    tip.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, sSrcLabelSizePx);
+                    tip.setTextColor(sSrcLabelColor);
                 }
-                log("pinned source marked: header time=" + rowTime + " tuck=" + tuck);
+                tipBox.setVisibility(View.VISIBLE);
+                // 对齐正文内边距：本地正文自带上下内边距（真机实测 padT=padB=22px），
+                // 云端为 0——本地置顶借来源标注位加了「（已置顶）」行后，这段内边距会把
+                // 整条撑高（实测本地 165px vs 云端 152px）。把本地正文内边距对齐云端
+                // （通常归零）后，本地置顶条目即与云端条目等高。改前原值记账，供复用/
+                // 翻转时复位。
+                int[] saved = new int[]{
+                        top != null ? top.getPaddingTop() : 0,
+                        top != null ? top.getPaddingBottom() : 0,
+                        bottom != null ? bottom.getPaddingTop() : 0,
+                        bottom != null ? bottom.getPaddingBottom() : 0};
+                setContentPadding(top, sCloudContentPadT, sCloudContentPadB);
+                setContentPadding(bottom, sCloudContentPadT, sCloudContentPadB);
+                synchronized (sPadSaved) {
+                    sPadSaved.put(itemView, saved);
+                }
+                log("pinned source marked: header time=" + rowTime
+                        + " contentPad=" + sCloudContentPadT + "/" + sCloudContentPadB
+                        + " markSizePx=" + (sSrcLabelSizePx > 0f ? sSrcLabelSizePx : -1f));
             } else if (top != null && effectivelyVisible(top)) {
                 // 兜底（id 解析失败）：退回正文后追加
                 appendMark(top);
@@ -1262,6 +1363,60 @@ public final class ClipboardPinHook {
             p = p.getParent();
         }
         return true;
+    }
+
+    /** 诊断用：视图几何（高度/内边距/layout_height/类名）。 */
+    private static String viewDiag(String name, View v) {
+        if (v == null) {
+            return " " + name + "=null";
+        }
+        ViewGroup.LayoutParams lp = v.getLayoutParams();
+        String lph = lp == null ? "?"
+                : (lp.height == ViewGroup.LayoutParams.MATCH_PARENT ? "MP"
+                : (lp.height == ViewGroup.LayoutParams.WRAP_CONTENT ? "WC"
+                : String.valueOf(lp.height)));
+        return " " + name + "[h=" + v.getHeight()
+                + ",padT=" + v.getPaddingTop() + ",padB=" + v.getPaddingBottom()
+                + ",lph=" + lph + ",cls=" + v.getClass().getSimpleName() + "]";
+    }
+
+    /** 诊断用：TextView 几何 + 文本 + 字号 + 行数（定位行高被撑高的真因）。 */
+    private static String tvDiag(String name, TextView v) {
+        if (v == null) {
+            return " " + name + "=null";
+        }
+        CharSequence cs = v.getText();
+        String t = cs == null ? "" : cs.toString();
+        if (t.length() > 20) {
+            t = t.substring(0, 20) + "…";
+        }
+        ViewGroup.LayoutParams lp = v.getLayoutParams();
+        String lph = lp == null ? "?"
+                : (lp.height == ViewGroup.LayoutParams.MATCH_PARENT ? "MP"
+                : (lp.height == ViewGroup.LayoutParams.WRAP_CONTENT ? "WC"
+                : String.valueOf(lp.height)));
+        return " " + name + "[t=" + v.getTop() + ",h=" + v.getHeight()
+                + ",mt=" + marginTopOf(v) + ",sz=" + v.getTextSize()
+                + ",ln=" + v.getLineCount()
+                + ",padT=" + v.getPaddingTop() + ",padB=" + v.getPaddingBottom()
+                + ",lph=" + lph + ",txt=\"" + t + "\"]";
+    }
+
+    /** 诊断用：可见性枚举转可读字符串。 */
+    private static String visibilityOf(View v) {
+        if (v == null) {
+            return "null";
+        }
+        switch (v.getVisibility()) {
+            case View.VISIBLE:
+                return "VISIBLE";
+            case View.INVISIBLE:
+                return "INVISIBLE";
+            case View.GONE:
+                return "GONE";
+            default:
+                return "?";
+        }
     }
 
     /** 按 phrase 包 id 名找 TextView；解析不到返回 null（调用方走兜底）。 */
@@ -1316,40 +1471,47 @@ public final class ClipboardPinHook {
         return 0;
     }
 
-    /** 写正文 View 的 {@code topMargin}（变了才 setLayoutParams，省一次重布局）。 */
-    private static void setMarginTop(TextView v, int m) {
-        if (v == null) {
+    /** 写正文 TextView 的上下内边距（只改上下，左右保持；变了才 setPadding）。 */
+    private static void setContentPadding(TextView v, int top, int bottom) {
+        if (v == null || top < 0 || bottom < 0) {
             return;
         }
-        ViewGroup.LayoutParams p = v.getLayoutParams();
-        if (p instanceof ViewGroup.MarginLayoutParams
-                && ((ViewGroup.MarginLayoutParams) p).topMargin != m) {
-            ((ViewGroup.MarginLayoutParams) p).topMargin = m;
-            v.setLayoutParams(p);
+        if (v.getPaddingTop() != top || v.getPaddingBottom() != bottom) {
+            v.setPadding(v.getPaddingLeft(), top, v.getPaddingRight(), bottom);
         }
     }
 
+    /** TextView 是否有非空文本（找到云端「正文」那一格用）。 */
+    private static boolean hasText(TextView v) {
+        if (v == null) {
+            return false;
+        }
+        CharSequence cs = v.getText();
+        return cs != null && cs.length() > 0;
+    }
+
     /**
-     * 复位上一条目遗留的正文上提：若该 itemView 曾被我们施加过 tuck，则把
-     * {@code clipboard_text_item_top/bottom} 的 {@code topMargin} 还原成改前的原值。
+     * 复位上一条目遗留的正文内边距改动：若该 itemView 曾被我们改过
+     * {@code clipboard_text_item_top/bottom} 的上下内边距，则还原成改前的原值。
      *
-     * <p>只处理 {@link #sTuckSaved} 里记录过的 View——系统自管的边距（若有）绝不动，
-     * 因此对云端条目的正常布局零影响。ViewHolder 复用或状态翻转后调用即可消除
-     * 「正文被负边距上移压住来源标注」的问题。
+     * <p>只处理 {@link #sPadSaved} 里记录过的 View——系统自管的内边距绝不动，
+     * 因此对云端条目的正常布局零影响。ViewHolder 复用或状态翻转后调用即可避免
+     * 「非置顶条目少了呼吸空间、与其它条目高度不一致」。
      *
      * @return 是否发生过复位
      */
-    private static boolean restoreHeaderTuck(View itemView, TextView top, TextView bottom) {
+    private static boolean restoreContentPadding(View itemView, TextView top, TextView bottom) {
         int[] saved;
-        synchronized (sTuckSaved) {
-            saved = sTuckSaved.remove(itemView);
+        synchronized (sPadSaved) {
+            saved = sPadSaved.remove(itemView);
         }
         if (saved == null) {
             return false;
         }
-        setMarginTop(top, saved[0]);
-        setMarginTop(bottom, saved[1]);
-        log("header tuck restored: top=" + saved[0] + " bottom=" + saved[1]);
+        setContentPadding(top, saved[0], saved[1]);
+        setContentPadding(bottom, saved[2], saved[3]);
+        log("content padding restored: top=" + saved[0] + "/" + saved[1]
+                + " bottom=" + saved[2] + "/" + saved[3]);
         return true;
     }
 
