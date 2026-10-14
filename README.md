@@ -1,3 +1,11 @@
+[![QQ交流群](https://img.shields.io/badge/QQ-交流群-blue?style=flat-square&logo=qq&logoColor=white)](https://qun.qq.com/universal-share/share?ac=1&authKey=7RA6XALH28j%2BzzCdYaEn5MmfZkkXlo9zoIkwp4hPf5PwMrmNd7SQBh7FCsCa0cAC&busi_data=eyJncm91cENvZGUiOiIxMTI0MTgwNjM1IiwidG9rZW4iOiJXSEJsQi8veExjZkk3c2h5c2h6ZGFXb0hwcTRMUFJrUkd5Vjl4dzRjd3JBTW9VTWpMelo1dXFpenVsRUZnc0xJIiwidWluIjoiOTAzNzU1MzQ1In0=&data=8dRN21TZ3TPg67Muu8SeZK2H5364vaqNnSciPEaAOjc8A6qUkZ_GVNTue1XwsXStdd63ICjEw_rbzq0vad0VBQ&svctype=4&tempid=h5_group_info)
+[![GitHub主仓库](https://img.shields.io/badge/GitHub-主仓库-black?style=flat-square&logo=github&logoColor=white)](https://github.com/jiangshangwan/ClipboardFix)
+[![LSPosed模块仓库](https://img.shields.io/badge/LSPosed-模块仓库-orange?style=flat-square&logo=lsposed&logoColor=white)](https://github.com/Xposed-Modules-Repo/com.clipboardfix)
+[![Android](https://img.shields.io/badge/Android-13.0--16-brightgreen?style=flat-square)](https://www.android.com/)
+[![UI-Framework](https://img.shields.io/badge/UI--Framework-Miulx--Compose-blue?style=flat-square)](https://compose-miuix-ui.github.io/miuix/zh_CN/)
+[![Hook-Framework](https://img.shields.io/badge/Hook--Framework-libxposed_102-purple?style=flat-square)](https://github.com/libxposed/api)
+
+
 # HyperClipFix（HyperOS剪贴板功能补全）
 
 🛠️ 修复 HyperOS 3.0+ 第三方输入法无法使用系统剪贴板历史的问题，并解锁第三方输入法全面屏优化（底部常用语 / 剪贴板入口）
