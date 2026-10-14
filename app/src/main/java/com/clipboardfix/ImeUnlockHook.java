@@ -83,11 +83,6 @@ public final class ImeUnlockHook {
                 + ", miui=" + SysProps.get("ro.miui.ui.version.name", "?"));
 
         if (isNonCustomize) {
-            // 让输入法窗口 edge-to-edge，从源头消除系统对非 targetSdk35 窗口的收缩抬高。
-            // 真正的 inset 补偿由 hookMiuiBottomInsetCompatibility 在 addMiuiBottomView 时做，
-            // 对所有第三方输入法通用且安全。
-            hookImeWindowEdgeToEdge();
-            log("edge-to-edge installed for " + pkg);
             Class<?> injector = Reflect.findClassIfExists(
                     "android.inputmethodservice.InputMethodServiceInjector", cl);
             if (injector == null) {
@@ -96,6 +91,14 @@ public final class ImeUnlockHook {
                         cl);
             }
             if (injector != null) {
+                // 关键：把「MIUI 工具栏所占的底部安全区」从输入法内容的 insets 里裁掉。
+                // 这是「键盘被抬高 / 底部安全区被重复计算」的正解——不去改键盘视图的
+                // padding/LayoutParams/translationY，而是在 insets 分发链上精确剔除那几类
+                // inset 的 bottom 值，让整棵输入法子树自然不再为「已由 MIUI 工具栏占用的
+                // 区域」二次避让。
+                // 旧实现（hookImeWindowEdgeToEdge / hookMiuiBottomInsetCompatibility）已被
+                // 本方案取代，保留在文件末尾仅供追溯，不再调用。
+                ImeInsetsHook.registerManager(injector);
                 hookSIsImeSupport(injector);
                 hookIsXiaoAiEnable(injector);
                 setPhraseBgColor(injector, cl);
@@ -329,11 +332,12 @@ public final class ImeUnlockHook {
                 Class<?> bottom = Reflect.findClassIfExists(
                         "com.miui.inputmethod.InputMethodBottomManager", loader);
                 if (bottom != null) {
+                    // 键盘抬高修复：把底部安全区从输入法 insets 里裁掉（对所有输入法通用，
+                    // 是否真正生效由 ImeInsetsHook 内部的 isActive() 严格约束）。
+                    ImeInsetsHook.registerManager(bottom);
                     if (isNonCustomize) {
                         hookSIsImeSupport(bottom);
                         hookIsXiaoAiEnable(bottom);
-                        // 键盘增高修复：hook addMiuiBottomView 做 inset 兼容
-                        hookMiuiBottomInsetCompatibility(bottom);
                     }
                     hookGetSupportIme(bottom);
                 } else {
