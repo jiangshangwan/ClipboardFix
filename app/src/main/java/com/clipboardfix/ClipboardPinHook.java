@@ -761,6 +761,15 @@ public final class ClipboardPinHook {
      * {@code SwipeRevealLayout.isOpened()} 实测恒返回 false，导致右滑被误劫持、
      * 系统「右滑取消删除」失效（code 84 实机 bug）。改用主视图 translationX
      * 符号做物理判断：&lt; -1f = 系统删除门开着，&gt; +1f = 置顶门开着。
+     *
+     * <p><b>方向判据与防抢手势（镜像原生）</b>：反编译 {@code com.miui.inputmethod
+     * .SwipeRevealLayout}（phrase 5.7.4）确认，条目的 ViewDragHelper 垂直拖动
+     * 范围为 0、只有水平范围，按 {@code checkTouchSlop} 的 horizontal-only 分支，
+     * 捕获条件仅有 {@code |dx| > 触摸阈值}，<b>dy 不参与判定</b>；且其手势监听器
+     * 在首次滚动超阈值时即 {@code getParent().requestDisallowInterceptTouchEvent(true)}
+     * 禁止父级 RecyclerView 抢走手势。故置顶门同样：开门/回拖只比水平位移量，
+     * 一旦接管拖动立即 disallow 父级（UP/CANCEL 及下一个 DOWN 时解除）——
+     * 否则稍有垂直偏移就被 proceed 掉或中途被抢，门永远拉不出来。
      */
     private static boolean hookTouch(Class<?> cls, String name, Class<?>... sig) {
         try {
@@ -782,6 +791,12 @@ public final class ClipboardPinHook {
                         st.downX = ev.getX();
                         st.downY = ev.getY();
                         st.declined = false;
+                        // 新手势开始：解除上一手势可能残留的「禁止父级劫持」标记。
+                        // 父级 RecyclerView 的 disallow flag 若不清零，本手势期间
+                        // 列表抢不走手势、无法正常滚动
+                        if (sv.getParent() != null) {
+                            sv.getParent().requestDisallowInterceptTouchEvent(false);
+                        }
                         if (st.mode == MODE_OPENING) {
                             // 上一手势异常中断：归位再重新开始（按钮也要一起收回门外，
                             // 否则会残留一个浮在条目上的置顶按钮）
@@ -802,12 +817,14 @@ public final class ClipboardPinHook {
                             return chain.proceed();
                         }
                         float dx = ev.getX() - st.downX;
-                        float dy = ev.getY() - st.downY;
                         float slop = slopOf(sv);
                         float bw = pinDoorWidth(sv);
                         if (st.mode == MODE_PIN_OPEN) {
-                            // 置顶门已开：左滑（往回拖）才劫持，其余交给系统/RV
-                            if (dx < -slop && Math.abs(dx) > Math.abs(dy)) {
+                            // 置顶门已开：左滑（往回拖）才劫持，其余交给系统/RV。
+                            // 与开门判据一致：只比水平位移量、不比垂直偏移——
+                            // 原生「右滑取消删除」时手指上下偏移照样能拖动门，
+                            // 置顶门必须同等待遇（苛求 dx>dy 会被父级抢走手势）
+                            if (dx < -slop) {
                                 return dragPinDoor(sv, main, st, bw, dx);
                             }
                             return chain.proceed();
@@ -815,9 +832,15 @@ public final class ClipboardPinHook {
                         if (st.mode == MODE_OPENING) {
                             return dragPinDoor(sv, main, st, bw, dx);
                         }
-                        // 全关态：先判方向
-                        if (Math.abs(dx) < slop || Math.abs(dx) <= Math.abs(dy)) {
-                            // 未超触摸阈值或趋势是垂直滑动：交给系统 / RecyclerView
+                        // 全关态：先判方向。
+                        // 判据镜像原生 ViewDragHelper：条目只做水平拖动（垂直拖动
+                        // 范围为 0），按 checkTouchSlop 的 horizontal-only 分支，
+                        // 捕获条件只有 |dx| > 触摸阈值，dy 不参与判定——原生删除门
+                        // 允许手指上下偏移照样拉开。若这里苛求「水平必须占优」，
+                        // 稍有垂直偏移就 proceed 掉，父级 RecyclerView 随即抢走
+                        // 整段手势，置顶门永远拉不出来
+                        if (Math.abs(dx) < slop) {
+                            // 未超触摸阈值：交给系统 / RecyclerView
                             return chain.proceed();
                         }
                         if (dx < 0f) {
@@ -843,6 +866,10 @@ public final class ClipboardPinHook {
                     }
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL: {
+                        // 手势结束：恢复父级的劫持权，避免列表后续无法滚动
+                        if (sv.getParent() != null) {
+                            sv.getParent().requestDisallowInterceptTouchEvent(false);
+                        }
                         int mode = st.mode;
                         boolean up = ev.getActionMasked() == MotionEvent.ACTION_UP;
                         float dx = ev.getX() - st.downX;
@@ -917,6 +944,13 @@ public final class ClipboardPinHook {
     /** 置顶门拖动中：主视图 translationX 跟手（开门 0..bw；已开门则 bw+dx）。 */
     private static Object dragPinDoor(
             View sv, View main, GestureState st, float bw, float dx) {
+        // 接管拖动的同时禁止父级（RecyclerView）劫持本手势：跟手过程中 dy
+        // 一旦超过列表滑动阈值，父级会把整段手势抢走、门卡在半路——原生
+        // SwipeRevealLayout 靠手势监听器 onScroll → requestDisallowInterceptTouchEvent
+        // 达到同样效果，此处镜像。flag 在 UP/CANCEL 与下一个 DOWN 时解除
+        if (sv.getParent() != null) {
+            sv.getParent().requestDisallowInterceptTouchEvent(true);
+        }
         float tx = st.mode == MODE_PIN_OPEN ? bw + dx : dx;
         tx = Math.max(0f, Math.min(bw, tx));
         if (main != null) {
