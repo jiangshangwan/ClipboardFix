@@ -14,6 +14,13 @@
     <string name="home_title">Home</string>
     <string name="home_subtitle">HyperClipFix</string>
     <string name="module_status">Module Status</string>
+    <string name="status_root">Rooted</string>
+    <string name="status_no_root">Not Rooted</string>
+    <string name="enabled_features">Enabled features: %1$d</string>
+    <string name="tap_hide_hint">Tap 10 times in a row to hide the badge</string>
+    <string name="tap_show_hint">Tap 10 times in a row to show the badge</string>
+    <string name="badges_hidden">Badge hidden</string>
+    <string name="badges_shown">Badge shown</string>
     <string name="info_app_version">App Version</string>
     <string name="info_device">Device Model</string>
     <string name="info_android">Android Version</string>

@@ -14,6 +14,13 @@
     <string name="home_title">主页</string>
     <string name="home_subtitle">HyperClipFix</string>
     <string name="module_status">模块状态</string>
+    <string name="status_root">已Root</string>
+    <string name="status_no_root">未Root</string>
+    <string name="enabled_features">已启用的功能：%1$d</string>
+    <string name="tap_hide_hint">连续点击10次隐藏标识</string>
+    <string name="tap_show_hint">连续点击10次显示标识</string>
+    <string name="badges_hidden">标识已隐藏</string>
+    <string name="badges_shown">标识已显示</string>
     <string name="info_app_version">应用版本</string>
     <string name="info_device">设备机型</string>
     <string name="info_android">Android 版本</string>

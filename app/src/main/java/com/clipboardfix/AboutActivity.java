@@ -66,6 +66,8 @@ public class AboutActivity extends ComponentActivity {
     private static final String KEY_MUST_KNOW = "must_know_agreed";
     /** 首次进入欢迎引导（三页）是否已完成。 */
     private static final String KEY_WELCOME_DONE = "welcome_done";
+    /** 状态卡「标识」（Root 标识 + 已启用的功能行）显隐；隐藏后重启仍保持隐藏，需 10 连击再显示，默认显示。 */
+    private static final String KEY_BADGES_VISIBLE = "status_badges_visible";
     private static final String TELEGRAM_URL =
             "https://qun.qq.com/universal-share/share?ac=1&authKey=n9wFDXy4i20n15nDlUwLTGqI8AnQ%2BiyzC2XPQxpeOs2MxMYDsqRw0MNRPXYvx9WS&busi_data=eyJncm91cENvZGUiOiIxMTI0MTgwNjM1IiwidG9rZW4iOiJTSVhYbUhsYUNnWVYvb2wzVUlRb0J6SDRQMTNCdUxBMUNocUMzeU9taFpvakJRRHhZNDFBeDJIdFVQeTNZVnRmIiwidWluIjoiOTAzNzU1MzQ1In0%3D&data=qWsg9TN3ydud1Rb7MCThG73KtRkUY7UumTdXIsBBKS2W9kcpZ-W8kSgWfZFjkdqqGSxXGkUmeL9Dmb5VYsXf3A&svctype=4&tempid=h5_group_info";
     private static final String MIUIX_URL = "https://compose-miuix-ui.github.io/miuix/zh_CN/";
@@ -80,6 +82,12 @@ public class AboutActivity extends ComponentActivity {
 
     // ---- Compose 可观察状态（composable 读取 .getValue() 即获得响应式刷新）----
     public final MutableState<String> uiStatusText = ClipboardFixUi.stateOf("检测中…");
+    /** root 标识：本模块已被授予 su 权限时为 true，状态卡在「已启用」后展示「已Root」/「未Root」。 */
+    public final MutableState<Boolean> uiRootGranted = ClipboardFixUi.stateOf(false);
+    /** 已启用的功能数量（四个功能开关中为「开」的个数），状态卡底部展示「已启用的功能：X」。 */
+    public final MutableState<Integer> uiEnabledFeatures = ClipboardFixUi.stateOf(0);
+    /** 标识显隐开关：控制 Root 标识与「已启用的功能：X」行的可见性，默认显示。 */
+    public final MutableState<Boolean> uiBadgesVisible = ClipboardFixUi.stateOf(true);
     public final MutableState<String> uiImeCountText = ClipboardFixUi.stateOf("已启用输入法：—");
     public final MutableState<Boolean> uiStatusEnabled = ClipboardFixUi.stateOf(false);
     public final MutableState<Boolean> uiSwImeUnlock = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_IME_UNLOCK);
@@ -131,6 +139,18 @@ public class AboutActivity extends ComponentActivity {
     // 模块启用状态（通过 libxposed:service 实时查询 LSPosed）
     private static final String MODULE_PKG = "com.clipboardfix";
     private final Handler mStatusHandler = new Handler(Looper.getMainLooper());
+
+    // ---- 状态卡「连续点击 10 次」隐藏/显示标识 ----
+    /** 达成隐藏/显示所需的连续点击次数。 */
+    private static final int TAP_TARGET = 10;
+    /** 两次点击超过该间隔即视为中断，计数清零（避免误触累积）。 */
+    private static final long TAP_RESET_MS = 1500L;
+    private int mTapCount = 0;
+    private long mLastTapTime = 0;
+
+    // ---- 实时 root 轮询（su 已授权时无弹窗、开销极小）----
+    private static final long ROOT_POLL_MS = 3000L;
+    private Runnable rootPoller;
 
     // ---- 模块状态（进程级）----
     // 根因：LSPosed 的 binder 在进程存活期间只推送一次（经 XposedProvider.call 推给进程），
@@ -198,6 +218,9 @@ public class AboutActivity extends ComponentActivity {
 
         // 开关状态：从本地偏好恢复
         loadSwitchState();
+        // 标识显隐：从本地偏好恢复（隐藏后重启仍保持隐藏，默认显示）
+        uiBadgesVisible.setValue(
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_BADGES_VISIBLE, true));
         // 桌面图标显隐：恢复当前状态
         updateHideRow();
 
@@ -209,13 +232,14 @@ public class AboutActivity extends ComponentActivity {
         // 装配四页 Compose + Miuix 界面（状态与动作回调桥接到本 Activity）
         ClipboardFixUi.installPages(
                 pageHome, pageFeature, pageAbout, pageSettings,
-                uiStatusText, uiImeCountText, uiStatusEnabled,
+                uiStatusText, uiImeCountText, uiStatusEnabled, uiRootGranted,
+                uiEnabledFeatures, uiBadgesVisible,
                 BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE,
                 DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
                 Build.VERSION.INCREMENTAL, abiInfo(),
                 uiSwImeUnlock, uiSwUnlimitCount, uiSwPanelColor, uiSwClipboardPin, uiIconHidden,
                 this::doCheckUpdate,
-                this::showStatusSheet,
+                this::onStatusCardTap,
                 this::onToggleImeUnlock,
                 this::onToggleUnlimitCount,
                 this::onTogglePanelColor,
@@ -382,6 +406,78 @@ public class AboutActivity extends ComponentActivity {
         } else {
             scheduleStatusFallback();
         }
+        // root 标识：后台探测，结果回主线程写状态（不执行 su，避免授权弹窗）
+        refreshRootStatus();
+        // 已启用的功能数量：随开关变化刷新
+        refreshEnabledFeatures();
+    }
+
+    /** 后台探测本模块是否被授予 root 权限，并刷新 {@link #uiRootGranted}。 */
+    private void refreshRootStatus() {
+        new Thread(() -> {
+            final boolean root = RootCheck.isModuleRootGranted();
+            mStatusHandler.post(() -> uiRootGranted.setValue(root));
+        }).start();
+    }
+
+    /** 统计四个功能开关中为「开」的数量，回填 {@link #uiEnabledFeatures}。 */
+    private void refreshEnabledFeatures() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        int n = 0;
+        if (prefs.getBoolean(ModulePrefs.KEY_IME_UNLOCK, ModulePrefs.DEFAULT_IME_UNLOCK)) n++;
+        if (prefs.getBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT)) n++;
+        if (prefs.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)) n++;
+        if (prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)) n++;
+        uiEnabledFeatures.setValue(n);
+    }
+
+    /**
+     * 状态卡连续点击 10 次切换「标识」显隐（Root 标识 + 已启用的功能行）。
+     *
+     * <p>每次点击给出提示：当前为显示态则提示「连续点击10次隐藏标识」，
+     * 当前为隐藏态则提示「连续点击10次显示标识」；点满 10 次后翻转 {@link #uiBadgesVisible}
+     * 并提示结果。两次点击超过 {@link #TAP_RESET_MS} 视为中断、计数清零，避免误触累积。
+     */
+    private void onStatusCardTap() {
+        long now = System.currentTimeMillis();
+        if (now - mLastTapTime > TAP_RESET_MS) {
+            mTapCount = 0;
+        }
+        mLastTapTime = now;
+        mTapCount++;
+        boolean visible = uiBadgesVisible.getValue();
+        if (mTapCount < TAP_TARGET) {
+            showSnack(visible ? getString(R.string.tap_hide_hint) : getString(R.string.tap_show_hint));
+        } else {
+            mTapCount = 0;
+            boolean shown = !visible;
+            uiBadgesVisible.setValue(shown);
+            // 持久化：隐藏后重启仍保持隐藏，直到再次 10 连击显示
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean(KEY_BADGES_VISIBLE, shown).apply();
+            showSnack(shown ? getString(R.string.badges_shown) : getString(R.string.badges_hidden));
+        }
+    }
+
+    /** 实时重查本模块 root 授权：每 {@link #ROOT_POLL_MS} 轮询一次（su 已授权时无弹窗、开销极小）。 */
+    private void startRootPoller() {
+        stopRootPoller();
+        rootPoller = new Runnable() {
+            @Override
+            public void run() {
+                refreshRootStatus();
+                mStatusHandler.postDelayed(this, ROOT_POLL_MS);
+            }
+        };
+        mStatusHandler.postDelayed(rootPoller, ROOT_POLL_MS);
+    }
+
+    /** 停止实时 root 轮询（离开前台或销毁时调用）。 */
+    private void stopRootPoller() {
+        if (rootPoller != null) {
+            mStatusHandler.removeCallbacks(rootPoller);
+            rootPoller = null;
+        }
     }
 
     /** 主 ABI + 内存页大小，如 arm64-v8a(4k)。 */
@@ -516,6 +612,7 @@ public class AboutActivity extends ComponentActivity {
         pushFeaturePrefs();
         // 四个功能开关的 hook 全部装在 com.miui.phrase / 输入法进程内（进程启动时读开关），
         // 故重载进程即可生效，无需整机重启
+        refreshEnabledFeatures();
         showSnack(getString(R.string.snack_changed_reload));
     }
 
@@ -1110,11 +1207,20 @@ public class AboutActivity extends ComponentActivity {
                 scheduleStatusFallback();
             }
         }
+        // root 身份实时监听：每次回到前台立即重查，并启动周期轮询（离开前台时停止）。
+        refreshRootStatus();
+        startRootPoller();
         // 引导展示期间：从 LSPosed / 授权管理器等返回时，重新探测 ROOT（su 已设 4s 短超时，
         // 不会再卡 10s+），让「超级用户权限」一项即时刷新。
         if (welcomeOverlay != null) {
             detectRootAsync();
         }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        stopRootPoller();
     }
 
     @Override
@@ -1127,6 +1233,7 @@ public class AboutActivity extends ComponentActivity {
             sWelcomePage = uiWelcomePage.getValue();
         }
         mStatusHandler.removeCallbacksAndMessages(null);
+        stopRootPoller();
         unregisterGestureLineObserver();
         stopWelcomeStatusPoller();
         super.onDestroy();

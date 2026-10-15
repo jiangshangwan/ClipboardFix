@@ -13,10 +13,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -47,6 +48,9 @@ fun HomePage(
     statusText: String,
     imeCountText: String,
     statusEnabled: Boolean,
+    statusRootGranted: Boolean,
+    enabledFeatures: Int,
+    badgesVisible: Boolean,
     appVersion: String,
     buildDate: String,
     deviceModel: String,
@@ -82,11 +86,14 @@ fun HomePage(
                 modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
             )
 
-            // 模块状态卡：整卡可按压（Miuix Tilt 倾斜反馈），点击弹出更新说明弹卡
+            // 模块状态卡：整卡可按压（Miuix Tilt 倾斜反馈），连续点击 10 次切换标识显隐
             StatusCard(
                 statusText = statusText,
                 imeCountText = imeCountText,
                 statusEnabled = statusEnabled,
+                statusRootGranted = statusRootGranted,
+                enabledFeatures = enabledFeatures,
+                badgesVisible = badgesVisible,
                 onClick = onStatusCardClick,
             )
 
@@ -116,7 +123,15 @@ fun HomePage(
 }
 
 @Composable
-private fun StatusCard(statusText: String, imeCountText: String, statusEnabled: Boolean, onClick: () -> Unit) {
+private fun StatusCard(
+    statusText: String,
+    imeCountText: String,
+    statusEnabled: Boolean,
+    statusRootGranted: Boolean,
+    enabledFeatures: Int,
+    badgesVisible: Boolean,
+    onClick: () -> Unit,
+) {
     val dark = isSystemInDarkTheme()
     val bg = when {
         statusEnabled && dark -> StatusBgEnabledDark
@@ -137,19 +152,42 @@ private fun StatusCard(statusText: String, imeCountText: String, statusEnabled: 
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = stringResource(R.string.module_status), fontSize = 15.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                Text(
-                    text = statusText,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = accent,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(top = 2.dp),
-                )
+                ) {
+                    Text(
+                        text = statusText,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accent,
+                    )
+                    // 已启用且标识可见：在「已启用」后加小字标识（已Root / 未Root）
+                    if (statusEnabled && badgesVisible) {
+                        Spacer(Modifier.width(8.dp))
+                        RootBadge(
+                            text = stringResource(
+                                if (statusRootGranted) R.string.status_root else R.string.status_no_root,
+                            ),
+                            accent = accent,
+                        )
+                    }
+                }
                 Text(
                     text = imeCountText,
                     fontSize = 15.sp,
                     color = MiuixTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(top = 8.dp),
                 )
+                // 已启用且标识可见：在「已启用输入法」下展示已启用的功能数量
+                if (statusEnabled && badgesVisible) {
+                    Text(
+                        text = stringResource(R.string.enabled_features, enabledFeatures),
+                        fontSize = 15.sp,
+                        color = MiuixTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
             }
             Icon(
                 painter = painterResource(if (statusEnabled) R.drawable.ic_status_enabled else R.drawable.ic_status_disabled),
@@ -158,6 +196,27 @@ private fun StatusCard(statusText: String, imeCountText: String, statusEnabled: 
                 modifier = Modifier.size(96.dp),
             )
         }
+    }
+}
+
+/**
+ * 状态卡「已启用」后的小字标识：模块已被授予 su 时显示「已Root」，否则「未Root」。
+ * 用强调色的低透明底 + 小号字，紧贴大号状态文字，不喧宾夺主。
+ */
+@Composable
+private fun RootBadge(text: String, accent: androidx.compose.ui.graphics.Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(accent.copy(alpha = 0.14f))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = text,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = accent,
+        )
     }
 }
 

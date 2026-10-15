@@ -338,7 +338,6 @@ fun AboutPage(
                     .padding(top = 22.dp, bottom = BAR_BOTTOM_PAD_DP.dp),
             )
         }
-
         // Snackbar 宿主：玻璃面板折射本页内容（与毛玻璃卡片同源），浮在底部导航条上方
         PageSnackbarHost(backdrop = snackbarBackdrop)
     }
