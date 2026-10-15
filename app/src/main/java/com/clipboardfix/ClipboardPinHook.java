@@ -5,6 +5,8 @@ import android.content.Context;
 import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.MatrixCursor;
+import android.graphics.Bitmap;
+import android.graphics.PorterDuff;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -14,6 +16,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
+import android.widget.ImageView;
 import android.widget.PopupWindow;
 import android.widget.TextView;
 
@@ -125,6 +128,15 @@ public final class ClipboardPinHook {
 
     /** 置顶按钮底色（蓝，与系统删除按钮的红区分）。 */
     private static final int PIN_BTN_COLOR = 0xFF3B82F6;
+
+    /**
+     * 置顶按钮内图标相对圆边的内边距（dp）。
+     *
+     * <p>56dp 圆减去左右各 16dp，留 24dp 给箭头（约占圆径 43%）——按真机截图实测标定：
+     * 系统删除按钮的垃圾桶图标约占圆径 38.5%，箭头若按 9dp 内边距会占到 66.7%，
+     * 明显比删除图标大一圈（用户反馈「占满整个圆圈、与删除图标严重不协调」）。
+     */
+    private static final float PIN_ICON_PAD_DP = 16f;
 
     /**
      * 置顶条目标注：追加在来源标注（「来自我的电脑」）后的提醒文字。
@@ -771,9 +783,10 @@ public final class ClipboardPinHook {
                         st.downY = ev.getY();
                         st.declined = false;
                         if (st.mode == MODE_OPENING) {
-                            // 上一手势异常中断：归位再重新开始
+                            // 上一手势异常中断：归位再重新开始（按钮也要一起收回门外，
+                            // 否则会残留一个浮在条目上的置顶按钮）
                             st.mode = MODE_NONE;
-                            snapBack(main);
+                            closePinDoor(self, main, pinDoorWidth(sv));
                         }
                         if (st.mode == MODE_PIN_OPEN && main != null && main.getLeft() < -1) {
                             // 异常态：系统删除门实际开着却残留置顶门状态（两门同显错乱），
@@ -848,11 +861,17 @@ public final class ClipboardPinHook {
                                     main.animate().translationX(bw).setDuration(150L).start();
                                 }
                                 showPinBtn(self, true);
+                                // 按钮随主视图一起滑到全开位置（translationX = 0）
+                                View ob = sPinBtns.get(self);
+                                if (ob != null) {
+                                    ob.animate().cancel();
+                                    ob.animate().translationX(0f).setDuration(150L).start();
+                                }
                                 log("pin door opened (dx=" + dx + ", bw=" + bw + ")");
                             } else {
+                                // 划出不够：关门，按钮跟着条目滑回门外被裁掉
                                 st.mode = MODE_NONE;
-                                snapBack(main);
-                                showPinBtn(self, false);
+                                closePinDoor(self, main, bw);
                             }
                             return Boolean.TRUE;
                         }
@@ -862,18 +881,26 @@ public final class ClipboardPinHook {
                             log("pin button clicked");
                             togglePinAt(self);
                             st.mode = MODE_NONE;
-                            snapBack(main);
-                            showPinBtn(self, false);
+                            closePinDoor(self, main, bw);
                             return Boolean.TRUE;
                         }
                         float cur = main != null ? main.getTranslationX() : 0f;
                         if (up && cur >= bw * 0.5f) {
-                            // 仍停在开门位置（未点按钮、未往回拖）：保持打开
+                            // 仍停在开门位置（未点按钮、未往回拖）：保持打开。
+                            // 补一个动画滑到全开，按钮同步回到全开位置
+                            if (main != null) {
+                                main.animate().translationX(bw).setDuration(150L).start();
+                            }
+                            View kb = sPinBtns.get(self);
+                            if (kb != null) {
+                                kb.animate().cancel();
+                                kb.animate().translationX(0f).setDuration(150L).start();
+                            }
                             return Boolean.TRUE;
                         }
+                        // 回拖过半：关门，按钮跟着条目滑回门外被裁掉
                         st.mode = MODE_NONE;
-                        snapBack(main);
-                        showPinBtn(self, false);
+                        closePinDoor(self, main, bw);
                         return Boolean.TRUE;
                     }
                     default:
@@ -895,14 +922,10 @@ public final class ClipboardPinHook {
         if (main != null) {
             main.setTranslationX(tx);
         }
+        // 按钮与主视图同向等量位移（偏移 -bw）：门全关时被父容器左边界裁掉，
+        // 门全开时正好落在露出区——与原生删除按钮「被条目推着走、越界被裁」同构
+        syncPinBtn(sv, bw, tx);
         return Boolean.TRUE;
-    }
-
-    /** 主视图归位（关门）。 */
-    private static void snapBack(View main) {
-        if (main != null) {
-            main.animate().translationX(0f).setDuration(150L).start();
-        }
     }
 
     /**
@@ -1797,6 +1820,10 @@ public final class ClipboardPinHook {
      * 按钮自身位置由 {@link #hookOnLayout} 在每次 layout 后手动摆到左侧。
      * 按钮<b>不可点击</b>（不消费触摸），点击命中由手势状态机在 UP 时按矩形判断，
      * 这样从按钮上起滑关门也不会被按钮吞掉事件。
+     *
+     * <p>图标：蓝底正圆内居中放一枚<b>上箭头</b>（{@link PinIcon}，base64 内嵌、
+     * 运行时解码），替代旧版的白色「顶」字。原图是深藏青、在蓝底上对比不足，
+     * 故按 SRC_IN 染成白色，与旧版白字视觉一致。解码失败时回退为旧版文字样式。
      */
     private static View pinBtnOf(Object swipe) {
         synchronized (sPinBtns) {
@@ -1807,27 +1834,46 @@ public final class ClipboardPinHook {
             View sv = (View) swipe;
             float density = sv.getResources().getDisplayMetrics().density;
             int size = (int) (PIN_BTN_DP * density + 0.5f);
-            TextView tv = new TextView(sv.getContext());
-            tv.setLayoutParams(new ViewGroup.LayoutParams(size, size));
-            tv.setText("顶");
-            tv.setTextColor(0xFFFFFFFF);
-            tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
-            tv.setGravity(android.view.Gravity.CENTER);
-            tv.setClickable(false);
-            tv.setFocusable(false);
+
+            // 图标优先；解码失败退回旧版「顶」字，保证按钮永远有内容
+            View content;
+            Bitmap icon = PinIcon.get();
+            if (icon != null) {
+                ImageView iv = new ImageView(sv.getContext());
+                int pad = (int) (PIN_ICON_PAD_DP * density + 0.5f);
+                iv.setPadding(pad, pad, pad, pad);
+                iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                iv.setImageBitmap(icon);
+                // 原图 #FF272636 深藏青，蓝底圆上对比不足；染白与旧版白色「顶」字一致
+                iv.setColorFilter(0xFFFFFFFF, PorterDuff.Mode.SRC_IN);
+                content = iv;
+            } else {
+                TextView tv = new TextView(sv.getContext());
+                tv.setText("顶");
+                tv.setTextColor(0xFFFFFFFF);
+                tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+                tv.setGravity(android.view.Gravity.CENTER);
+                content = tv;
+            }
+            content.setLayoutParams(new ViewGroup.LayoutParams(size, size));
+            content.setClickable(false);
+            content.setFocusable(false);
             GradientDrawable bg = new GradientDrawable();
             bg.setShape(GradientDrawable.OVAL);
             bg.setColor(PIN_BTN_COLOR);
-            tv.setBackground(bg);
+            content.setBackground(bg);
+            // 初始位置在「门外」：整体向左移出一个门宽，被父容器左边界裁掉（不可见）。
+            // 开门时由 {@link #syncPinBtn} 让它随主视图一起滑进露出区。
+            content.setTranslationX(-pinDoorWidth(sv));
             try {
-                ((ViewGroup) sv).addView(tv);
-                sPinBtns.put(swipe, tv);
+                ((ViewGroup) sv).addView(content);
+                sPinBtns.put(swipe, content);
                 log("pin button created for " + sv.getClass().getSimpleName());
             } catch (Throwable t) {
                 log("pin button addView failed - " + t);
                 return null;
             }
-            return tv;
+            return content;
         }
     }
 
@@ -1846,7 +1892,13 @@ public final class ClipboardPinHook {
         btn.layout(margin, top, margin + size, top + size);
     }
 
-    /** 置顶按钮显隐。 */
+    /**
+     * 置顶按钮显隐。
+     *
+     * <p>不涉及其位移：位移由 {@link #syncPinBtn}（跟手）与开关门动画负责。
+     * 隐藏时把按钮放回「门外」起始位，供下次开门滑入；显示时不动位移，
+     * 由调用方紧接着同步（开门瞬间按钮还在门外被裁着，不会闪）。
+     */
     private static void showPinBtn(Object swipe, boolean visible) {
         View btn = sPinBtns.get(swipe);
         if (btn == null) {
@@ -1859,8 +1911,60 @@ public final class ClipboardPinHook {
             }
         }
         int want = visible ? View.VISIBLE : View.GONE;
+        // 先取消在途动画：否则上一次关门动画的 withEndAction 可能把刚重新打开的按钮又置 GONE
+        btn.animate().cancel();
+        if (!visible) {
+            btn.setTranslationX(-pinDoorWidth((View) swipe));
+        }
         if (btn.getVisibility() != want) {
             btn.setVisibility(want);
+        }
+    }
+
+    /**
+     * 按主视图位移同步置顶按钮位置：{@code 按钮 translationX = 主视图 translationX - 门宽}。
+     *
+     * <p><b>为什么这样算</b>：真机实测（对用户取消删除的过程截图逐帧量红圆坐标）发现，
+     * 系统删除按钮并不是「原地不动等着被主视图盖住」，而是<b>被条目推着同向等量位移</b>，
+     * 右缘始终顶在面板边界上被裁掉、左缘一路右移（693→742→770→794→820→消失），
+     * 位移量恰为一个门宽时整体越界不见。置顶按钮在左侧，做镜像即可：
+     * 门全关时按钮移出父容器<b>左</b>边界被裁掉（不可见），门全开时正好落在露出区，
+     * 且按钮右缘恒定贴在主视图左缘旁 8dp——视觉上就是「条目推着按钮一起走、越界被裁」。
+     *
+     * <p>相比早期用透明度渐隐的方案，这个方案与原生删除按钮的机制完全同构，
+     * 也不会出现「按钮浮在条目上」的问题（它始终在露出区里）。
+     */
+    private static void syncPinBtn(Object swipe, float bw, float mainTx) {
+        View btn = sPinBtns.get(swipe);
+        if (btn == null) {
+            return;
+        }
+        btn.setTranslationX(mainTx - bw);
+    }
+
+    /**
+     * 关门：主视图归位 + 按钮同向等量滑回「门外」并被父容器裁掉（150ms，与主视图回弹同步）。
+     *
+     * <p>机制同原生删除门：删除按钮是被条目推着走、越界被裁；置顶按钮做镜像——
+     * 跟着条目滑回左边，整体移出父容器左边界后被裁掉，动画结束置 GONE。
+     */
+    private static void closePinDoor(Object swipe, View main, float bw) {
+        if (main != null) {
+            main.animate().translationX(0f).setDuration(150L).start();
+        }
+        View btn = sPinBtns.get(swipe);
+        if (btn == null) {
+            return;
+        }
+        btn.animate().cancel();
+        if (btn.getVisibility() == View.VISIBLE) {
+            btn.animate().translationX(-bw).setDuration(150L).withEndAction(() -> {
+                if (btn.getTranslationX() <= -bw + 0.5f) {
+                    btn.setVisibility(View.GONE);
+                }
+            }).start();
+        } else {
+            btn.setTranslationX(-bw);
         }
     }
 
@@ -1872,7 +1976,9 @@ public final class ClipboardPinHook {
         }
         float x = ev.getX();
         float y = ev.getY();
-        return x >= btn.getLeft() && x <= btn.getRight()
+        // 按钮位置 = layout 位置 + translationX（跟手/动画中位移 nontrivial，必须算进去）
+        float off = btn.getTranslationX();
+        return x >= btn.getLeft() + off && x <= btn.getRight() + off
                 && y >= btn.getTop() && y <= btn.getBottom();
     }
 
