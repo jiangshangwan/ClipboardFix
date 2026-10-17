@@ -121,7 +121,7 @@ public class UpdateChecker {
                 new AlertDialog.Builder(context)
                         .setTitle(context.getString(R.string.uc_new_version) + " " + release.tagName)
                         .setMessage(context.getString(R.string.uc_current) + release.currentVersion
-                                + "\n\n" + context.getString(R.string.uc_update_content) + "\n" + stripMarkdown(release.body))
+                                + "\n\n" + stripMarkdown(release.body))
                         .setPositiveButton(context.getString(R.string.uc_update_now), (d, w) -> downloadAndInstall(release))
                         .setNegativeButton(context.getString(R.string.uc_later), null)
                         .setCancelable(true)
@@ -142,7 +142,8 @@ public class UpdateChecker {
             content.addView(tvCurrent);
 
             TextView tvBody = new TextView(activity);
-            tvBody.setText(activity.getString(R.string.uc_update_content) + "\n" + stripMarkdown(release.body));
+            // 更新说明直接取 GitHub Release 正文（标题由发布者手写，不再加「更新内容」前缀）
+            tvBody.setText(stripMarkdown(release.body));
             tvBody.setTextColor(activity.getColor(R.color.text_primary));
             tvBody.setTextSize(15f);
             tvBody.setLineSpacing(4 * density, 1f);

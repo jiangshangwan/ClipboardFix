@@ -35,10 +35,12 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 fun FeaturePage(
     swImeUnlock: Boolean,
     swUnlimitCount: Boolean,
+    swUnlimitTime: Boolean,
     swPanelColor: Boolean,
     swClipboardPin: Boolean,
     onToggleImeUnlock: (Boolean) -> Unit,
     onToggleUnlimitCount: (Boolean) -> Unit,
+    onToggleUnlimitTime: (Boolean) -> Unit,
     onTogglePanelColor: (Boolean) -> Unit,
     onToggleClipboardPin: (Boolean) -> Unit,
 ) {
@@ -74,6 +76,11 @@ fun FeaturePage(
                         checked = swUnlimitCount,
                         onCheckedChange = onToggleUnlimitCount,
                         title = stringResource(R.string.sw_unlimit),
+                    )
+                    SwitchPreference(
+                        checked = swUnlimitTime,
+                        onCheckedChange = onToggleUnlimitTime,
+                        title = stringResource(R.string.sw_unlimit_time),
                     )
                     SwitchPreference(
                         checked = swPanelColor,

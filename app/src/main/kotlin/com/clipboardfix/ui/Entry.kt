@@ -53,6 +53,7 @@ fun installPages(
     abiInfo: String,
     swImeUnlock: State<Boolean>,
     swUnlimitCount: State<Boolean>,
+    swUnlimitTime: State<Boolean>,
     swPanelColor: State<Boolean>,
     swClipboardPin: State<Boolean>,
     iconHidden: State<Boolean>,
@@ -60,6 +61,7 @@ fun installPages(
     onStatusCardTap: Runnable,
     onToggleImeUnlock: BoolAction,
     onToggleUnlimitCount: BoolAction,
+    onToggleUnlimitTime: BoolAction,
     onTogglePanelColor: BoolAction,
     onToggleClipboardPin: BoolAction,
     onHideIcon: BoolAction,
@@ -105,10 +107,12 @@ fun installPages(
             FeaturePage(
                 swImeUnlock = swImeUnlock.value,
                 swUnlimitCount = swUnlimitCount.value,
+                swUnlimitTime = swUnlimitTime.value,
                 swPanelColor = swPanelColor.value,
                 swClipboardPin = swClipboardPin.value,
                 onToggleImeUnlock = { onToggleImeUnlock.invoke(it) },
                 onToggleUnlimitCount = { onToggleUnlimitCount.invoke(it) },
+                onToggleUnlimitTime = { onToggleUnlimitTime.invoke(it) },
                 onTogglePanelColor = { onTogglePanelColor.invoke(it) },
                 onToggleClipboardPin = { onToggleClipboardPin.invoke(it) },
             )

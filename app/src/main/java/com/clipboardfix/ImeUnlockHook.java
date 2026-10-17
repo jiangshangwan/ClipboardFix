@@ -84,18 +84,27 @@ public final class ImeUnlockHook {
     private ImeUnlockHook() {
     }
 
-    public static void init(String pkg, ClassLoader cl) {
+    /**
+     * @param pkg        输入法包名
+     * @param cl         默认 classloader
+     * @param imeUnlock  全面屏优化解锁开关（控制本类其余全部安装）
+     * @param timeUnlock 剪贴板时间限制解锁开关（走 loadDex 回调装读取路径 hook）
+     */
+    public static void init(String pkg, ClassLoader cl, boolean imeUnlock, boolean timeUnlock) {
         boolean isNonCustomize = !contains(MIUI_IME_LIST, pkg);
         log(pkg + " start (customized=" + !isNonCustomize
                 + ", sdk=" + Build.VERSION.SDK_INT
                 + ", device=" + Build.DEVICE
-                + ", miui=" + SysProps.get("ro.miui.ui.version.name", "?"));
+                + ", miui=" + SysProps.get("ro.miui.ui.version.name", "?")
+                + ", timeUnlock=" + timeUnlock + ")");
 
         // 让输入法窗口 edge-to-edge（Android 15+ 上 targetSdk<35 的输入法窗口默认不是
         // edge-to-edge，系统给内容容器设 marginBottom=导航栏高度，导致 MIUI 底栏被整体抬高）。
-        hookImeWindowEdgeToEdge();
+        if (imeUnlock) {
+            hookImeWindowEdgeToEdge();
+        }
 
-        if (isNonCustomize) {
+        if (isNonCustomize && imeUnlock) {
             Class<?> injector = Reflect.findClassIfExists(
                     "android.inputmethodservice.InputMethodServiceInjector", cl);
             if (injector == null) {
@@ -115,11 +124,17 @@ public final class ImeUnlockHook {
             }
         }
 
-        hookDeleteNotSupportIme(
-                "android.inputmethodservice.InputMethodServiceInjector$MiuiSwitchInputMethodListener",
-                cl);
+        if (imeUnlock) {
+            hookDeleteNotSupportIme(
+                    "android.inputmethodservice.InputMethodServiceInjector$MiuiSwitchInputMethodListener",
+                    cl);
+        }
 
-        hookModuleManagerLoadDex(cl, isNonCustomize);
+        // loadDex 拦截：imeUnlock 的底栏修复与 timeUnlock 的剪贴板时间 hook 都依赖它
+        // （面板/管理类在动态 dex 里，onPackageLoaded 时按名加载必 ClassNotFound）
+        if (imeUnlock || timeUnlock) {
+            hookModuleManagerLoadDex(cl, isNonCustomize, imeUnlock, timeUnlock);
+        }
 
         log(pkg + " done");
     }
@@ -286,10 +301,15 @@ public final class ImeUnlockHook {
 
     /**
      * 常用语模块是从 dex 动态加载的，这里拦截加载过程，
-     * 把 com.miui.inputmethod.InputMethodBottomManager 一并 hook 掉。
+     * 按开关安装：imeUnlock 的底栏/列表修复 + timeUnlock 的剪贴板 72h 过滤旁路。
+     *
+     * @param imeUnlock  是否安装全面屏优化相关 hook
+     * @param timeUnlock 是否安装剪贴板时间限制解锁 hook（读取路径，装在 dex 的 classloader 上）
      */
     private static void hookModuleManagerLoadDex(final ClassLoader cl,
-                                                 final boolean isNonCustomize) {
+                                                 final boolean isNonCustomize,
+                                                 final boolean imeUnlock,
+                                                 final boolean timeUnlock) {
         try {
             Class<?> managerClass = Reflect.findClassIfExists(
                     "android.inputmethodservice.InputMethodModuleManager", cl);
@@ -333,24 +353,32 @@ public final class ImeUnlockHook {
                     return null;
                 }
 
-                hookDeleteNotSupportIme(
-                        "com.miui.inputmethod.InputMethodBottomManager$MiuiSwitchInputMethodListener",
-                        loader);
+                if (imeUnlock) {
+                    hookDeleteNotSupportIme(
+                            "com.miui.inputmethod.InputMethodBottomManager$MiuiSwitchInputMethodListener",
+                            loader);
+                }
 
                 Class<?> bottom = Reflect.findClassIfExists(
                         "com.miui.inputmethod.InputMethodBottomManager", loader);
                 if (bottom != null) {
-                    // 键盘抬高修复：hook addMiuiBottomView，由 reconcileMiuiBottomFrame 在
-                    // 内容视图填满 inputFrame、或 MIUI 工具栏注入冗余底部安全区时，把对应视图
-                    // 的 bottom padding 减去导航栏 inset，并剥离冗余导航 padding。
-                    hookMiuiBottomInsetCompatibility(bottom);
-                    if (isNonCustomize) {
-                        hookSIsImeSupport(bottom);
-                        hookIsXiaoAiEnable(bottom);
+                    if (imeUnlock) {
+                        // 键盘抬高修复：hook addMiuiBottomView，由 reconcileMiuiBottomFrame 在
+                        // 内容视图填满 inputFrame、或 MIUI 工具栏注入冗余底部安全区时，把对应视图
+                        // 的 bottom padding 减去导航栏 inset，并剥离冗余导航 padding。
+                        hookMiuiBottomInsetCompatibility(bottom);
+                        if (isNonCustomize) {
+                            hookSIsImeSupport(bottom);
+                            hookIsXiaoAiEnable(bottom);
+                        }
+                        hookGetSupportIme(bottom);
                     }
-                    hookGetSupportIme(bottom);
-                } else {
+                } else if (imeUnlock) {
                     log("WARN: InputMethodBottomManager not found after addDexPath");
+                }
+                if (timeUnlock) {
+                    // 剪贴板 72h 过滤旁路：面板跑在输入法进程，必须用 dex 的 classloader 装
+                    UnlimitHook.hookClipboardTimeLimit(loader);
                 }
                 return null;
             });
@@ -768,6 +796,10 @@ public final class ImeUnlockHook {
         boolean bottomAreaActive = hasInset
                 && isBottomAreaActive(rootView, inputFrame, bottomArea, navigationInset);
 
+        // ---- 诊断（临时）：定位「MIUI 底栏图标间歇性被裁」故障，根因确认后整块移除 ----
+        diagBottomFrame(inputFrame, fullscreenArea, rootView, bottomArea, contentView,
+                navigationInset, bottomAreaActive);
+
         if (!bottomAreaActive) {
             restoreMiuiBottomFrame(inputFrame, fullscreenArea);
             restoreNavigationPadding(inputFrame);
@@ -984,6 +1016,69 @@ public final class ImeUnlockHook {
             view.setPadding(view.getPaddingLeft(), view.getPaddingTop(),
                     view.getPaddingRight(), paddingBottom);
         }
+    }
+
+    // ---- 诊断（临时）：底栏图标被裁故障定位，根因确认后整块移除 ----
+    /** 诊断日志节流：上次输出时间与上次签名（签名变化立即输出，否则至多 5s 一条）。 */
+    private static long sDiagLastMs = 0L;
+    private static String sDiagLastSig = "";
+
+    /**
+     * 转储底栏相关几何：内容视图 padding/底边、inputFrame、fullscreenArea、底栏自身
+     * padding/高度/直接子级，以及底栏的祖先链（含各自 top/bottom，用于推断谁盖住了图标）。
+     */
+    private static void diagBottomFrame(ViewGroup inputFrame, ViewGroup fullscreenArea,
+                                        View rootView, View bottomArea, View contentView,
+                                        int navigationInset, boolean bottomAreaActive) {
+        long now = System.currentTimeMillis();
+        String sig = (contentView == null ? "n" : contentView.getClass().getSimpleName())
+                + "/" + (contentView == null ? -1 : contentView.getPaddingBottom())
+                + "/" + inputFrame.getHeight()
+                + "/" + bottomArea.getPaddingBottom()
+                + "/" + bottomArea.getHeight()
+                + "/" + fullscreenArea.getHeight()
+                + "/" + bottomAreaActive;
+        if (sig.equals(sDiagLastSig) && now - sDiagLastMs < 5000L) {
+            return;
+        }
+        sDiagLastSig = sig;
+        sDiagLastMs = now;
+        StringBuilder sb = new StringBuilder("diag: inset=").append(navigationInset)
+                .append(" active=").append(bottomAreaActive)
+                .append(" content=").append(contentView == null ? "null"
+                        : contentView.getClass().getSimpleName())
+                .append(" padB=").append(contentView == null ? -1 : contentView.getPaddingBottom())
+                .append(" bottom=").append(contentView == null ? -1 : contentView.getBottom())
+                .append(" inputFrame[h=").append(inputFrame.getHeight())
+                .append(",padB=").append(inputFrame.getPaddingBottom())
+                .append(",t=").append(inputFrame.getTop())
+                .append(",b=").append(inputFrame.getBottom()).append("]")
+                .append(" full[h=").append(fullscreenArea.getHeight()).append("]")
+                .append(" bar[padB=").append(bottomArea.getPaddingBottom())
+                .append(",h=").append(bottomArea.getHeight())
+                .append(",t=").append(bottomArea.getTop())
+                .append(",b=").append(bottomArea.getBottom()).append("]");
+        if (bottomArea instanceof ViewGroup) {
+            ViewGroup bar = (ViewGroup) bottomArea;
+            int n = Math.min(bar.getChildCount(), 4);
+            for (int i = 0; i < n; i++) {
+                View c = bar.getChildAt(i);
+                sb.append(" bar>").append(c.getClass().getSimpleName())
+                        .append("[").append(c.getTop()).append(",").append(c.getBottom())
+                        .append(",vis=").append(c.getVisibility()).append("]");
+            }
+        }
+        // 底栏祖先链（各自 top/bottom，推断布局结构与覆盖关系）
+        View p = bottomArea;
+        int depth = 0;
+        while (p != null && depth < 6) {
+            sb.append(" ^").append(p.getClass().getSimpleName())
+                    .append("[").append(p.getTop()).append(",").append(p.getBottom()).append("]");
+            Object parent = p.getParent();
+            p = (parent instanceof View) ? (View) parent : null;
+            depth++;
+        }
+        log(sb.toString());
     }
 
     private static boolean isBottomAreaActive(View rootView, View inputFrame,

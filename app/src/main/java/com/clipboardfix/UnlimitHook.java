@@ -27,16 +27,21 @@ import java.util.List;
 import io.github.libxposed.api.XposedModuleInterface;
 
 /**
- * 解除「常用语 / 剪贴板」的条数、时间与字数限制（只在 com.miui.phrase 内安装，受功能开关控制）。
+ * 解除「常用语 / 剪贴板」的条数、时间与字数限制（按开关在 com.miui.phrase 与输入法进程内安装）。
  *
  * <p>效果对齐 HyperCeiler（AGPL-3.0）「解除输入法全面屏优化常用语剪贴板条数和时间限制」里的
  * 限制解除部分，按本项目的反射/拦截模型独立实现：
  * <ul>
- *   <li><b>剪贴板条数与时间</b>：DexKit 定位保存剪贴板 JSON 的方法（日志串
+ *   <li><b>剪贴板条数与时间（保存路径）</b>：DexKit 定位保存剪贴板 JSON 的方法（日志串
  *       {@code "get savedList size :"}）。原逻辑会把超过 20 条的旧条目删掉并按时间清理；
  *       这里改写为「新条目 + 全部旧条目」原样合并，条数与存放时间都不设限。
  *       条目的解析/序列化仍走目标应用自己的 {@code MiuiClipboardManager.jsonToBeanList}
- *       与各条目的 {@code toJSONObject}，数据格式不受影响。</li>
+ *       与各条目的 {@code toJSONObject}，数据格式不受影响。
+ *       条数开关或时间开关开启时都会安装（原方法把两种清理耦合在一起，无法只拆一半）。</li>
+ *   <li><b>剪贴板时间（读取路径）</b>：hook {@code MiuiClipboardManager.getNoExpiredClipboardData}
+ *       的第三个参数 curTime，置 0 后 age 恒为负，列表全量保留、过期图片不再被删。
+ *       面板实际运行在输入法进程，故除 com.miui.phrase 外，还要在各输入法进程的
+ *       动态 dex 加载完成后安装（见 {@link #hookClipboardTimeLimit}）。</li>
  *   <li><b>常用语条数</b>：{@code InputMethodUtil.sPhraseListSize = 0} 绕过 20 条上限
  *       （{@code queryPhrase} 重新计数后再次清零）；管理页添加按钮的上限拦截一并放行。</li>
  *   <li><b>常用语字数</b>：DexKit 定位常用语编辑框后清空长度过滤器。</li>
@@ -57,10 +62,20 @@ public final class UnlimitHook {
     private static final String PHRASE_ADD_ACTIVITY = "com.miui.phrase.AddPhraseActivity";
     private static final String PHRASE_ADD_ACTION = "com.miui.intent.action.PHRASE_ADD";
 
+    /** 读取路径时间过滤方法名（私有静态）。 */
+    private static final String CLIPBOARD_TIME_METHOD = "getNoExpiredClipboardData";
+    /** 72 小时（毫秒）——仅用于日志对照，hook 本身不依赖该值。 */
+    private static final long CLIPBOARD_EXPIRE_MS = 259200000L;
+
     private UnlimitHook() {
     }
 
-    public static void init(XposedModuleInterface.PackageLoadedParam param) {
+    /**
+     * @param countUnlock 条数上限解锁开关（常用语条数/字数 + 剪贴板保存路径清理）
+     * @param timeUnlock  时间限制解锁开关（剪贴板保存路径时间清理 + 读取路径 72h 过滤）
+     */
+    public static void init(XposedModuleInterface.PackageLoadedParam param,
+                            boolean countUnlock, boolean timeUnlock) {
         ClassLoader cl;
         try {
             cl = param.getDefaultClassLoader();
@@ -69,7 +84,15 @@ public final class UnlimitHook {
             return;
         }
         // 固定类名的部分直接装，不依赖 DexKit
-        hookPhraseCountLimit(cl);
+        if (countUnlock) {
+            hookPhraseCountLimit(cl);
+        }
+        // 读取路径 72h 过滤放在 DexKit 之前：DexKit 扫描失败不应影响它。
+        // phrase 进程内类可直接加载，装这里；输入法进程（面板实际运行处）由
+        // ImeUnlockHook 的 loadDex 回调转来安装（见 hookClipboardTimeLimit）。
+        if (timeUnlock) {
+            hookClipboardTimeLimit(cl);
+        }
 
         DexKitBridge bridge = null;
         try {
@@ -79,8 +102,14 @@ public final class UnlimitHook {
                 log("FAIL: DexKitBridge.create returned null");
                 return;
             }
-            hookClipboardJsonLimit(bridge, cl);
-            hookPhraseCharLimit(bridge, cl);
+            // 保存路径：原方法把「超 20 条」与「超 72h」两种清理耦合在同一遍遍历里，
+            // 两个开关任一开启都整体接管（新条目 + 全部旧条目原样合并）
+            if (countUnlock || timeUnlock) {
+                hookClipboardJsonLimit(bridge, cl);
+            }
+            if (countUnlock) {
+                hookPhraseCharLimit(bridge, cl);
+            }
         } catch (Throwable t) {
             log("FAIL: DexKit - " + t);
         } finally {
@@ -91,6 +120,56 @@ public final class UnlimitHook {
                     // 释放失败不影响功能
                 }
             }
+        }
+    }
+
+    /**
+     * 读取路径：让 {@code getNoExpiredClipboardData(Context, String, long curTime)} 的
+     * curTime 恒为 0，age = curTime - itemTime 恒为负，所有条目均满足
+     * {@code age <= 259200000}（72h）的保留条件，过期条目不再被移除、图片不再被删。
+     *
+     * <p>可在任意进程调用（类不存在时静静跳过）：
+     * phrase 进程传默认 classloader；输入法进程在动态 dex 加载完成后传 dex 的 classloader。
+     */
+    public static void hookClipboardTimeLimit(ClassLoader cl) {
+        try {
+            final Class<?> mgrCls = Reflect.findClassIfExists(CLIPBOARD_MANAGER, cl);
+            if (mgrCls == null) {
+                log("WARN: " + CLIPBOARD_MANAGER + " not found for time hook");
+                return;
+            }
+            Method target = null;
+            for (Method m : mgrCls.getDeclaredMethods()) {
+                if (!CLIPBOARD_TIME_METHOD.equals(m.getName())) continue;
+                Class<?>[] ps = m.getParameterTypes();
+                // (Context, String, long) —— 末参 curTime 仅用于 age 计算与日志
+                if (ps.length == 3
+                        && android.content.Context.class.isAssignableFrom(ps[0])
+                        && String.class.equals(ps[1])
+                        && long.class.equals(ps[2])) {
+                    target = m;
+                    break;
+                }
+            }
+            if (target == null) {
+                log("WARN: " + CLIPBOARD_TIME_METHOD + "(Context,String,long) not found");
+                return;
+            }
+            target.setAccessible(true);
+            XposedInit.hook(target, chain -> {
+                List<Object> argsList = chain.getArgs();
+                if (argsList == null || argsList.size() != 3) {
+                    return chain.proceed();
+                }
+                Object[] modified = argsList.toArray();
+                // curTime 置 0：age = 0 - itemTime 恒为负 → 全量保留
+                modified[2] = 0L;
+                return chain.proceed(modified);
+            });
+            log("OK: clipboard 72h filter (" + CLIPBOARD_EXPIRE_MS + "ms) bypassed, curTime=0, on "
+                    + target.getName());
+        } catch (Throwable t) {
+            log("FAIL: clipboard time hook - " + t);
         }
     }
 

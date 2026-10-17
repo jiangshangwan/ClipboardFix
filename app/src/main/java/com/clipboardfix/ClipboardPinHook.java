@@ -120,11 +120,11 @@ public final class ClipboardPinHook {
     /** 置顶判定：查询 URI 特征串。 */
     private static final String URI_LIST = "getClipboardList";
 
-    /** 置顶按钮直径（dp），与系统删除按钮视觉规格对齐。 */
-    private static final float PIN_BTN_DP = 56f;
+    /** 置顶按钮直径（dp），与系统删除按钮视觉规格对齐（原生删除圆实测 58dp）。 */
+    private static final float PIN_BTN_DP = 58f;
 
-    /** 置顶按钮与条目边缘的间距（dp）。 */
-    private static final float PIN_BTN_MARGIN_DP = 8f;
+    /** 置顶按钮与条目边缘的间距（dp）——与原生删除门一致（SRL paddingHorizontal 18dp）。 */
+    private static final float PIN_BTN_MARGIN_DP = 18f;
 
     /** 置顶按钮底色（蓝，与系统删除按钮的红区分）。 */
     private static final int PIN_BTN_COLOR = 0xFF3B82F6;
@@ -132,11 +132,11 @@ public final class ClipboardPinHook {
     /**
      * 置顶按钮内图标相对圆边的内边距（dp）。
      *
-     * <p>56dp 圆减去左右各 16dp，留 24dp 给箭头（约占圆径 43%）——按真机截图实测标定：
+     * <p>58dp 圆减去左右各 17dp，留 24dp 给箭头（约占圆径 41%）——按真机截图实测标定：
      * 系统删除按钮的垃圾桶图标约占圆径 38.5%，箭头若按 9dp 内边距会占到 66.7%，
      * 明显比删除图标大一圈（用户反馈「占满整个圆圈、与删除图标严重不协调」）。
      */
-    private static final float PIN_ICON_PAD_DP = 16f;
+    private static final float PIN_ICON_PAD_DP = 17f;
 
     /**
      * 置顶条目标注：追加在来源标注（「来自我的电脑」）后的提醒文字。
@@ -1829,7 +1829,12 @@ public final class ClipboardPinHook {
         }
     }
 
-    /** 置顶门宽（dp→px）：按钮直径 + 左右边距。 */
+    /**
+     * 置顶门宽（dp→px）：按钮直径 + 单侧边距。
+     *
+     * <p>与原生删除门同规格：删除门 = 18dp 边距 + 58dp 圆 = 76dp；置顶门镜像取同值。
+     * 按钮布于 SRL 左缘 18dp 处，右缘顶在门宽边界（主视图归位后的左缘）。
+     */
     private static float pinDoorWidth(View v) {
         float density = 3f;
         try {
@@ -1837,7 +1842,7 @@ public final class ClipboardPinHook {
         } catch (Throwable ignored) {
             // 用默认密度
         }
-        return (PIN_BTN_DP + PIN_BTN_MARGIN_DP * 2f) * density;
+        return (PIN_BTN_DP + PIN_BTN_MARGIN_DP) * density;
     }
 
     // ---------------- 置顶按钮（每条目一个，懒创建） ----------------
@@ -1963,10 +1968,13 @@ public final class ClipboardPinHook {
      * 右缘始终顶在面板边界上被裁掉、左缘一路右移（693→742→770→794→820→消失），
      * 位移量恰为一个门宽时整体越界不见。置顶按钮在左侧，做镜像即可：
      * 门全关时按钮移出父容器<b>左</b>边界被裁掉（不可见），门全开时正好落在露出区，
-     * 且按钮右缘恒定贴在主视图左缘旁 8dp——视觉上就是「条目推着按钮一起走、越界被裁」。
+     * 且按钮右缘恒定贴在主视图左缘旁——视觉上就是「条目推着按钮一起走、越界被裁」。
      *
      * <p>相比早期用透明度渐隐的方案，这个方案与原生删除按钮的机制完全同构，
      * 也不会出现「按钮浮在条目上」的问题（它始终在露出区里）。
+     *
+     * <p>几何（与原生删除门对齐）：门全开时按钮占据 SRL 左缘 18dp..76dp，
+     * 右缘恒定贴在主视图左缘（主视图位移量 = 门宽 76dp）。
      */
     private static void syncPinBtn(Object swipe, float bw, float mainTx) {
         View btn = sPinBtns.get(swipe);

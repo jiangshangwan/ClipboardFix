@@ -84,7 +84,7 @@ public class AboutActivity extends ComponentActivity {
     public final MutableState<String> uiStatusText = ClipboardFixUi.stateOf("检测中…");
     /** root 标识：本模块已被授予 su 权限时为 true，状态卡在「已启用」后展示「已Root」/「未Root」。 */
     public final MutableState<Boolean> uiRootGranted = ClipboardFixUi.stateOf(false);
-    /** 已启用的功能数量（四个功能开关中为「开」的个数），状态卡底部展示「已启用的功能：X」。 */
+    /** 已启用的功能数量（五个功能开关中为「开」的个数），状态卡底部展示「已启用的功能：X」。 */
     public final MutableState<Integer> uiEnabledFeatures = ClipboardFixUi.stateOf(0);
     /** 标识显隐开关：控制 Root 标识与「已启用的功能：X」行的可见性，默认显示。 */
     public final MutableState<Boolean> uiBadgesVisible = ClipboardFixUi.stateOf(true);
@@ -92,6 +92,7 @@ public class AboutActivity extends ComponentActivity {
     public final MutableState<Boolean> uiStatusEnabled = ClipboardFixUi.stateOf(false);
     public final MutableState<Boolean> uiSwImeUnlock = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_IME_UNLOCK);
     public final MutableState<Boolean> uiSwUnlimitCount = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_UNLIMIT_COUNT);
+    public final MutableState<Boolean> uiSwUnlimitTime = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_UNLIMIT_TIME);
     public final MutableState<Boolean> uiSwPanelColor = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_PANEL_COLOR);
     public final MutableState<Boolean> uiSwClipboardPin = ClipboardFixUi.stateOf(ModulePrefs.DEFAULT_CLIPBOARD_PIN);
     public final MutableState<Boolean> uiIconHidden = ClipboardFixUi.stateOf(false);
@@ -237,11 +238,12 @@ public class AboutActivity extends ComponentActivity {
                 BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE,
                 DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
                 Build.VERSION.INCREMENTAL, abiInfo(),
-                uiSwImeUnlock, uiSwUnlimitCount, uiSwPanelColor, uiSwClipboardPin, uiIconHidden,
+                uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiIconHidden,
                 this::doCheckUpdate,
                 this::onStatusCardTap,
                 this::onToggleImeUnlock,
                 this::onToggleUnlimitCount,
+                this::onToggleUnlimitTime,
                 this::onTogglePanelColor,
                 this::onToggleClipboardPin,
                 checked -> onToggleHideIcon(checked),
@@ -420,12 +422,13 @@ public class AboutActivity extends ComponentActivity {
         }).start();
     }
 
-    /** 统计四个功能开关中为「开」的数量，回填 {@link #uiEnabledFeatures}。 */
+    /** 统计五个功能开关中为「开」的数量，回填 {@link #uiEnabledFeatures}。 */
     private void refreshEnabledFeatures() {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         int n = 0;
         if (prefs.getBoolean(ModulePrefs.KEY_IME_UNLOCK, ModulePrefs.DEFAULT_IME_UNLOCK)) n++;
         if (prefs.getBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT)) n++;
+        if (prefs.getBoolean(ModulePrefs.KEY_UNLIMIT_TIME, ModulePrefs.DEFAULT_UNLIMIT_TIME)) n++;
         if (prefs.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)) n++;
         if (prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)) n++;
         uiEnabledFeatures.setValue(n);
@@ -573,6 +576,8 @@ public class AboutActivity extends ComponentActivity {
                 ModulePrefs.KEY_IME_UNLOCK, ModulePrefs.DEFAULT_IME_UNLOCK));
         uiSwUnlimitCount.setValue(prefs.getBoolean(
                 ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT));
+        uiSwUnlimitTime.setValue(prefs.getBoolean(
+                ModulePrefs.KEY_UNLIMIT_TIME, ModulePrefs.DEFAULT_UNLIMIT_TIME));
         uiSwPanelColor.setValue(prefs.getBoolean(
                 ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR));
         uiSwClipboardPin.setValue(prefs.getBoolean(
@@ -592,6 +597,11 @@ public class AboutActivity extends ComponentActivity {
         saveFeaturePrefs();
     }
 
+    private void onToggleUnlimitTime(boolean checked) {
+        uiSwUnlimitTime.setValue(checked);
+        saveFeaturePrefs();
+    }
+
     private void onTogglePanelColor(boolean checked) {
         uiSwPanelColor.setValue(checked);
         saveFeaturePrefs();
@@ -606,6 +616,7 @@ public class AboutActivity extends ComponentActivity {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                 .putBoolean(ModulePrefs.KEY_IME_UNLOCK, uiSwImeUnlock.getValue())
                 .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, uiSwUnlimitCount.getValue())
+                .putBoolean(ModulePrefs.KEY_UNLIMIT_TIME, uiSwUnlimitTime.getValue())
                 .putBoolean(ModulePrefs.KEY_PANEL_COLOR, uiSwPanelColor.getValue())
                 .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, uiSwClipboardPin.getValue())
                 .apply();
@@ -631,6 +642,8 @@ public class AboutActivity extends ComponentActivity {
                 ModulePrefs.KEY_IME_UNLOCK, ModulePrefs.DEFAULT_IME_UNLOCK);
         boolean unlimit = local.getBoolean(
                 ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT);
+        boolean unlimitTime = local.getBoolean(
+                ModulePrefs.KEY_UNLIMIT_TIME, ModulePrefs.DEFAULT_UNLIMIT_TIME);
         boolean panelColor = local.getBoolean(
                 ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR);
         boolean clipboardPin = local.getBoolean(
@@ -640,6 +653,7 @@ public class AboutActivity extends ComponentActivity {
                 svc.getRemotePreferences(ModulePrefs.GROUP).edit()
                         .putBoolean(ModulePrefs.KEY_IME_UNLOCK, ime)
                         .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, unlimit)
+                        .putBoolean(ModulePrefs.KEY_UNLIMIT_TIME, unlimitTime)
                         .putBoolean(ModulePrefs.KEY_PANEL_COLOR, panelColor)
                         .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, clipboardPin)
                         .apply();
@@ -1031,6 +1045,8 @@ public class AboutActivity extends ComponentActivity {
     private void showChangelog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(BottomSheet.buildVersionBlock(this, "V2.0.1",
+                getString(R.string.changelog_v201)));
         content.addView(BottomSheet.buildVersionBlock(this, "V2.0",
                 getString(R.string.changelog_v20)));
         content.addView(BottomSheet.buildVersionBlock(this, "V1.4.13",

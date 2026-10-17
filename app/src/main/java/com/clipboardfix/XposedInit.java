@@ -143,9 +143,11 @@ public class XposedInit extends XposedModule {
             // 保证剪贴板相关的 hook 已经装好，不会拖慢 com.miui.phrase 启动。
             PackageValidationHook.init(param);
             CrossDeviceClipboardHook.init(param);
-            // 解除常用语/剪贴板条数、时间与字数限制（功能开关控制，默认关）
-            if (ModulePrefs.isUnlimitCountEnabled()) {
-                UnlimitHook.init(param);
+            // 解除常用语/剪贴板条数、时间与字数限制（两个功能开关独立控制，默认关/开）
+            boolean countUnlock = ModulePrefs.isUnlimitCountEnabled();
+            boolean timeUnlock = ModulePrefs.isUnlimitTimeEnabled();
+            if (countUnlock || timeUnlock) {
+                UnlimitHook.init(param, countUnlock, timeUnlock);
             }
             return;
         }
@@ -163,9 +165,12 @@ public class XposedInit extends XposedModule {
             log(pkg + " skip: no classloader - " + t);
             return;
         }
-        // 全面屏优化：由功能开关控制，默认开启（还原到加入开关之前的行为）
-        if (ModulePrefs.isImeUnlockEnabled()) {
-            ImeUnlockHook.init(pkg, cl);
+        // 全面屏优化：由功能开关控制，默认开启（还原到加入开关之前的行为）；
+        // 剪贴板时间限制解锁同样经 loadDex 回调在输入法进程内安装（面板跑在这里）
+        boolean imeUnlock = ModulePrefs.isImeUnlockEnabled();
+        boolean timeUnlock = ModulePrefs.isUnlimitTimeEnabled();
+        if (imeUnlock || timeUnlock) {
+            ImeUnlockHook.init(pkg, cl, imeUnlock, timeUnlock);
         }
     }
 

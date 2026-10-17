@@ -41,6 +41,8 @@
     <string name="sec_feature">Feature Settings</string>
     <string name="sw_ime_unlock">Enable Fullscreen Optimization</string>
     <string name="sw_unlimit">Unlock Clipboard Count Limit</string>
+    <string name="sw_unlimit_time">Unlock Clipboard Time Limit</string>
+    <string name="sw_unlimit_time_sub">Clipboard entries are no longer auto-cleared after 72 hours and are kept long-term</string>
     <string name="sw_panel">Optimize Clipboard Panel BG</string>
     <string name="sw_clipboard_pin">Enable Clipboard Entry Pinning</string>
     <string name="sw_clipboard_pin_sub">Swipe an entry right slightly to reveal the pin button, then tap it to pin. Only one pinned entry at a time; the pinned entry survives clipboard clearing.</string>
@@ -92,6 +94,7 @@
     <!-- Sheet: Changelog -->
     <string name="sheet_changelog_title">Changelog</string>
     <string name="changelog_v20">1. Fully rebuilt the module UI: cleaner and more refreshing, upgraded visuals\n2. Added liquid-glass navigation for smoother swipes and more responsive touch\n3. Continuously fixing third-party input methods failing to use the system clipboard\n4. Added the Optimize Clipboard Panel Background toggle: unifies clipboard and keyboard function-area colors when enabled\n5. Added the Pin Clipboard Entry feature: swipe an entry right in the clipboard panel to pin it (one at most)\n6. Added the Disable Update Check feature: module runs fully offline when enabled (you will no longer receive update pushes)\n7. Added the Reload Processes feature: load the latest hooks by reloading processes after a module update (reboot on first install)\n8. Added a Settings page: module settings and feature settings shown separately\n9. Expanded the home info panel: device info and module status at a glance\n10. Brand-new About page: richer content, easier to use</string>
+    <string name="changelog_v201">1. Fixed clipboard entries being cleared after 72 hours; added a toggle in the module feature page so you can choose freely\n2. Fixed the pin button margin being too large</string>
     <string name="changelog_v1413">Added clipboard panel background optimization; fixed clipboard and phrase panel color issues with the function area</string>
     <string name="changelog_v1412">Optimized display; fixed some errors</string>
     <string name="changelog_v1411">Fixed some errors</string>
@@ -136,7 +139,6 @@
     <string name="uc_latest">You are on the latest version v</string>
     <string name="uc_new_version">New version found</string>
     <string name="uc_current">Current version: v</string>
-    <string name="uc_update_content">What\'s new:</string>
     <string name="uc_later">Later</string>
     <string name="uc_update_now">Update Now</string>
     <string name="uc_downloading">Downloading update</string>
