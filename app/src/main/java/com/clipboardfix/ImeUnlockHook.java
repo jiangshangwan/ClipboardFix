@@ -100,8 +100,13 @@ public final class ImeUnlockHook {
      * 使「按键行 → 图标行」的视觉间距（豆包实测 65px）明显大于系统输入法（小爱 47px）。
      *
      * <p>校准方式：给键盘内容视图加 {@code translationY}，让键盘整体下沉，把这段死空间
-     * 让出去，使按键行与图标行的间距对齐系统输入法。下沉后被 inputFrame 裁掉的正是原本
-     * 的死空间，按键本体位于裁剪线以上，不会被 MIUI 底栏遮挡。
+     * 让出一部分，缩小按键行与图标行的间距。下沉后被 inputFrame 裁掉的是键盘自带的底部
+     * 死空间，按键本体位于裁剪线以上。
+     *
+     * <p><b>不能把死空间全部吃光</b>：部分输入法（豆包、微信）键盘视图底边自带一条深色
+     * 收边带，紧贴按键行下方。若下沉量 = 全部死空间，键帽底边恰好贴在底栏顶边上，收边带
+     * 也被推到栏顶线，视觉上像被齐切（小爱无此收边带且背景色与栏融合，同样贴栏也不显）。
+     * 因此这两个输入法的下沉量按「保留约 10px 呼吸间隙」折算，取值小于其全部死空间。
      *
      * <p>未列出的输入法为 0——不干预（各键盘死空间不同，须逐个实测校准后追加）。
      */
@@ -110,8 +115,8 @@ public final class ImeUnlockHook {
         Map<String, Integer> m = new java.util.HashMap<>();
         // 校准基准：小米小爱（com.xiaomi.type）按键行→图标行实测 42px（@1080，密度 2.625）。
         // 各输入法实测 gap 减去 42px 即为需下沉的像素数，再换算成 dp。
-        m.put("com.bytedance.android.doubaoime", 7);      // gap 60 → 下沉 18px
-        m.put("com.tencent.wetype", 5);                   // gap 55 → 下沉 13px
+        m.put("com.bytedance.android.doubaoime", 4);      // 死空间 25px@1440，保留 ~10px 间隙
+        m.put("com.tencent.wetype", 3);                   // 死空间 20px@1440，保留 ~9px 间隙
         m.put("com.iflytek.inputmethod", 7);              // gap 61 → 下沉 19px
         m.put("com.sohu.inputmethod.sogou", 16);          // gap 85 → 下沉 43px
         m.put("com.google.android.inputmethod.latin", 12); // gap 73 → 下沉 31px
