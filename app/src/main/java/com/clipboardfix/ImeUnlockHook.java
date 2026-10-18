@@ -81,6 +81,51 @@ public final class ImeUnlockHook {
     /** 冗余导航 padding 判定容差（px）。 */
     private static final int NAV_PADDING_TOLERANCE = 2;
 
+    // ---- 键盘下沉校准（按输入法，让按键行贴近 MIUI 底栏图标行）----
+    /**
+     * 本进程的键盘下沉量（px），在 {@code init} 里按输入法包名查表并一次性换算好。
+     *
+     * <p><b>为什么不用「记住包名、用的时候再查表」</b>：同一进程内 LSPosed 会为每个被加载的
+     * 包各调一次 {@code init}——输入法进程里还会加载 {@code com.google.android.webview}，
+     * 包名字段会被后者覆盖，查表随即 miss，下沉时有时无（真机上表现为「切走再切回来尺寸复原」）。
+     * 因此这里只在命中校准表时赋值，无关包的 {@code init} 不会把它清掉。
+     */
+    private static volatile float sSinkOffsetPx;
+
+    /**
+     * 每输入法的键盘下沉量（dp）。
+     *
+     * <p>第三方输入法的键盘绘制区（自定义 KeyboardView，无子视图）底边与按键行之间存在
+     * 死空间（豆包实测 19px@420dpi），叠加 MIUI 底栏图标行居中布局自带的 ~46px 顶部空间，
+     * 使「按键行 → 图标行」的视觉间距（豆包实测 65px）明显大于系统输入法（小爱 47px）。
+     *
+     * <p>校准方式：给键盘内容视图加 {@code translationY}，让键盘整体下沉，把这段死空间
+     * 让出去，使按键行与图标行的间距对齐系统输入法。下沉后被 inputFrame 裁掉的正是原本
+     * 的死空间，按键本体位于裁剪线以上，不会被 MIUI 底栏遮挡。
+     *
+     * <p>未列出的输入法为 0——不干预（各键盘死空间不同，须逐个实测校准后追加）。
+     */
+    private static final Map<String, Integer> KEYBOARD_SINK_DP;
+    static {
+        Map<String, Integer> m = new java.util.HashMap<>();
+        // 校准基准：小米小爱（com.xiaomi.type）按键行→图标行实测 42px（@1080，密度 2.625）。
+        // 各输入法实测 gap 减去 42px 即为需下沉的像素数，再换算成 dp。
+        m.put("com.bytedance.android.doubaoime", 7);      // gap 60 → 下沉 18px
+        m.put("com.tencent.wetype", 5);                   // gap 55 → 下沉 13px
+        m.put("com.iflytek.inputmethod", 7);              // gap 61 → 下沉 19px
+        m.put("com.sohu.inputmethod.sogou", 16);          // gap 85 → 下沉 43px
+        m.put("com.google.android.inputmethod.latin", 12); // gap 73 → 下沉 31px
+        // 未列入的输入法：
+        //  · com.xiaomi.type / com.sohu.inputmethod.sogou.xiaomi —— 小米定制输入法，走
+        //    customized 分支不安装底栏 hook，本机制对其不生效。
+        //  · com.tencent.qqpinyin —— 其 IME 窗口未 edge-to-edge（实测 inputFrame 高度为 0、
+        //    底栏位于 2036..2180 而非屏幕底部），拦不到内容视图，需先修窗口铺满问题。
+        KEYBOARD_SINK_DP = Collections.unmodifiableMap(m);
+    }
+
+    /** 被下沉的键盘内容视图 → 原始 translationY（弱键，视图重建后自动失效）。 */
+    private static final Map<View, Float> ORIGINAL_CONTENT_TRANSLATIONS = new WeakHashMap<>();
+
     private ImeUnlockHook() {
     }
 
@@ -91,6 +136,18 @@ public final class ImeUnlockHook {
      * @param timeUnlock 剪贴板时间限制解锁开关（走 loadDex 回调装读取路径 hook）
      */
     public static void init(String pkg, ClassLoader cl, boolean imeUnlock, boolean timeUnlock) {
+        // 按输入法包名解析下沉量并固化成像素；未校准的包不改动，避免覆盖已解析的值
+        Integer sinkDp = KEYBOARD_SINK_DP.get(pkg);
+        if (sinkDp != null && sinkDp > 0) {
+            float density;
+            try {
+                density = android.content.res.Resources.getSystem()
+                        .getDisplayMetrics().density;
+            } catch (Throwable t) {
+                density = 2.625f; // 420dpi 兜底
+            }
+            sSinkOffsetPx = sinkDp * density;
+        }
         boolean isNonCustomize = !contains(MIUI_IME_LIST, pkg);
         log(pkg + " start (customized=" + !isNonCustomize
                 + ", sdk=" + Build.VERSION.SDK_INT
@@ -800,16 +857,35 @@ public final class ImeUnlockHook {
         diagBottomFrame(inputFrame, fullscreenArea, rootView, bottomArea, contentView,
                 navigationInset, bottomAreaActive);
 
+        // 键盘下沉独立走「底栏几何」判据，不依赖导航 inset：
+        // 手势导航下部分机型（实测小米 15 Pro）navigationBars 底部 inset 为 0，而 MIUI 底栏
+        // 依旧正常注入，此时沿用上面的 hasInset 门控会让整套机制在这类机型上直接短路。
+        boolean sinkDocked = contentView != null
+                && isBarDockedToInputFrame(rootView, inputFrame, bottomArea);
+        if (sinkDocked) {
+            applyKeyboardSink(contentView);
+        } else {
+            restoreKeyboardSink();
+        }
+
         if (!bottomAreaActive) {
             restoreMiuiBottomFrame(inputFrame, fullscreenArea);
             restoreNavigationPadding(inputFrame);
+            // 下沉已按几何判据生效时，不能被下面这条 inset 门控的还原路径清掉：
+            // 15 Pro 上 inset=0 会走到这里，而底栏其实照常注入。
+            if (!sinkDocked) restoreKeyboardSink();
             return;
         }
         if (contentView == null) {
             restoreMiuiBottomFrame(inputFrame, fullscreenArea);
             restoreNavigationPadding(inputFrame);
+            restoreKeyboardSink();
             return;
         }
+
+        // 键盘下沉校准：让键盘整体下沉，消除自带底部死空间，使按键行与底栏图标行的
+        // 视觉间距与系统输入法一致（未校准输入法为 0，不干预）
+        applyKeyboardSink(contentView);
 
         WeakReference<View> adjustedRef = ADJUSTED_CONTENT_VIEWS.get(inputFrame);
         View adjustedContentView = adjustedRef != null ? adjustedRef.get() : null;
@@ -1018,6 +1094,43 @@ public final class ImeUnlockHook {
         }
     }
 
+    // ---- 键盘下沉校准：把键盘整体下沉，使其贴近 MIUI 底栏图标行 ----
+
+    /**
+     * 给键盘内容视图加 {@code translationY}，让键盘整体下沉校准量，消除键盘绘制区自带的
+     * 底部死空间，使「按键行 → 底栏图标行」间距与系统输入法一致。
+     *
+     * <p>用 translation 而非 padding 是刻意的：translation 不触发重新 layout，不会与输入法
+     * 自身每次 layout 重设 padding 的行为互相拉锯。幂等；底栏隐藏时由
+     * {@link #restoreKeyboardSink()} 还原。
+     */
+    private static void applyKeyboardSink(View contentView) {
+        float offsetPx = sSinkOffsetPx;
+        if (offsetPx <= 0f) return;
+        Float orig = ORIGINAL_CONTENT_TRANSLATIONS.get(contentView);
+        if (orig == null) {
+            orig = Float.valueOf(contentView.getTranslationY());
+            ORIGINAL_CONTENT_TRANSLATIONS.put(contentView, orig);
+        }
+        float target = orig.floatValue() + offsetPx;
+        if (contentView.getTranslationY() != target) {
+            contentView.setTranslationY(target);
+        }
+    }
+
+    /** 还原所有被下沉的键盘内容视图。 */
+    private static void restoreKeyboardSink() {
+        if (ORIGINAL_CONTENT_TRANSLATIONS.isEmpty()) return;
+        for (Map.Entry<View, Float> e : ORIGINAL_CONTENT_TRANSLATIONS.entrySet()) {
+            View v = e.getKey();
+            if (v == null) continue;
+            if (v.getTranslationY() != e.getValue().floatValue()) {
+                v.setTranslationY(e.getValue().floatValue());
+            }
+        }
+        ORIGINAL_CONTENT_TRANSLATIONS.clear();
+    }
+
     // ---- 诊断（临时）：底栏图标被裁故障定位，根因确认后整块移除 ----
     /** 诊断日志节流：上次输出时间与上次签名（签名变化立即输出，否则至多 5s 一条）。 */
     private static long sDiagLastMs = 0L;
@@ -1084,6 +1197,18 @@ public final class ImeUnlockHook {
     private static boolean isBottomAreaActive(View rootView, View inputFrame,
                                               View bottomArea, int navigationInset) {
         if (!bottomArea.isShown() || bottomArea.getHeight() < navigationInset) return false;
+        return isBarDockedToInputFrame(rootView, inputFrame, bottomArea);
+    }
+
+    /**
+     * MIUI 底栏是否「贴在 inputFrame 正下方、并一直延伸到窗口底边」。
+     *
+     * <p>纯几何判据，不依赖导航 inset——供键盘下沉单独使用：手势导航下部分机型的
+     * {@code navigationBars} 底部 inset 为 0，但底栏照常注入，此时不能用 inset 判定。
+     */
+    private static boolean isBarDockedToInputFrame(View rootView, View inputFrame,
+                                                   View bottomArea) {
+        if (!bottomArea.isShown() || bottomArea.getHeight() <= 0) return false;
         int[] rootLocation = new int[2];
         int[] inputLocation = new int[2];
         int[] bottomLocation = new int[2];
