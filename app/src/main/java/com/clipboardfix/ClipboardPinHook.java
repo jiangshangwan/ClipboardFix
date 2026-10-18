@@ -25,6 +25,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -252,8 +253,116 @@ public final class ClipboardPinHook {
     /** 手势 hook 是否已挂上（懒挂 + 有界重试）。 */
     private static volatile boolean sGestureHooked = false;
 
+    /** {@code mRectMainClose} 字段（懒解析，失败置 null 退 0 基准）。 */
+    private static volatile boolean sRectFieldTried = false;
+    private static Field sRectMainCloseField;
+
+    /**
+     * 主视图「关门位」left —— 系统 {@code mRectMainClose.left}（onLayout →
+     * initRects 用主视图自然布局位填充，删除门关闭时主视图 layout 在此）。
+     *
+     * <p><b>为什么不能拿 0 当基准</b>：真机 trace 实证 clipboard 条目的主视图
+     * 关闭位是 {@code left=47}（行内 18dp 左边距），删除门开度 =
+     * {@code 关门位 - 当前 left}。早期判据写 {@code left < -1}（等价于门开
+     * ≥153px 才认门开），微滑只把门拖开几 px~21px 时完全漏判——而我们消费
+     * 手势后系统收不到 UP（没有 onViewReleased 兜底），门就冻结在小开度，
+     * 留下一点红边（症状1）。反射失败退 0（旧行为，仍能抓全开门）。
+     */
+    private static int closedLeftOf(Object swipe) {
+        if (!sRectFieldTried) {
+            sRectFieldTried = true;
+            try {
+                sRectMainCloseField = Reflect.findField(swipe.getClass(), "mRectMainClose");
+                // 私有字段必须显式放开可访问性，否则 get() 抛
+                // IllegalAccessException（Reflect.findField 不代劳）——
+                // 症状1 修复首版实测：异常被 catch(ignored) 静默吞掉，
+                // closedLeftOf 恒返回 0，判据退化成旧版 left<=-2，
+                // 微开门（mainL=38 级）继续漏判，红边依旧。
+                sRectMainCloseField.setAccessible(true);
+                log("mRectMainClose resolved on " + swipe.getClass().getName());
+            } catch (Throwable t) {
+                sRectMainCloseField = null;
+                log("mRectMainClose unresolvable, fallback 0 - " + t);
+            }
+        }
+        if (sRectMainCloseField != null) {
+            try {
+                Object r = sRectMainCloseField.get(swipe);
+                if (r instanceof android.graphics.Rect) {
+                    return ((android.graphics.Rect) r).left;
+                }
+                log("mRectMainClose not a Rect: " + r);
+            } catch (Throwable t) {
+                // 读数失败本次退 0（旧行为，仍能抓全开门）
+                log("mRectMainClose read failed, fallback 0 - " + t);
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * 系统删除门是否开着（主视图 left 低于关门位 2px 以上）。
+     *
+     * <p>反编译实证系统 M.e 在每次 DOWN 就被 tryCaptureView 的副作用武装成
+     * DRAGGING 且无逐事件 slop——我们 proceed 掉的每个左向 MOVE 都会 1:1
+     * 拖动主视图 left；2px 容差内视为噪声。
+     */
+    private static boolean systemDoorOpen(Object swipe, View main) {
+        return main != null && main.getLeft() <= closedLeftOf(swipe) - 2;
+    }
+
     /** 每实例手势状态。 */
     private static final WeakHashMap<Object, GestureState> sStates = new WeakHashMap<>();
+
+    /**
+     * 当前开着置顶门的 swipe（全局单开策略：同时只允许一条条目开着置顶门，
+     * 与原生删除门一致——开第二条时第一条自动关）。
+     *
+     * <p>弱引用：条目视图被 RV 回收时不拖内存。只作「哪条开着」的记账，
+     * 真正的显隐/位移仍由各实例的 mode + translationX + 按钮状态决定。
+     */
+    private static WeakReference<Object> sOpenSwipeRef = new WeakReference<>(null);
+
+    /**
+     * 单开互斥：关掉除 {@code keep} 外所有开着置顶门的条目。
+     *
+     * <p>调用点只有 {@link #dragPinDoor} 入口（某条门开始跟手即意味着用户
+     * 选中了它）。快路：无其他门开着时零开销；关过后记录置空，同一次
+     * 跟手的后续 MOVE 不会重复干活（也不会刷日志）。
+     */
+    private static void closeOtherPinDoors(Object keep) {
+        Object other = sOpenSwipeRef.get();
+        if (other == null || other == keep) {
+            return;
+        }
+        GestureState ost = sStates.get(other);
+        if (ost != null) {
+            ost.mode = MODE_NONE;
+            ost.declined = false;
+        }
+        View omain = mainViewOf(other);
+        // 复用统一关门路径：记账清理 + 主视图/按钮 150ms 归位动画 + GONE，
+        // 与被用户主动拖关的视觉完全一致
+        closePinDoor(other, omain, pinDoorWidth((View) other));
+        // 被关的门若系统删除门也微开着（上回合 UP 兜底漏网的极端情况），
+        // 一并 close(false) 修回关门位，保证互斥切换后画面只剩新门
+        neutralizeSystemDoor(other, omain);
+        log("other pin door auto-closed (single-open policy)");
+    }
+
+    /** 记下当前开着置顶门的 swipe（dragPinDoor 跟手即记账）。 */
+    private static void markPinDoorOpen(Object swipe) {
+        if (sOpenSwipeRef.get() != swipe) {
+            sOpenSwipeRef = new WeakReference<>(swipe);
+        }
+    }
+
+    /** 清理单开记账（关门/硬复位时调用；非当前记录则无操作）。 */
+    private static void clearPinDoorOpen(Object swipe) {
+        if (sOpenSwipeRef.get() == swipe) {
+            sOpenSwipeRef = new WeakReference<>(null);
+        }
+    }
 
     /**
      * ViewHolder.itemView → 适配器位置映射（hook {@code onBindViewHolder} 建立）。
@@ -753,8 +862,11 @@ public final class ClipboardPinHook {
      *       ——「右滑取消删除」是系统原生行为，绝不拦。</li>
      *   <li><b>MODE_OPENING（正在划开置顶门）</b>：主视图 translationX 跟随手指
      *       （0..门宽），松手超过门宽一半则保持打开。</li>
-     *   <li><b>MODE_PIN_OPEN（置顶门已开）</b>：按钮可见；左滑跟手往关的方向拖，
-     *       松手或点击条目其他区域关门；<b>点击置顶按钮</b>才触发置顶/取消置顶。</li>
+     *   <li><b>MODE_PIN_OPEN（置顶门已开）</b>：按钮可见；水平拖动（任一方向）
+     *       一律劫持——左滑跟手往关的方向拖，右滑钳位在门宽（无操作）；
+     *       松手或点击条目其他区域关门；<b>点击置顶按钮</b>才触发置顶/取消置顶。
+     *       右滑也必须劫持的原因见 {@code ACTION_MOVE} 分支注释：系统 DragHelper
+     *       在 DOWN 即被武装且无逐事件 slop，放行右滑会激活系统删除门。</li>
      * </ul>
      *
      * <p><b>为什么不能用 {@code isOpened()} 判断系统删除门</b>：MIUI 版
@@ -797,19 +909,34 @@ public final class ClipboardPinHook {
                         if (sv.getParent() != null) {
                             sv.getParent().requestDisallowInterceptTouchEvent(false);
                         }
-                        if (st.mode == MODE_OPENING) {
-                            // 上一手势异常中断：归位再重新开始（按钮也要一起收回门外，
-                            // 否则会残留一个浮在条目上的置顶按钮）
+                        // 新手势开始：按「视图实际态」纠偏，不信任 mode 标志——
+                        // 取消置顶后 mode 已回 NONE 但 150ms 关门动画仍在途、或
+                        // 上一手势的 UP 被我们消费导致系统删除门冻结开着，都可能
+                        // 让 mode 与视图脱钩。判据（任一命中即硬复位）：
+                        //   ① mode 停在中间态 OPENING（正常结束的手势不会停留在此）；
+                        //   ② 置顶门视觉开着（translationX>1 / 按钮可见）但 mode≠PIN_OPEN；
+                        //   ③ mode=PIN_OPEN 但系统删除门实际开着（两门同显）。
+                        // 全干净时不动：系统删除门正常开着（原生删除流）时不打扰。
+                        View btn0 = sPinBtns.get(self);
+                        boolean stale = st.mode == MODE_OPENING
+                                || (st.mode == MODE_PIN_OPEN && systemDoorOpen(self, main))
+                                || (st.mode != MODE_PIN_OPEN && main != null
+                                        && main.getTranslationX() > 1f)
+                                || (st.mode != MODE_PIN_OPEN && btn0 != null
+                                        && btn0.getVisibility() == View.VISIBLE);
+                        if (stale) {
+                            // 先中和系统侧（删除门冻结开着则 close(false) 关门），
+                            // 再硬复位置顶侧（取消在途动画，避免 end-action 误触发）
+                            neutralizeSystemDoor(self, main);
+                            clearPinDoorOpen(self);
                             st.mode = MODE_NONE;
-                            closePinDoor(self, main, pinDoorWidth(sv));
-                        }
-                        if (st.mode == MODE_PIN_OPEN && main != null && main.getLeft() < -1) {
-                            // 异常态：系统删除门实际开着却残留置顶门状态（两门同显错乱），
-                            // 清掉置顶门、主视图位移归零（left 交给系统）
-                            st.mode = MODE_NONE;
-                            main.setTranslationX(0f);
+                            st.declined = false;
+                            if (main != null) {
+                                main.animate().cancel();
+                                main.setTranslationX(0f);
+                            }
                             showPinBtn(self, false);
-                            log("stale pin door cleared (system delete door open)");
+                            log("stale pin door cleared at down");
                         }
                         return chain.proceed();
                     case MotionEvent.ACTION_MOVE: {
@@ -820,11 +947,29 @@ public final class ClipboardPinHook {
                         float slop = slopOf(sv);
                         float bw = pinDoorWidth(sv);
                         if (st.mode == MODE_PIN_OPEN) {
-                            // 置顶门已开：左滑（往回拖）才劫持，其余交给系统/RV。
-                            // 与开门判据一致：只比水平位移量、不比垂直偏移——
-                            // 原生「右滑取消删除」时手指上下偏移照样能拖动门，
-                            // 置顶门必须同等待遇（苛求 dx>dy 会被父级抢走手势）
-                            if (dx < -slop) {
+                            // 置顶门已开：水平拖动（任一方向）一律劫持——
+                            // 左滑 = 回拖往关的方向；右滑 = 钳位在门宽（无操作）。
+                            // 为什么右滑也不能 proceed：反编译实证系统的 M.e 在
+                            // 每次 DOWN 就被 tryCaptureView 的副作用武装成 DRAGGING
+                            //（拖动分支无逐事件 slop），proceed 掉的事件会实时拖动
+                            // 主视图 left；此前只有左滑劫持，「先右划再左划」时右段
+                            // 激活系统拖动、回程中低于 -slop 的左滑事件立刻把删除门
+                            // 拖开，松手冻结成「两门同显」。垂直拖动（|dx|<slop）
+                            // 仍 proceed，保证列表滚动不被拦。
+                            //
+                            // 左滑零容差（症状1 收尾）：|dx|<slop 的微左滑此前
+                            // 放行 proceed，系统门被拖开 2~20px——手指按着就露
+                            // 红边/按钮边缘（瞬态残留，UP 兜底只在松手后修复）。
+                            // 故左滑只要水平占优（|dx|>=|dy|）且超过半像素立即
+                            // 劫持，不等触摸阈值；右滑被系统 clamp 在关门位
+                            // （left 不越过 close.left）不出界，维持 slop 判据，
+                            // 保证 PIN_OPEN 时垂直滚动列表仍可放行。
+                            float dy = ev.getY() - st.downY;
+                            boolean horiz = Math.abs(dx) >= Math.abs(dy);
+                            if (dx < -0.5f && horiz) {
+                                return dragPinDoor(sv, main, st, bw, dx);
+                            }
+                            if (Math.abs(dx) >= slop) {
                                 return dragPinDoor(sv, main, st, bw, dx);
                             }
                             return chain.proceed();
@@ -848,11 +993,13 @@ public final class ClipboardPinHook {
                             st.declined = true;
                             return chain.proceed();
                         }
-                        if (main != null && (main.getLeft() < -1 || main.getTranslationX() < -1f)) {
-                            // 系统删除门开着（主视图被 ViewDragHelper 推到左侧：left 变负）。
+                        if (systemDoorOpen(self, main) || main != null && main.getTranslationX() < -1f) {
+                            // 系统删除门开着（主视图被 ViewDragHelper 推到左侧：left 低于关门位）。
                             // 此时右滑是系统原生「取消删除」，必须原样交还系统——
                             // 只查 translationX 会漏判（系统 drag 改的是 left，不是 translationX），
                             // 漏判的后果：右滑被误劫持成置顶门，系统关门失效（code 86 实机 bug）。
+                            // 判据以 mRectMainClose.left 为基准而非 0：真机关门位 left=47，
+                            // 微滑漂移只把门拖开 2~21px 时 left 仍是正的，旧判据 left<-1 漏判。
                             st.declined = true;
                             return chain.proceed();
                         }
@@ -877,6 +1024,11 @@ public final class ClipboardPinHook {
                         if (mode == MODE_NONE) {
                             return chain.proceed();
                         }
+                        // 我们消费了本手势（OPENING/PIN_OPEN）：UP 不会送达系统
+                        // DragHelper（没有 onViewReleased 兜底），若期间 proceed 过的
+                        // 事件已把系统删除门拖开，此刻已冻结——先 close(false) 关门，
+                        // 否则残留红边、甚至与置顶门同显（两门同显 BUG）
+                        neutralizeSystemDoor(self, main);
                         float bw = pinDoorWidth(sv);
                         if (mode == MODE_OPENING) {
                             // 只要划过触摸阈值就算「有意划出」：轻划即留门，
@@ -941,9 +1093,20 @@ public final class ClipboardPinHook {
         }
     }
 
-    /** 置顶门拖动中：主视图 translationX 跟手（开门 0..bw；已开门则 bw+dx）。 */
+    /**
+     * 置顶门拖动中：主视图 translationX 跟手（开门 0..bw；已开门则 bw+dx）。
+     */
     private static Object dragPinDoor(
             View sv, View main, GestureState st, float bw, float dx) {
+        // 单开互斥：用户开始拖动本条，先关掉其他开着置顶门的条目
+        // （原生删除门同样只开一条——开第二条时第一条自动收起）
+        closeOtherPinDoors(sv);
+        markPinDoorOpen(sv);
+        // 接管前先中和系统删除门：反编译实证 M.e 在每次 DOWN 即被
+        // tryCaptureView 的副作用武装成 DRAGGING（无逐事件 slop），开门途中
+        // proceed 过的亚阈值左滑事件会把删除门拖开；先 close(false) 关门
+        // 再走 translationX，保证任一时刻只有一扇门在位
+        neutralizeSystemDoor(sv, main);
         // 接管拖动的同时禁止父级（RecyclerView）劫持本手势：跟手过程中 dy
         // 一旦超过列表滑动阈值，父级会把整段手势抢走、门卡在半路——原生
         // SwipeRevealLayout 靠手势监听器 onScroll → requestDisallowInterceptTouchEvent
@@ -1874,7 +2037,10 @@ public final class ClipboardPinHook {
             float density = sv.getResources().getDisplayMetrics().density;
             int size = (int) (PIN_BTN_DP * density + 0.5f);
 
-            // 图标优先；解码失败退回旧版「顶」字，保证按钮永远有内容
+            // 图标优先；解码失败退回旧版「顶」字，保证按钮永远有内容。
+            // 具体图标（置顶上箭头 / 取消置顶「不」符号）不在这里选，
+            // 由 {@link #applyPinIcon} 按条目当前置顶态填充——RV 复用
+            // 条目时 swipe 实例不变、对应条目会变，创建时选一次会错。
             View content;
             Bitmap icon = PinIcon.get();
             if (icon != null) {
@@ -1882,8 +2048,8 @@ public final class ClipboardPinHook {
                 int pad = (int) (PIN_ICON_PAD_DP * density + 0.5f);
                 iv.setPadding(pad, pad, pad, pad);
                 iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                iv.setImageBitmap(icon);
                 // 原图 #FF272636 深藏青，蓝底圆上对比不足；染白与旧版白色「顶」字一致
+                // （取消置顶图标是 alpha 图 RGB 纯白，同滤色器下无副作用）
                 iv.setColorFilter(0xFFFFFFFF, PorterDuff.Mode.SRC_IN);
                 content = iv;
             } else {
@@ -1908,11 +2074,52 @@ public final class ClipboardPinHook {
                 ((ViewGroup) sv).addView(content);
                 sPinBtns.put(swipe, content);
                 log("pin button created for " + sv.getClass().getSimpleName());
+                // 创建即按当前条目置顶态选图标（RV 复用视图时也不会错）
+                applyPinIcon(swipe, content);
             } catch (Throwable t) {
                 log("pin button addView failed - " + t);
                 return null;
             }
             return content;
+        }
+    }
+
+    /**
+     * 按条目当前置顶态填按钮图标：已置顶 → 「取消置顶」符号
+     * （{@link PinCancelIcon}，横杠 + 斜杠）；未置顶 → 置顶上箭头
+     * （{@link PinIcon}）。用户 2026-10-19 需求：置顶与取消置顶用不同图标，
+     * 已置顶条目右滑时按钮应表达「再点一次=取消」的语义。
+     *
+     * <p>每次按钮显示（{@link #showPinBtn} true）都重新判定，不用 tag 记账
+     * 以外的缓存——RV 复用条目时 swipe 实例不变、对应条目会变。
+     * 取图标失败时保留上一个图标（ImageView 空图标会被父圆底衬着，比闪回
+     * 「顶」字好）；两个图标都解码失败时按钮本就是 TextView 回退，不会到这。
+     */
+    private static void applyPinIcon(Object swipe, View btn) {
+        if (!(btn instanceof ImageView)) {
+            return;
+        }
+        boolean pinned = isRowPinned(swipe);
+        Bitmap icon = pinned ? PinCancelIcon.get() : PinIcon.get();
+        if (icon == null && pinned) {
+            // 取消置顶图标解码失败：退回置顶图标（功能不丢，视觉降级）
+            icon = PinIcon.get();
+        }
+        if (icon == null) {
+            return;
+        }
+        ((ImageView) btn).setImageBitmap(icon);
+    }
+
+    /** 当前 swipe 对应条目是否处于置顶态（无置顶条目时零开销快路）。 */
+    private static boolean isRowPinned(Object swipe) {
+        if (sPinnedTime == 0L) {
+            return false;
+        }
+        try {
+            return timeOfRow(swipe) == sPinnedTime;
+        } catch (Throwable t) {
+            return false;
         }
     }
 
@@ -1955,6 +2162,11 @@ public final class ClipboardPinHook {
         if (!visible) {
             btn.setTranslationX(-pinDoorWidth((View) swipe));
         }
+        if (visible) {
+            // 每次显示都按条目当前置顶态刷新图标（RV 复用会换条目，
+            // 且 togglePin 后面板刷新会重排，不能靠创建时的一次选择）
+            applyPinIcon(swipe, btn);
+        }
         if (btn.getVisibility() != want) {
             btn.setVisibility(want);
         }
@@ -1985,12 +2197,48 @@ public final class ClipboardPinHook {
     }
 
     /**
+     * 中和系统删除门：调用系统自己的 {@code SwipeRevealLayout.close(false)}——
+     * {@code resetClose()} 把主视图/删除钮 layout 回关门位、
+     * {@code mDragHelper.a()} 取消拖动（清指针 + 中断滚动 + 置 IDLE）、
+     * {@code mState=0}。相当于系统的「硬关门」，可作两轨属性的中和器。
+     *
+     * <p><b>为什么需要它</b>（本会话反编译实证）：系统 {@code M.e.tryCaptureView}
+     * 有副作用——每次 DOWN 都会 {@code captureChildView(mMainView)} 把系统拖动
+     * 武装成 DRAGGING，且拖动分支没有逐事件 slop 校验；我们 proceed 掉的每个
+     * MOVE 都会 1:1 拖动主视图 {@code left}（删除门）。一旦 UP 被我们消费
+     *（系统收不到 onViewReleased，没有关门兜底），删除门就冻结在被拖开的
+     * 位置——轻则残留红边，重则与置顶门同显。凡我们接管/消费手势的前后，
+     * 都先中和掉系统门，保证任一时刻只有一扇门。
+     *
+     * <p>删除门关着（主视图 left 未低于关门位）时零开销返回；系统方法反射失败时
+     * 仅记日志不崩（手势状态机自身仍有实际态兜底）。
+     */
+    private static void neutralizeSystemDoor(Object swipe, View main) {
+        if (!systemDoorOpen(swipe, main)) {
+            return;
+        }
+        // 先记触发前 left：close(false) 会把门修回关门位，
+        // 事后再读只能看到回位值（恒 47），无法验证判据是否抓对
+        int before = main.getLeft();
+        int closedLeft = closedLeftOf(swipe);
+        try {
+            Reflect.callMethod(swipe, "close", Boolean.FALSE);
+            log("system delete door neutralized (left " + before + " -> "
+                    + main.getLeft() + ", closedLeft=" + closedLeft + ")");
+        } catch (Throwable t) {
+            log("WARN: neutralizeSystemDoor - " + t);
+        }
+    }
+
+    /**
      * 关门：主视图归位 + 按钮同向等量滑回「门外」并被父容器裁掉（150ms，与主视图回弹同步）。
      *
      * <p>机制同原生删除门：删除按钮是被条目推着走、越界被裁；置顶按钮做镜像——
      * 跟着条目滑回左边，整体移出父容器左边界后被裁掉，动画结束置 GONE。
      */
     private static void closePinDoor(Object swipe, View main, float bw) {
+        // 清理单开记账：本条关门后不再占用「唯一开门条」名额
+        clearPinDoorOpen(swipe);
         if (main != null) {
             main.animate().translationX(0f).setDuration(150L).start();
         }
@@ -2029,6 +2277,12 @@ public final class ClipboardPinHook {
      *
      * <p>RV 复用 item 不会自动清理 translationX/自定义子 view 显隐，开门态条目
      * 被滑出屏幕再复用会带着 +bw 位移和可见按钮显示成错乱态。
+     *
+     * <p><b>判据看「视图实际态」，不只看 mode</b>：取消置顶后 mode 已回 NONE，
+     * 但 150ms 关门动画仍在途（translationX/按钮可见），此时
+     * {@code refreshPanel → setClipboardList} 触发 rebind 必须硬复位——
+     * 否则在途动画的 end-action 或残留按钮会挂到（可能已绑定别的条目的）
+     * 复用视图上。系统删除门冻结开着（left 低于关门位）一并中和。
      */
     private static void resetPinDoorIfNeeded(View itemView) {
         Object swipe = findSwipeReveal(itemView, 0);
@@ -2036,14 +2290,23 @@ public final class ClipboardPinHook {
             return;
         }
         GestureState st = sStates.get(swipe);
-        if (st == null || st.mode == MODE_NONE) {
+        View main = mainViewOf(swipe);
+        View btn = sPinBtns.get(swipe);
+        boolean dirty = (st != null && st.mode != MODE_NONE)
+                || (main != null && (main.getTranslationX() > 1f || systemDoorOpen(swipe, main)))
+                || (btn != null && btn.getVisibility() == View.VISIBLE);
+        if (!dirty) {
             return;
         }
-        st.mode = MODE_NONE;
-        st.declined = false;
-        View main = mainViewOf(swipe);
+        clearPinDoorOpen(swipe);
+        if (st != null) {
+            st.mode = MODE_NONE;
+            st.declined = false;
+        }
         if (main != null) {
+            main.animate().cancel();
             main.setTranslationX(0f);
+            neutralizeSystemDoor(swipe, main);
         }
         showPinBtn(swipe, false);
         log("pin door reset on rebind");
