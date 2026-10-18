@@ -1045,6 +1045,8 @@ public class AboutActivity extends ComponentActivity {
     private void showChangelog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(BottomSheet.buildVersionBlock(this, "V2.0.2",
+                getString(R.string.changelog_v202)));
         content.addView(BottomSheet.buildVersionBlock(this, "V2.0.1",
                 getString(R.string.changelog_v201)));
         content.addView(BottomSheet.buildVersionBlock(this, "V2.0",
