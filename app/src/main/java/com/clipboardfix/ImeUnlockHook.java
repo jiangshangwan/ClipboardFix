@@ -115,8 +115,8 @@ public final class ImeUnlockHook {
         Map<String, Integer> m = new java.util.HashMap<>();
         // 校准基准：小米小爱（com.xiaomi.type）按键行→图标行实测 42px（@1080，密度 2.625）。
         // 各输入法实测 gap 减去 42px 即为需下沉的像素数，再换算成 dp。
-        m.put("com.bytedance.android.doubaoime", 4);      // 死空间 25px@1440，保留 ~10px 间隙
-        m.put("com.tencent.wetype", 3);                   // 死空间 20px@1440，保留 ~9px 间隙
+        m.put("com.bytedance.android.doubaoime", 5);      // 死空间 25px@1440，收边带距栏顶保留 ~3px margin
+        m.put("com.tencent.wetype", 3);                   // 死空间 20px@1440，收边带距栏顶保留 ~2px margin
         m.put("com.iflytek.inputmethod", 7);              // gap 61 → 下沉 19px
         m.put("com.sohu.inputmethod.sogou", 16);          // gap 85 → 下沉 43px
         m.put("com.google.android.inputmethod.latin", 12); // gap 73 → 下沉 31px

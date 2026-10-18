@@ -68,17 +68,6 @@ public final class PanelColorHook {
      */
     private static final int BLUR_RADIUS = 60;
 
-    /**
-     * 深色模式下，模糊之上叠加底色的不透明度（0x28 ≈ 16%）。仅在拿不到系统下发的合成色时兜底。
-     *
-     * <p>浅色模式不使用这个兜底值——功能区自身没有任何颜色叠加，详见
-     * {@link #barLikeTint(boolean)}。
-     */
-    private static final int BLUR_TINT_ALPHA = 0x28;
-
-    /** 功能区透明态的内容色（深色模式近白，与系统下发给功能区的取值一致）。 */
-    private static final int CONTENT_COLOR_DARK = 0xFFF5F5F5;
-
     /** 当前显示的面板内容容器，供换色时同步刷新（面板消失即被回收）。 */
     private static volatile WeakReference<View> sPanelBodyRef = new WeakReference<>(null);
 
@@ -492,21 +481,26 @@ public final class PanelColorHook {
     }
 
     /**
-     * 面板模糊层之上要叠的底色，目标是与底部功能区「同款」：
-     * <ol>
-     *   <li><b>浅色</b>：功能区自身背景就是全透明（{@code ColorDrawable #00000000}），
-     *       即它的观感 = <b>纯模糊、不加任何颜色叠加</b>。所以面板也必须是纯模糊，
-     *       否则两者一定有色差。这里直接返回全透明，让调用方只挂模糊层。</li>
-     *   <li><b>深色</b>：系统下发的合成色（{@code setBottomColor} 第 4 参）能拿到就用它，
-     *       拿不到再退回内容色 / 主题色。</li>
-     * </ol>
+     * 面板模糊层之上要叠的底色，目标是与底部功能区「同款」——而功能区自身就是
+     * {@code ColorDrawable #00000000}（全透明、直接透出键盘，见 {@link #dumpBarOnce} 实证），
+     * 即它的观感 = <b>裸模糊、不加任何颜色叠加</b>。所以面板也必须是裸模糊，否则一定有色差：
+     * <ul>
+     *   <li><b>浅色</b>：返回全透明，调用方只挂模糊层；</li>
+     *   <li><b>深色</b>：同样不叠底色。仅当系统下发了<b>深色</b>半透明合成色
+     *       （{@code setBottomColor} 第 4 参）时才照抄（alpha 平方折算）。</li>
+     * </ul>
      *
-     * <p><b>历史坑（浅色「脏灰面板」的根因）</b>：早期照抄系统下发的 {@code #66202020}
-     * 折算成 {@link #BLUR_TINT_ALPHA}（{@code 0x28 ≈ 16%}）压了一层暗色底，
-     * 实测把面板压暗了约 19%（背板 243 → 196），而功能区同期只压暗约 7%（243 → 225）。
-     * 结果面板变成一块脏灰底，上面浮着条目那张近白的卡片（条目是 MIUI 原生
-     * {@code #99ffffff} = 白色 60%），视觉上非常突兀。去掉这层叠加后面板 ≈ 纯模糊
-     * ≈ 功能区，条目与面板的落差也回到 MIUI 设计原本的幅度。
+     * <p><b>历史坑 1（浅色「脏灰面板」的根因）</b>：早期照抄系统下发的 {@code #66202020}
+     * 折算成 {@code 0x28 ≈ 16%} 压了一层暗色底，实测把面板压暗了约 19%（背板 243 → 196），
+     * 而功能区同期只压暗约 7%（243 → 225）。结果面板变成一块脏灰底，上面浮着条目那张近白的
+     * 卡片（条目是 MIUI 原生 {@code #99ffffff} = 白色 60%），视觉上非常突兀。去掉这层叠加后
+     * 面板 ≈ 纯模糊 ≈ 功能区，条目与面板的落差也回到 MIUI 设计原本的幅度。
+     *
+     * <p><b>历史坑 2（深色「太白面板」，用户 2026-10-18 反馈）</b>：深色分支曾退回
+     * {@code #F5F5F5}（功能区透明态的<i>内容色</i>，近白）叠 16%。但内容色是给图标/文字用的，
+     * 不是给背景的；功能区背景本身分文未叠。于是同样的模糊键盘，面板被提亮约 39 个灰度级
+     * （15 Pro 实测面板 75 vs 功能区 34；13 Pro 57 vs 0），深色模式下泛出一层白灰，
+     * 与底部功能区色差明显。修正为与浅色对称：不叠底色，面板 = 裸模糊 ≈ 功能区。
      */
     private static int barLikeTint(boolean night) {
         if (!night) {
@@ -514,19 +508,23 @@ public final class PanelColorHook {
         }
         int alphaColor = sBarAlphaColor;
         int a = Color.alpha(alphaColor);
-        if (alphaColor != -1 && a > 0 && a < 255) {
+        if (alphaColor != -1 && a > 0 && a < 255 && isDarkColor(alphaColor)) {
             return withAlpha(alphaColor, a * a / 255);
         }
-        int content = sBarContentColor;
-        if (content != -1 && Color.alpha(content) == 255) {
-            return withAlpha(content, BLUR_TINT_ALPHA);
-        }
-        return withAlpha(CONTENT_COLOR_DARK, BLUR_TINT_ALPHA);
+        return Color.TRANSPARENT;
+    }
+
+    /** 颜色是否偏暗（感知亮度 &lt; 128）：系统合成色够暗才配当作深色模式的底。 */
+    private static boolean isDarkColor(int color) {
+        int lum = (Color.red(color) * 299 + Color.green(color) * 587
+                + Color.blue(color) * 114) / 1000;
+        return lum < 128;
     }
 
     /**
      * 给面板套上系统级背景高斯模糊：底层是 {@code ViewRootImpl.createBackgroundBlurDrawable()}
-     * 生成的真实背景模糊，必要时（深色）再叠一层半透明底色保证文字可读；圆角沿用面板自身的圆角。
+     * 生成的真实背景模糊；仅当 {@link #barLikeTint} 给出非透明底色（系统下发的深色合成色）时
+     * 才在上层补一层半透明底，否则保持与功能区一致的裸模糊；圆角沿用面板自身的圆角。
      *
      * @return true 表示模糊已应用；false 表示不支持，调用方应退回实色。
      */
@@ -540,7 +538,7 @@ public final class PanelColorHook {
         int tint = barLikeTint(night);
         Drawable bg;
         if (Color.alpha(tint) == 0) {
-            // 浅色：功能区没有任何颜色叠加，面板也必须「裸模糊」才能同色。
+            // 功能区没有任何颜色叠加，面板也必须「裸模糊」才能同色（深浅色同理）。
             bg = blur;
         } else {
             GradientDrawable tintLayer = new GradientDrawable();
