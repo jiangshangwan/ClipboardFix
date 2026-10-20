@@ -124,6 +124,22 @@ public final class PanelColorHook {
     /** 浅色底上的文字色（近似 MIUI 主文字色，保留原 alpha）。 */
     private static final int RGB_TEXT_ON_LIGHT = 0x001A1A1A;
 
+    /**
+     * 浅色面板上的条目卡片实色底。
+     *
+     * <p>卡片背景同样来自 phrase 资源的 {@code -night} 限定：夜间是半透明白（实测约 12%
+     * alpha），叠在本模块涂成浅色的面板底上只剩 {@code #E5E6EA}，与底色 {@code #E1E2E6}
+     * 几乎无差，条目看起来"糊在背景里"；日间实色底实测为 {@code #F3F3F5}。
+     */
+    private static final int RGB_CARD_ON_LIGHT = 0xFFF3F3F5;
+
+    /** 已补过底的视图（按视图 + 背景实例记账，避免每帧重复处理）。 */
+    private static final java.util.WeakHashMap<View, Drawable> sCardOurs =
+            new java.util.WeakHashMap<>();
+
+    /** 当前正在上色的面板根容器（根背景由 {@link #applyPanelBackground} 负责，不参与补底）。 */
+    private static volatile View sCurrentBody = null;
+
     /** 宿主（输入法）包名，用于限定跨窗口模糊的放行范围。 */
     private static volatile String sHostPkg = null;
 
@@ -643,6 +659,7 @@ public final class PanelColorHook {
             return;
         }
         sContrastDark = dark;
+        sCurrentBody = body;
         sContrastLogLeft = 24;
         ensureContrastWatched(body);
         contrastWalk(body, dark);
@@ -691,12 +708,224 @@ public final class PanelColorHook {
         if (v instanceof ImageView) {
             contrastIcon((ImageView) v, dark);
         }
+        // 浅色面板上补条目卡片底：夜间半透明白叠在浅底上会与底色糊成一片
+        if (!dark) {
+            guardCardBackground(v);
+        }
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
             for (int i = 0; i < g.getChildCount(); i++) {
                 contrastWalk(g.getChildAt(i), dark);
             }
         }
+    }
+
+    /**
+     * 条目卡片补底（深色系统 + 浅色输入法场景）。
+     *
+     * <p>面板文字、图标和卡片背景都来自 phrase 资源的 {@code -night} 限定，跟随<b>系统</b>
+     * uiMode；而面板底色被本模块改成跟随<b>输入法主题</b>。系统深色 + 输入法浅色时，
+     * 卡片背景仍是夜间那层半透明白（实测约 12% alpha），叠在浅底上得到 {@code #E5E6EA}，
+     * 与面板底 {@code #E1E2E6} 几乎同色，条目失去卡片感（用户 2026-10-20 反馈）。
+     *
+     * <p>安全边界：只处理「白系 + 半透明」的背景图层，补成日间实色
+     * {@link #RGB_CARD_ON_LIGHT}，圆角、描边、阴影层保持原 drawable 不动；实色背景
+     * （含首页 Tab 选中胶囊）和彩色背景一律不碰；面板根容器由
+     * {@link #applyPanelBackground} 单独负责，这里跳过。
+     */
+    private static void guardCardBackground(View v) {
+        if (v == sCurrentBody) {
+            return;
+        }
+        Drawable bg = v.getBackground();
+        if (bg == null) {
+            return;
+        }
+        if (sCardOurs.get(v) == bg) {
+            return;
+        }
+        if (recolorNightWhite(bg, RGB_CARD_ON_LIGHT)) {
+            sCardOurs.put(v, bg);
+            if (sContrastLogLeft > 0) {
+                sContrastLogLeft--;
+                log("card bg " + viewName(v) + " -> " + hex(RGB_CARD_ON_LIGHT));
+            }
+        }
+    }
+
+    /**
+     * 递归把「夜间半透明白」的图层改成指定实色，返回是否改动。
+     *
+     * <p>逐层判断（{@link LayerDrawable} 常见于 MIUI 卡片：阴影层 + 实色层）。白系判定用
+     * {@link #isWhiteish}（不约束 alpha），半透明判定再叠加 {@code Color.alpha(cur) < 240 ||
+     * d.getAlpha() < 240}，从而同时覆盖「颜色自带低 alpha」与「纯白 drawable 整体 alpha 被压低」
+     * 两种实现。深色阴影层、彩色描边、不透明实色层（含首页 Tab 选中胶囊）都原样保留。
+     */
+    private static boolean recolorNightWhite(Drawable d, int solid) {
+        // RippleDrawable 是 LayerDrawable 的子类，必须先判它，取静态底 content 层。
+        if (d instanceof android.graphics.drawable.RippleDrawable) {
+            Drawable content = rippleContent(d);
+            if (content != null) {
+                return recolorNightWhite(content, solid);
+            }
+        }
+        if (d instanceof LayerDrawable) {
+            LayerDrawable ld = (LayerDrawable) d;
+            boolean any = false;
+            for (int i = 0; i < ld.getNumberOfLayers(); i++) {
+                Drawable layer = ld.getDrawable(i);
+                if (layer != null && recolorNightWhite(layer, solid)) {
+                    any = true;
+                }
+            }
+            return any;
+        }
+        // 条目卡片背景实为 StateListDrawable（各个 pressed/normal 态），取当前生效子层再判。
+        if (d instanceof android.graphics.drawable.StateListDrawable) {
+            Drawable cur = stateListCurrent(d);
+            return cur != null && recolorNightWhite(cur, solid);
+        }
+        // InsetDrawable / ScaleDrawable 等包装层，拆开后同样只判内层实色。
+        if (d instanceof android.graphics.drawable.DrawableWrapper) {
+            Drawable inner = ((android.graphics.drawable.DrawableWrapper) d).getDrawable();
+            return inner != null && recolorNightWhite(inner, solid);
+        }
+        int cur = solidColorOf(d);
+        if (!isWhiteish(cur)) {
+            return false;
+        }
+        // 半透明有两种实现：颜色自带低 alpha，或颜色纯白但 drawable 整体 alpha 被压低。
+        boolean translucent = Color.alpha(cur) < 240 || d.getAlpha() < 240;
+        if (!translucent) {
+            return false;
+        }
+        if (d instanceof GradientDrawable) {
+            ((GradientDrawable) d).setColor(solid);
+            d.setAlpha(255);
+            return true;
+        }
+        if (d instanceof ColorDrawable) {
+            ((ColorDrawable) d).setColor(solid);
+            d.setAlpha(255);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 是否「夜间半透明白」：alpha 明显不足但不为零，且 RGB 为高亮度近灰阶。
+     * 实色（alpha 接近 255）、全透明、彩色、深色胶囊都不会命中。
+     */
+    private static boolean isNightWhite(int color) {
+        int a = Color.alpha(color);
+        if (a < 8 || a > 240) {
+            return false;
+        }
+        int r = Color.red(color);
+        int g = Color.green(color);
+        int b = Color.blue(color);
+        int max = Math.max(r, Math.max(g, b));
+        int min = Math.min(r, Math.min(g, b));
+        if (max - min > 20) {
+            return false;
+        }
+        int lum = (r * 299 + g * 587 + b * 114) / 1000;
+        return lum >= 200;
+    }
+
+    /**
+     * 是否「白系近灰阶」：只看色相与亮度，不约束 alpha。
+     *
+     * <p>与 {@link #isNightWhite} 的区别在于不限制透明度——纯白 drawable（alpha=255）但整体
+     * alpha 被 {@code setAlpha(31)} 之类压低后，旧规则会因 alpha 满格
+     * 被漏判；这里先放行白系，真正的「半透明」判定交给调用方的
+     * {@code Color.alpha(cur) < 240 || d.getAlpha() < 240}。
+     */
+    private static boolean isWhiteish(int color) {
+        int r = Color.red(color);
+        int g = Color.green(color);
+        int b = Color.blue(color);
+        int max = Math.max(r, Math.max(g, b));
+        int min = Math.min(r, Math.min(g, b));
+        if (max - min > 20) {
+            return false;
+        }
+        int lum = (r * 299 + g * 587 + b * 114) / 1000;
+        return lum >= 200;
+    }
+
+    /**
+     * 取 {@link android.graphics.drawable.RippleDrawable} 的内部静态底图层（content）。
+     *
+     * <p>RippleDrawable 的涟漪色与静态底色是分开的，静态底色在私有字段里；不同 Android 版本
+     * 字段名不一（{@code mDrawable} / {@code mChildDrawable} 等），这里尽力反射，取不到就返回
+     * null（此时不动该背景，绝不误伤涟漪色）。
+     */
+    private static Drawable rippleContent(Drawable d) {
+        if (!(d instanceof android.graphics.drawable.RippleDrawable)) {
+            return null;
+        }
+        String[] fields = {"mDrawable", "mChildDrawable"};
+        for (String name : fields) {
+            try {
+                java.lang.reflect.Field f = d.getClass().getDeclaredField(name);
+                f.setAccessible(true);
+                Object o = f.get(d);
+                if (o instanceof Drawable) {
+                    return (Drawable) o;
+                }
+            } catch (Throwable ignored) {
+                // 该版本无此字段，试下一个
+            }
+        }
+        // 再试 RippleState 内部的 content
+        try {
+            java.lang.reflect.Field fs = d.getClass().getDeclaredField("mState");
+            fs.setAccessible(true);
+            Object state = fs.get(d);
+            if (state != null) {
+                for (String name : fields) {
+                    try {
+                        java.lang.reflect.Field fc = state.getClass().getDeclaredField(name);
+                        fc.setAccessible(true);
+                        Object o = fc.get(state);
+                        if (o instanceof Drawable) {
+                            return (Drawable) o;
+                        }
+                    } catch (Throwable ignored) {
+                        // 忽略
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            // 忽略
+        }
+        return null;
+    }
+
+    /**
+     * 取 {@link android.graphics.drawable.StateListDrawable} 当前生效的子 drawable。
+     *
+     * <p>条目卡片背景是 {@code StateListDrawable}（normal/pressed 等多态），静态底色在父类
+     * {@code DrawableContainer} 的私有字段 {@code mCurrDrawable} 里；沿类层级向上找，
+     * 取不到返回 null（此时保持原样，不动）。
+     */
+    private static Drawable stateListCurrent(Drawable d) {
+        Class<?> c = d.getClass();
+        while (c != null) {
+            try {
+                java.lang.reflect.Field f = c.getDeclaredField("mCurrDrawable");
+                f.setAccessible(true);
+                Object o = f.get(d);
+                if (o instanceof Drawable) {
+                    return (Drawable) o;
+                }
+            } catch (Throwable ignored) {
+                // 该类没有此字段，继续向上
+            }
+            c = c.getSuperclass();
+        }
+        return null;
     }
 
     /**
