@@ -93,6 +93,19 @@ public final class ImeUnlockHook {
     private static volatile float sSinkOffsetPx;
 
     /**
+     * Gboard 专用：保留其内容视图自带的底部 padding，不做「剥离冗余导航 padding」。
+     *
+     * <p>Gboard 的键盘视图底边自带约 1 个导航栏 inset（实测 53px@1080）的底部 padding，
+     * 键帽圆角靠这段 padding 才完整显示。若按通用逻辑把它抹成 0，键帽会被整体下移 53px
+     * 直接顶到 inputFrame 裁剪线（=MIUI 底栏顶边），圆角被齐切——浅色主题下键帽与底栏
+     * 同色系、对比极弱看不出来，深色主题下「键帽 56 / 底 30」对比强，齐切一眼可见。
+     * 因此仅对 Gboard 跳过该剥离，保留 padding 让键帽停在裁剪线上方。
+     *
+     * <p>只赋值不重置：同一进程内 LSPosed 会为非本包（如 webview）再调 init，不能因此清掉。
+     */
+    private static volatile boolean sPreserveContentPadding;
+
+    /**
      * 每输入法的键盘下沉量（dp）。
      *
      * <p>第三方输入法的键盘绘制区（自定义 KeyboardView，无子视图）底边与按键行之间存在
@@ -152,6 +165,11 @@ public final class ImeUnlockHook {
                 density = 2.625f; // 420dpi 兜底
             }
             sSinkOffsetPx = sinkDp * density;
+        }
+        // Gboard：键盘视图自带约 1 个导航栏 inset 的底部 padding（键帽圆角靠它完整显示），
+        // 不按通用逻辑剥离（详见 sPreserveContentPadding 字段注释）。仅赋值不重置。
+        if ("com.google.android.inputmethod.latin".equals(pkg)) {
+            sPreserveContentPadding = true;
         }
         boolean isNonCustomize = !contains(MIUI_IME_LIST, pkg);
         log(pkg + " start (customized=" + !isNonCustomize
@@ -858,10 +876,6 @@ public final class ImeUnlockHook {
         boolean bottomAreaActive = hasInset
                 && isBottomAreaActive(rootView, inputFrame, bottomArea, navigationInset);
 
-        // ---- 诊断（临时）：定位「MIUI 底栏图标间歇性被裁」故障，根因确认后整块移除 ----
-        diagBottomFrame(inputFrame, fullscreenArea, rootView, bottomArea, contentView,
-                navigationInset, bottomAreaActive);
-
         // 键盘下沉独立走「底栏几何」判据，不依赖导航 inset：
         // 手势导航下部分机型（实测小米 15 Pro）navigationBars 底部 inset 为 0，而 MIUI 底栏
         // 依旧正常注入，此时沿用上面的 hasInset 门控会让整套机制在这类机型上直接短路。
@@ -912,15 +926,17 @@ public final class ImeUnlockHook {
         if (!fillsInputFrame
                 || (contentView.getPaddingBottom() != navigationInset && !isAlreadyAdjusted)) {
             if (isCurrentContentAdjusted) restoreMiuiBottomFrame(inputFrame, fullscreenArea);
-            // 即便内容视图未填满 inputFrame，也尝试剥离冗余导航 padding
-            stripRedundantNavigationPadding(inputFrame, navigationInset);
+            // 即便内容视图未填满 inputFrame，也尝试剥离冗余导航 padding（Gboard 跳过）
+            if (!sPreserveContentPadding) {
+                stripRedundantNavigationPadding(inputFrame, navigationInset);
+            }
             return;
         }
 
         if (!ORIGINAL_CONTENT_BOTTOM_PADDINGS.containsKey(contentView)) {
             ORIGINAL_CONTENT_BOTTOM_PADDINGS.put(contentView, contentView.getPaddingBottom());
         }
-        if (!isAlreadyAdjusted) {
+        if (!isAlreadyAdjusted && !sPreserveContentPadding) {
             contentView.setPadding(
                     contentView.getPaddingLeft(),
                     contentView.getPaddingTop(),
@@ -931,8 +947,10 @@ public final class ImeUnlockHook {
         if (!expandFullscreenArea(fullscreenArea, navigationInset)) {
             restoreMiuiBottomFrame(inputFrame, fullscreenArea);
         }
-        // 剥离 MIUI 工具栏注入的冗余底部安全区（键盘被抬高的真正根因之一）
-        stripRedundantNavigationPadding(inputFrame, navigationInset);
+        // 剥离 MIUI 工具栏注入的冗余底部安全区（键盘被抬高的真正根因之一；Gboard 跳过）
+        if (!sPreserveContentPadding) {
+            stripRedundantNavigationPadding(inputFrame, navigationInset);
+        }
     }
 
     private static boolean expandFullscreenArea(ViewGroup fullscreenArea, int navigationInset) {
@@ -1134,69 +1152,6 @@ public final class ImeUnlockHook {
             }
         }
         ORIGINAL_CONTENT_TRANSLATIONS.clear();
-    }
-
-    // ---- 诊断（临时）：底栏图标被裁故障定位，根因确认后整块移除 ----
-    /** 诊断日志节流：上次输出时间与上次签名（签名变化立即输出，否则至多 5s 一条）。 */
-    private static long sDiagLastMs = 0L;
-    private static String sDiagLastSig = "";
-
-    /**
-     * 转储底栏相关几何：内容视图 padding/底边、inputFrame、fullscreenArea、底栏自身
-     * padding/高度/直接子级，以及底栏的祖先链（含各自 top/bottom，用于推断谁盖住了图标）。
-     */
-    private static void diagBottomFrame(ViewGroup inputFrame, ViewGroup fullscreenArea,
-                                        View rootView, View bottomArea, View contentView,
-                                        int navigationInset, boolean bottomAreaActive) {
-        long now = System.currentTimeMillis();
-        String sig = (contentView == null ? "n" : contentView.getClass().getSimpleName())
-                + "/" + (contentView == null ? -1 : contentView.getPaddingBottom())
-                + "/" + inputFrame.getHeight()
-                + "/" + bottomArea.getPaddingBottom()
-                + "/" + bottomArea.getHeight()
-                + "/" + fullscreenArea.getHeight()
-                + "/" + bottomAreaActive;
-        if (sig.equals(sDiagLastSig) && now - sDiagLastMs < 5000L) {
-            return;
-        }
-        sDiagLastSig = sig;
-        sDiagLastMs = now;
-        StringBuilder sb = new StringBuilder("diag: inset=").append(navigationInset)
-                .append(" active=").append(bottomAreaActive)
-                .append(" content=").append(contentView == null ? "null"
-                        : contentView.getClass().getSimpleName())
-                .append(" padB=").append(contentView == null ? -1 : contentView.getPaddingBottom())
-                .append(" bottom=").append(contentView == null ? -1 : contentView.getBottom())
-                .append(" inputFrame[h=").append(inputFrame.getHeight())
-                .append(",padB=").append(inputFrame.getPaddingBottom())
-                .append(",t=").append(inputFrame.getTop())
-                .append(",b=").append(inputFrame.getBottom()).append("]")
-                .append(" full[h=").append(fullscreenArea.getHeight()).append("]")
-                .append(" bar[padB=").append(bottomArea.getPaddingBottom())
-                .append(",h=").append(bottomArea.getHeight())
-                .append(",t=").append(bottomArea.getTop())
-                .append(",b=").append(bottomArea.getBottom()).append("]");
-        if (bottomArea instanceof ViewGroup) {
-            ViewGroup bar = (ViewGroup) bottomArea;
-            int n = Math.min(bar.getChildCount(), 4);
-            for (int i = 0; i < n; i++) {
-                View c = bar.getChildAt(i);
-                sb.append(" bar>").append(c.getClass().getSimpleName())
-                        .append("[").append(c.getTop()).append(",").append(c.getBottom())
-                        .append(",vis=").append(c.getVisibility()).append("]");
-            }
-        }
-        // 底栏祖先链（各自 top/bottom，推断布局结构与覆盖关系）
-        View p = bottomArea;
-        int depth = 0;
-        while (p != null && depth < 6) {
-            sb.append(" ^").append(p.getClass().getSimpleName())
-                    .append("[").append(p.getTop()).append(",").append(p.getBottom()).append("]");
-            Object parent = p.getParent();
-            p = (parent instanceof View) ? (View) parent : null;
-            depth++;
-        }
-        log(sb.toString());
     }
 
     private static boolean isBottomAreaActive(View rootView, View inputFrame,
