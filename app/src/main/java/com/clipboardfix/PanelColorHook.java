@@ -2,9 +2,12 @@ package com.clipboardfix;
 
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.PorterDuff;
+import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -13,7 +16,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
+import android.widget.ImageView;
 import android.widget.PopupWindow;
+import android.widget.TextView;
 
 import java.lang.ref.WeakReference;
 
@@ -23,8 +29,8 @@ import io.github.libxposed.api.XposedModuleInterface;
  * 让剪贴板面板（{@code InputMethodClipboardPhrasePopupView}）的背景色与底部输入法功能栏
  * （{@code InputMethodBottomManager.sBottomView}）保持一致。
  *
- * <p><b>进程归属</b>：面板运行在输入法进程（实测微信输入法 {@code com.tencent.wetype:hld}，
- * 也会借 {@code com.xiaomi.type} 等系统输入法），不在 {@code com.miui.phrase} 进程。
+ * <p><b>进程归属</b>：面板运行在输入法进程（hld 隔离进程形态，包名见注入点），
+ * 不在 {@code com.miui.phrase} 进程。
  *
  * <p><b>关键坑（实测，code 25/26/27 全部因此静默失效）</b>：
  * {@code com.miui.inputmethod.*} 这套类（面板 {@code InputMethodClipboardPhrasePopupView}
@@ -63,13 +69,60 @@ public final class PanelColorHook {
     private static final java.util.Map<String, Integer> sIdCache = new java.util.HashMap<>();
 
     /**
-     * 面板高斯模糊半径。与主流微信输入法美化模块的默认模糊强度一致（{@code DEFAULT_BLUR_RADIUS=60}），
+     * 面板高斯模糊半径。与主流输入法美化模块的默认模糊强度一致（{@code DEFAULT_BLUR_RADIUS=60}），
      * 这样两者的玻璃观感最接近。
      */
     private static final int BLUR_RADIUS = 60;
 
     /** 当前显示的面板内容容器，供换色时同步刷新（面板消失即被回收）。 */
     private static volatile WeakReference<View> sPanelBodyRef = new WeakReference<>(null);
+
+    /**
+     * 面板当前是深色底还是浅色底（由实际背景亮度决定，不是系统 uiMode）。
+     * 文字对比守卫按它决定「该把文字翻到哪一侧」。
+     */
+    private static volatile boolean sContrastDark = false;
+
+    /** 已挂过 pre-draw 守卫的面板容器（弱引用集合，视图回收即自动移除）。 */
+    private static final java.util.WeakHashMap<View, Boolean> sContrastWatched =
+            new java.util.WeakHashMap<>();
+
+    /**
+     * 记录「本模块上一次写进 TextView 的颜色」。
+     *
+     * <p><b>为什么不用 {@code View.setTag(int,Object)}</b>：该 API 要求 key 是
+     * 「应用资源 id」（高字节为包标识），而 {@code View.generateViewId()} 生成的是
+     * 0x00xxxxxx，直接抛 {@code IllegalArgumentException: The key must be an
+     * application-specific resource id}，会把整个上色流程打断（实测踩过）。
+     * 也不用 {@code setTag(Object)}——RecyclerView 自己要用单槽 tag。
+     * 这里用弱键表记账，视图回收即自动清理。
+     */
+    private static final java.util.WeakHashMap<TextView, Integer> sContrastApplied =
+            new java.util.WeakHashMap<>();
+
+    /**
+     * 图标原色（每个 ImageView 只测一次）。
+     *
+     * <p>图标颜色烘焙在 drawable 里（{@code android:src} 的矢量图，没有 tint 列表），
+     * 只能靠「把 drawable 画进一张小位图再采样」得到。采样必须发生在写入 ColorFilter
+     * <b>之前</b>并缓存——否则采样到的是我们自己染过的色，下一帧又会翻回去，形成
+     * 一帧一翻的闪烁。视图回收即自动清理。
+     */
+    private static final java.util.WeakHashMap<ImageView, Integer> sIconOriginal =
+            new java.util.WeakHashMap<>();
+
+    /** 本模块已写入的图标 ColorFilter 色，用于幂等与主题切换时撤销。 */
+    private static final java.util.WeakHashMap<ImageView, Integer> sIconApplied =
+            new java.util.WeakHashMap<>();
+
+    /** 对比守卫日志限流（每次面板上色重置）。 */
+    private static volatile int sContrastLogLeft = 0;
+
+    /** 深色底上的文字色（纯白，保留原 alpha）。 */
+    private static final int RGB_TEXT_ON_DARK = 0x00FFFFFF;
+
+    /** 浅色底上的文字色（近似 MIUI 主文字色，保留原 alpha）。 */
+    private static final int RGB_TEXT_ON_LIGHT = 0x001A1A1A;
 
     /** 宿主（输入法）包名，用于限定跨窗口模糊的放行范围。 */
     private static volatile String sHostPkg = null;
@@ -477,6 +530,9 @@ public final class PanelColorHook {
         }
         int base = ensureOpaque(bottomColor, night);
         tint(body, base);
+        // 背景已按输入法主题着色，但面板文字色来自 phrase 资源的「系统夜间」限定符。
+        // 系统深色 + 输入法浅色时文字仍是白色 → 白底白字。这里按实际底色亮度纠偏。
+        applyTextContrast(body, isDarkColor(base));
         log("applied solid -> " + hex(base));
     }
 
@@ -549,9 +605,267 @@ public final class PanelColorHook {
         }
         body.setBackground(bg);
         body.invalidate();
+        // 玻璃面板下文字同样可能处于错误的明暗侧（系统深色 + 输入法浅色）：
+        // 底栏内容色（content）本身跟随输入法主题，用它判断更准，取不到再退回系统 uiMode。
+        applyTextContrast(body, panelDarkFromContent(night));
         log("blur applied: radius=" + BLUR_RADIUS + " corner=" + radius
                 + " tint=" + hex(tint) + (night ? " (dark)" : " (light)"));
         return true;
+    }
+
+    /**
+     * 深色主题判定：优先用底栏下发的「内容色」——它跟着输入法主题走
+     * （深色主题内容色偏亮，浅色主题偏暗），比系统 {@code uiMode} 更贴合实际观感。
+     * 内容色未就绪时退回系统 uiMode。
+     */
+    private static boolean panelDarkFromContent(boolean night) {
+        int c = sBarContentColor;
+        if (c != -1 && Color.alpha(c) > 0) {
+            return !isDarkColor(c);
+        }
+        return night;
+    }
+
+    /**
+     * 前景对比守卫（文字 + 图标）：把「与背景同色、处于错误明暗侧」的前景色翻到可读的一侧。
+     *
+     * <p><b>为什么需要</b>：面板文字色和图标色都来自 {@code com.miui.phrase} 布局资源的
+     * {@code -night} 限定符，跟随<b>系统</b> uiMode；而面板背景由本模块改成跟随
+     * <b>输入法主题</b>（底栏色）。系统深色 + 输入法浅色时两者打架：背景被涂成
+     * 浅色、文字和图标仍是白色 → 白底白字，内容完全不可见（用户 2026-10-19 反馈，100% 复现）。
+     *
+     * <p><b>为什么安全</b>：只在「前景与背景明暗同侧」时翻转，主题一致时判据恒不成立，
+     * 一个像素都不会改。翻转保留原 alpha（次要文字的灰度层级不丢），彩色前景
+     * （链接、强调色，饱和度 &gt; 24）一律不动。
+     */
+    private static void applyTextContrast(View body, boolean dark) {
+        if (body == null) {
+            return;
+        }
+        sContrastDark = dark;
+        sContrastLogLeft = 24;
+        ensureContrastWatched(body);
+        contrastWalk(body, dark);
+    }
+
+    /** 给面板容器挂一次 pre-draw 守卫，覆盖 RecyclerView 回收复用的新条目。 */
+    private static void ensureContrastWatched(View body) {
+        if (sContrastWatched.containsKey(body)) {
+            return;
+        }
+        sContrastWatched.put(body, Boolean.TRUE);
+        ViewTreeObserver vto = body.getViewTreeObserver();
+        if (vto == null || !vto.isAlive()) {
+            return;
+        }
+        // pre-draw 在每次绘制前触发，回收出来的新条目在显示前就会被纠偏；
+        // tag 记账保证同一颜色不会重复 setTextColor（否则会触发无限 invalidate）。
+        vto.addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+                if (body.isAttachedToWindow()) {
+                    contrastWalk(body, sContrastDark);
+                }
+                return true;
+            }
+        });
+    }
+
+    private static void contrastWalk(View v, boolean dark) {
+        if (v instanceof TextView) {
+            TextView tv = (TextView) v;
+            int cur = tv.getCurrentTextColor();
+            Integer prev = sContrastApplied.get(tv);
+            boolean ours = prev != null && prev.intValue() == cur;
+            if (!ours && needsFlip(cur, dark)) {
+                int target = flipTextColor(cur, dark);
+                tv.setTextColor(target);
+                sContrastApplied.put(tv, target);
+                if (sContrastLogLeft > 0) {
+                    sContrastLogLeft--;
+                    log("contrast flip " + hex(cur) + " -> " + hex(target)
+                            + (dark ? " (dark bg)" : " (light bg)"));
+                }
+            }
+        }
+        if (v instanceof ImageView) {
+            contrastIcon((ImageView) v, dark);
+        }
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                contrastWalk(g.getChildAt(i), dark);
+            }
+        }
+    }
+
+    /**
+     * 图标对比守卫：与 {@link #applyTextContrast} 同一套判据，只是把「字形颜色」
+     * 换成「图标颜色」，用 {@link ImageView#setColorFilter} 整体染色。
+     *
+     * <p><b>为什么不能只看 TextView</b>：面板的返回箭头、置顶按钮、条目来源小图标都是
+     * {@code ImageView}，颜色烘焙在 {@code android:src} 的矢量图里（取自 phrase 资源的
+     * {@code -night} 限定符），同样跟随系统而不是输入法主题。只修文字的话，就会出现
+     * 「字黑了、图标还是白的」（用户 2026-10-19 二次反馈，截图实证）。
+     *
+     * <p><b>三道安全闸</b>：
+     * <ol>
+     *   <li>已经带 ColorFilter 的图标一律不动——说明颜色由别人管（如本模块置顶蓝钮
+     *       自己 {@code setColorFilter(白, SRC_IN)}，染成深色就毁了）；</li>
+     *   <li>自带实色底的图标不动——蓝底圆钮那类组件自成一套配色，与面板底色无关；</li>
+     *   <li>彩色图标（饱和度 &gt; 24）不动，只翻转近灰阶的单色字形。</li>
+     * </ol>
+     */
+    private static void contrastIcon(ImageView iv, boolean dark) {
+        Drawable d = iv.getDrawable();
+        if (d == null) {
+            return;
+        }
+        // 闸 1：别人在控色（含本模块自己的白箭头）→ 不碰。
+        if (iv.getColorFilter() != null && !sIconApplied.containsKey(iv)) {
+            return;
+        }
+        // 闸 2：自带实色底（蓝底圆钮等）→ 不碰。
+        if (Color.alpha(solidColorOf(iv.getBackground())) > 0) {
+            return;
+        }
+        Integer origin = sIconOriginal.get(iv);
+        if (origin == null) {
+            int sampled = iconColorOf(iv);
+            if (sampled == -1) {
+                return;
+            }
+            origin = sampled;
+            sIconOriginal.put(iv, origin);
+            if (sContrastLogLeft > 0) {
+                sContrastLogLeft--;
+                log("icon color sample " + viewName(iv) + " -> " + hex(origin));
+            }
+        }
+        if (!needsFlip(origin, dark)) {
+            if (sIconApplied.remove(iv) != null) {
+                iv.clearColorFilter();
+                iv.invalidate();
+            }
+            return;
+        }
+        int target = flipTextColor(origin, dark);
+        Integer prev = sIconApplied.get(iv);
+        if (prev != null && prev.intValue() == target) {
+            return;
+        }
+        iv.setColorFilter(target, PorterDuff.Mode.SRC_IN);
+        sIconApplied.put(iv, target);
+        if (sContrastLogLeft > 0) {
+            sContrastLogLeft--;
+            log("icon flip " + viewName(iv) + " " + hex(origin) + " -> " + hex(target)
+                    + (dark ? " (dark bg)" : " (light bg)"));
+        }
+    }
+
+    /**
+     * 取图标当前颜色：优先 {@link ImageView#getImageTintList()}（{@code android:tint}
+     * 声明的图标能直接读到）；读不到就把 drawable 画进 24×24 位图采样。
+     */
+    private static int iconColorOf(ImageView iv) {
+        ColorStateList tint = iv.getImageTintList();
+        if (tint != null) {
+            int c = tint.getColorForState(iv.getDrawableState(), Color.TRANSPARENT);
+            if (Color.alpha(c) != 0) {
+                return c;
+            }
+        }
+        return sampleDrawable(iv.getDrawable());
+    }
+
+    /**
+     * 把 drawable 画进 24×24 位图后采样出「字形色」。
+     *
+     * <p>只统计 alpha ≥ 25% 的像素（细线条抗锯齿边缘几乎全透明，会拉低均值），
+     * RGB 取其中最不透明的一批的均值，alpha 取最大值——单色图标据此能得到干净的
+     * 原色，翻色后也保持实心、不会被抗锯齿稀释成半透明灰。
+     *
+     * @return 采样失败或整张图全透明时返回 -1（调用方跳过，绝不写非法色值）
+     */
+    private static int sampleDrawable(Drawable d) {
+        Bitmap bmp = null;
+        try {
+            int n = 24;
+            bmp = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bmp);
+            Rect old = d.copyBounds();
+            d.setBounds(0, 0, n, n);
+            try {
+                d.draw(canvas);
+            } finally {
+                d.setBounds(old);
+            }
+            int aMax = 0;
+            for (int y = 0; y < n; y++) {
+                for (int x = 0; x < n; x++) {
+                    int a = Color.alpha(bmp.getPixel(x, y));
+                    if (a > aMax) {
+                        aMax = a;
+                    }
+                }
+            }
+            if (aMax < 64) {
+                return -1;
+            }
+            int cut = aMax * 3 / 4;
+            long r = 0, g = 0, b = 0;
+            int cnt = 0;
+            for (int y = 0; y < n; y++) {
+                for (int x = 0; x < n; x++) {
+                    int p = bmp.getPixel(x, y);
+                    if (Color.alpha(p) < cut) {
+                        continue;
+                    }
+                    r += Color.red(p);
+                    g += Color.green(p);
+                    b += Color.blue(p);
+                    cnt++;
+                }
+            }
+            if (cnt == 0) {
+                return -1;
+            }
+            return Color.argb(aMax, (int) (r / cnt), (int) (g / cnt), (int) (b / cnt));
+        } catch (Throwable t) {
+            return -1;
+        } finally {
+            if (bmp != null) {
+                bmp.recycle();
+            }
+        }
+    }
+
+    /** 视图名（{@code 类名#id}），仅用于日志排查。 */
+    private static String viewName(View v) {
+        return v.getClass().getSimpleName() + "#" + hex(v.getId());
+    }
+
+    /** 文字是否需要翻转：仅处理「近灰阶」且明暗与背景同侧的颜色。 */
+    private static boolean needsFlip(int color, boolean dark) {
+        if (Color.alpha(color) == 0) {
+            return false;
+        }
+        int r = Color.red(color);
+        int g = Color.green(color);
+        int b = Color.blue(color);
+        int max = Math.max(r, Math.max(g, b));
+        int min = Math.min(r, Math.min(g, b));
+        if (max - min > 24) {
+            return false; // 彩色文字（链接/强调）不动
+        }
+        int lum = (r * 299 + g * 587 + b * 114) / 1000;
+        return dark ? lum <= 90 : lum >= 200;
+    }
+
+    /** 翻到背景的对侧，保留原 alpha。 */
+    private static int flipTextColor(int color, boolean dark) {
+        int a = Color.alpha(color);
+        return (a << 24) | (dark ? RGB_TEXT_ON_DARK : RGB_TEXT_ON_LIGHT);
     }
 
     /** 一次性转储功能区背景结构，便于排查「面板与功能区有色差」。 */

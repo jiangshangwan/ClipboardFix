@@ -13,8 +13,8 @@ android {
         // minSdk 抬到 33：HyperOS 即 Android 13+；借此可直接用标准 AGSL（RuntimeShader）实现「关于」页动态渐变。
         minSdk 33
         targetSdk 35
-        versionCode 117
-        versionName "2.0.2"
+        versionCode 118
+        versionName "2.0.3"
         // 构建日期：编译时写入，供「关于/主页」展示
         buildConfigField "String", "BUILD_DATE", "\"${new Date().format('yyyy-MM-dd')}\""
         // 小米设备全部为 ARM 架构；剔除 x86 / x86_64 原生库（libdexkit.so），省约 817KB。
