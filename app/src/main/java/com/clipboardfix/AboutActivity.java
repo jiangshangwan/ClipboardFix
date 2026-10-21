@@ -5,6 +5,7 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.database.ContentObserver;
@@ -237,7 +238,7 @@ public class AboutActivity extends ComponentActivity {
                 uiEnabledFeatures, uiBadgesVisible,
                 BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE,
                 DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
-                Build.VERSION.INCREMENTAL, abiInfo(),
+                Build.VERSION.INCREMENTAL, phraseVersion(), abiInfo(),
                 uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiIconHidden,
                 this::doCheckUpdate,
                 this::onStatusCardTap,
@@ -494,6 +495,29 @@ public class AboutActivity extends ComponentActivity {
         } catch (Throwable ignored) {
         }
         return abi + "(" + (pageSize / 1024) + "k)";
+    }
+
+    /**
+     * 系统「剪贴板 / 常用语」(com.miui.phrase) 的版本号，展示在主页「系统版本」下方。
+     * <p>取不到（未安装 / 被包可见性过滤 / versionName 为空）时回退「未知」；
+     * versionName 缺失则退回 longVersionCode。依赖 manifest {@code <queries>} 里的
+     * {@code <package android:name="com.miui.phrase"/>} 声明保证其在 targetSdk 30+ 下可见。
+     */
+    private String phraseVersion() {
+        final String pkg = "com.miui.phrase";
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(pkg, 0);
+            String name = info.versionName;
+            if (name != null && !name.trim().isEmpty()) {
+                return name.trim();
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                return String.valueOf(info.getLongVersionCode());
+            }
+            return String.valueOf(info.versionCode);
+        } catch (Throwable t) {
+            return "未知";
+        }
     }
 
     /** 延迟确认状态：超时仍未绑定即判定为未启用（每次订阅都重置计时）。 */

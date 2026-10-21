@@ -50,6 +50,7 @@ fun installPages(
     deviceModel: String,
     androidVersion: String,
     systemVersion: String,
+    clipboardVersion: String,
     abiInfo: String,
     swImeUnlock: State<Boolean>,
     swUnlimitCount: State<Boolean>,
@@ -97,6 +98,7 @@ fun installPages(
                 deviceModel = deviceModel,
                 androidVersion = androidVersion,
                 systemVersion = systemVersion,
+                clipboardVersion = clipboardVersion,
                 abiInfo = abiInfo,
                 onStatusCardClick = { onStatusCardTap.run() },
             )

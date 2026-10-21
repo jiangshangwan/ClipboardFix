@@ -10,6 +10,8 @@
         <intent>
             <action android:name="android.view.InputMethod" />
         </intent>
+        <!-- 剪贴板版本展示：读取系统「剪贴板 / 常用语」(com.miui.phrase) 的版本号 -->
+        <package android:name="com.miui.phrase" />
     </queries>
 
     <application

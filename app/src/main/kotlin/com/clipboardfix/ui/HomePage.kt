@@ -56,6 +56,7 @@ fun HomePage(
     deviceModel: String,
     androidVersion: String,
     systemVersion: String,
+    clipboardVersion: String,
     abiInfo: String,
     onStatusCardClick: () -> Unit,
 ) {
@@ -111,6 +112,7 @@ fun HomePage(
                     InfoRow(stringResource(R.string.info_device), deviceModel)
                     InfoRow(stringResource(R.string.info_android), androidVersion)
                     InfoRow(stringResource(R.string.info_system), systemVersion)
+                    InfoRow(stringResource(R.string.info_clipboard_version), clipboardVersion)
                     InfoRow(stringResource(R.string.info_arch), abiInfo)
                     InfoRow(stringResource(R.string.info_lsposed), "API 102")
                     InfoRow(stringResource(R.string.info_build), buildDate, bottomPad = 22.dp)
