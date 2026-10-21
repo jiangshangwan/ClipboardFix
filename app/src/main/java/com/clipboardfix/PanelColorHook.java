@@ -22,6 +22,7 @@ import android.widget.PopupWindow;
 import android.widget.TextView;
 
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Method;
 
 import io.github.libxposed.api.XposedModuleInterface;
 
@@ -176,6 +177,24 @@ public final class PanelColorHook {
     /** 底部栏换色点是否已懒挂（要等面板出现、拿到正确 classloader 后才能挂）。 */
     private static volatile boolean sBottomHooked = false;
 
+    /**
+     * 剪贴板面板的「主题上下文」纠偏 hook 是否已挂上。
+     *
+     * <p>面板类（{@code com.miui.inputmethod.*}）是 {@code InputMethodModuleManager.loadDex}
+     * 动态加载的，必须等 dex 落地才能按名解析，所以由 loadDex 回调负责安装。
+     */
+    private static volatile boolean sPhraseHooked = false;
+
+    /**
+     * 本模块最近一次实际涂到面板上的不透明底色（-1 表示尚无/走了模糊分支）。
+     *
+     * <p>面板的 Tab 选中胶囊、导航条底色都取自 phrase 资源的 {@code -night} 限定，跟随
+     * <b>系统</b> uiMode；而面板底色被本模块改成跟随<b>输入法底栏</b>。系统深色 + 输入法
+     * 浅色时胶囊会取夜间那种极淡的白（实测与浅底几乎同色），选中态直接消失。见
+     * {@link #phraseThemeOverride}。
+     */
+    private static volatile int sAppliedPanelColor = -1;
+
     private PanelColorHook() {
     }
 
@@ -196,6 +215,9 @@ public final class PanelColorHook {
         sHostPkg = param.getPackageName();
         log("init enter: pkg=" + sHostPkg);
         ensurePassWindowBlur();
+        // 面板 Tab 选中胶囊底色的纠偏 hook 装在动态 dex 的类上，必须拦截 loadDex 抢在
+        // 首次开面板（showClipBoard→createPhraseThemeContext）之前挂上。
+        hookModuleManagerLoadDex();
         // 动态 dex 要等 IME 起来才加载，此处有界重试，尽量在键盘首次配置颜色前挂上取色点。
         scheduleBottomHookRetry();
 
@@ -307,6 +329,133 @@ public final class PanelColorHook {
         sBottomHooked = any;
         if (!any) {
             log("WARN: bottom color setters not resolvable yet");
+        }
+        // 顺路补装面板主题 hook：能解析到底部栏说明 dex 已经落地。
+        ensurePhraseThemeHook(sPanelCl);
+    }
+
+    /**
+     * 拦截 {@code android.inputmethodservice.InputMethodModuleManager.loadDex(ClassLoader,String)}。
+     *
+     * <p>面板类在动态 dex 里，而 {@code createPhraseThemeContext} 在首次开面板时就会被调用
+     * （早于 {@code setContentView}），靠面板出现再装 hook 已经来不及。这里在 dex 落地后立刻装：
+     * 本 hook 是 {@code PanelColorHook.init}（先于 ImeUnlockHook.init 执行）挂的，位于拦截器链最前，
+     * 先 {@code proceed()} 让原有加载逻辑（含其它模块的 {@code addDexPath}）跑完，再按该 loader 装。
+     */
+    private static void hookModuleManagerLoadDex() {
+        try {
+            Class<?> mgr = Class.forName(
+                    "android.inputmethodservice.InputMethodModuleManager", false, sDefaultCl);
+            Method loadDex = null;
+            for (Method m : mgr.getDeclaredMethods()) {
+                Class<?>[] ps = m.getParameterTypes();
+                if ("loadDex".equals(m.getName()) && ps.length == 2
+                        && ClassLoader.class.isAssignableFrom(ps[0])
+                        && String.class.equals(ps[1])) {
+                    loadDex = m;
+                    break;
+                }
+            }
+            if (loadDex == null) {
+                log("WARN: loadDex(ClassLoader, String) not found");
+                return;
+            }
+            loadDex.setAccessible(true);
+            XposedInit.hook(loadDex, chain -> {
+                Object result = chain.proceed();
+                try {
+                    ensurePhraseThemeHook((ClassLoader) chain.getArg(0));
+                } catch (Throwable t) {
+                    log("WARN: phrase hook after loadDex - " + t);
+                }
+                return result;
+            });
+            log("OK: hooked " + mgr.getName() + ".loadDex");
+        } catch (Throwable t) {
+            log("WARN: loadDex hook - " + t);
+        }
+    }
+
+    /**
+     * 面板主题该跟「日(1)」还是「夜(2)」：以本模块实际涂到面板上的底色为准。
+     *
+     * <p>返回 {@code -1} 表示不干预——底栏色还没到、或走了模糊分支（面板观感由裸模糊决定），
+     * 此时保持系统原本判定最安全。
+     */
+    private static int phraseThemeOverride() {
+        int panel = sAppliedPanelColor;
+        if (panel == -1) {
+            int bar = barColor(sBarBgColor);
+            if (bar == -1 || Color.alpha(bar) == 0) {
+                return -1;
+            }
+            panel = Color.alpha(bar) < 255 ? ((bar & 0x00FFFFFF) | 0xFF000000) : bar;
+        }
+        return isDarkColor(panel) ? 2 : 1;
+    }
+
+    /**
+     * 按动态 dex 的 classloader 装面板主题纠偏 hook。
+     *
+     * <p><b>为什么改这里</b>：{@code setupItems()} 末尾用 {@code setColorMode(isDarkTheme()?2:1)}
+     * 决定导航条底色（日 {@code #80ffffff} / 夜 {@code #24ffffff}）与选中胶囊色，二者都只看
+     * <b>系统</b> uiMode。系统深色 + 输入法浅色时它们取夜间那种极淡的白，叠在被本模块涂浅的
+     * 面板底（实测 {@code #E1E2E6}）上只剩 {@code #E5E6EA}，选中态直接糊掉。把主题上下文
+     * 强制成「日」，导航条与胶囊就都取日间值（导航条 {@code #F0F1F3}，Δ≈15 可见）。
+     *
+     * <p>主纠偏点选 {@code createPhraseThemeContext(int)}：面板所有视图都用它返回的上下文充气，
+     * 一次性把整套资源限定切到日间，比只改 {@code setColorMode} 更彻底且不会触发
+     * {@code refreshPhraseThemeView} 那条 hyper-material 分支（它只在 type==1||2 时走）。
+     * {@code isDarkTheme()} 作为兜底，防止上面方法名在别的版本上改名。
+     */
+    private static void ensurePhraseThemeHook(ClassLoader cl) {
+        if (sPhraseHooked || cl == null) {
+            return;
+        }
+        Class<?> popup;
+        try {
+            popup = Class.forName(PHRASE_POPUP, false, cl);
+        } catch (Throwable t) {
+            // dex 还没落地，留给后续的 loadDex / 重试再试。
+            return;
+        }
+        boolean any = false;
+        try {
+            Method m = popup.getDeclaredMethod("createPhraseThemeContext", int.class);
+            m.setAccessible(true);
+            XposedInit.hook(m, chain -> {
+                int type = toInt(chain.getArg(0));
+                int forced = phraseThemeOverride();
+                if (forced == -1 || forced == type) {
+                    return chain.proceed();
+                }
+                log("phrase theme " + type + " -> " + forced + " (panel " + hex(sAppliedPanelColor) + ")");
+                Object[] modified = chain.getArgs().toArray();
+                modified[0] = forced;
+                return chain.proceed(modified);
+            });
+            any = true;
+        } catch (Throwable t) {
+            log("WARN: createPhraseThemeContext - " + t);
+        }
+        try {
+            Method m = popup.getDeclaredMethod("isDarkTheme");
+            m.setAccessible(true);
+            XposedInit.hook(m, chain -> {
+                Object result = chain.proceed();
+                int forced = phraseThemeOverride();
+                if (forced == -1) {
+                    return result;
+                }
+                return forced == 2 ? Boolean.TRUE : Boolean.FALSE;
+            });
+            any = true;
+        } catch (Throwable t) {
+            log("WARN: isDarkTheme - " + t);
+        }
+        sPhraseHooked = any;
+        if (any) {
+            log("OK: phrase theme hooks installed");
         }
     }
 
@@ -541,11 +690,15 @@ public final class PanelColorHook {
             // 底部栏被第三方美化模块强改成全透明 → 改用「系统高斯模糊 + 半透明底色」，
             // 与该模块的玻璃键盘观感一致；模糊不可用时再退回不透明实色。
             if (applyBlurPanel(body, night)) {
+                // 观感由裸模糊决定，没有可判明暗的实色底 → 主题纠偏保持不干预。
+                sAppliedPanelColor = -1;
                 return;
             }
         }
         int base = ensureOpaque(bottomColor, night);
         tint(body, base);
+        // 面板主题（Tab 选中胶囊 / 导航条底色）跟随输入法底栏，而不是系统 uiMode。
+        sAppliedPanelColor = base;
         // 背景已按输入法主题着色，但面板文字色来自 phrase 资源的「系统夜间」限定符。
         // 系统深色 + 输入法浅色时文字仍是白色 → 白底白字。这里按实际底色亮度纠偏。
         applyTextContrast(body, isDarkColor(base));
