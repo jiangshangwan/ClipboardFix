@@ -139,7 +139,6 @@ public class AboutActivity extends ComponentActivity {
     private static int sLastTab = 0;
 
     // 模块启用状态（通过 libxposed:service 实时查询 LSPosed）
-    private static final String MODULE_PKG = "com.clipboardfix";
     private final Handler mStatusHandler = new Handler(Looper.getMainLooper());
 
     // ---- 状态卡「连续点击 10 次」隐藏/显示标识 ----
@@ -1053,22 +1052,13 @@ public class AboutActivity extends ComponentActivity {
         }
     }
 
-    // ---------------- 弹卡：模块状态（更新说明） ----------------
-    private void showStatusSheet() {
-        float density = getResources().getDisplayMetrics().density;
-        TextView tv = new TextView(this);
-        tv.setText(getString(R.string.sheet_status_body));
-        tv.setTextColor(getColor(R.color.text_primary));
-        tv.setTextSize(15f);
-        tv.setLineSpacing(6 * density, 1f);
-        tv.setPadding(0, (int) (4 * density), 0, 0);
-        BottomSheet.show(this, getString(R.string.sheet_status_title), tv, true, null, null);
-    }
 
     // ---------------- 弹卡：更新日志（最近几版） ----------------
     private void showChangelog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(BottomSheet.buildVersionBlock(this, "V2.0.4",
+                getString(R.string.changelog_v204)));
         content.addView(BottomSheet.buildVersionBlock(this, "V2.0.3",
                 getString(R.string.changelog_v203)));
         content.addView(BottomSheet.buildVersionBlock(this, "V2.0.2",

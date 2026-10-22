@@ -1967,23 +1967,6 @@ public final class ClipboardPinHook {
         return null;
     }
 
-    /** 删除按钮是否已露出（打开态）。读不到方法时退回主视图位移判断。
-     *
-     * <p>注意：MIUI 版 {@code isOpened()} 实测恒返回 false（见 code 84 实机 bug），
-     * 手势状态机已改用主视图 translationX 符号判断，本方法仅作工具保留。 */
-    private static boolean isOpened(Object swipe) {
-        try {
-            Object r = Reflect.callMethod(swipe, "isOpened");
-            if (r instanceof Boolean) {
-                return (Boolean) r;
-            }
-        } catch (Throwable ignored) {
-            // 方法不存在，走位移兜底
-        }
-        View main = mainViewOf(swipe);
-        return main != null && Math.abs(main.getTranslationX()) > 1f;
-    }
-
     private static float slopOf(View v) {
         try {
             return android.view.ViewConfiguration.get(v.getContext()).getScaledTouchSlop();
@@ -2343,16 +2326,31 @@ public final class ClipboardPinHook {
      * ContentResolver 的 callingPackage 都应归属当前输入法进程，故优先取
      * {@code ActivityThread.currentApplication()}；取不到再退回面板 context 兜底。
      */
-    private static Context ctxOf() {
-        // ActivityThread 是 @hide 类，只能反射取当前 Application
+    private static final Class<?> AT_CLASS;
+    private static final Method AT_CURRENT_APP;
+    static {
+        Class<?> c = null;
+        Method m = null;
         try {
-            Class<?> at = Class.forName("android.app.ActivityThread");
-            Object app = at.getMethod("currentApplication").invoke(null);
-            if (app instanceof Context) {
-                return (Context) app;
-            }
+            c = Class.forName("android.app.ActivityThread");
+            m = c.getMethod("currentApplication");
         } catch (Throwable ignored) {
             // ActivityThread 不可用，走兜底
+        }
+        AT_CLASS = c;
+        AT_CURRENT_APP = m;
+    }
+
+    private static Context ctxOf() {
+        if (AT_CURRENT_APP != null) {
+            try {
+                Object app = AT_CURRENT_APP.invoke(null);
+                if (app instanceof Context) {
+                    return (Context) app;
+                }
+            } catch (Throwable ignored) {
+                // ActivityThread 不可用，走兜底
+            }
         }
         return sImeCtxRef.get();
     }
@@ -2390,16 +2388,23 @@ public final class ClipboardPinHook {
         return null;
     }
 
+    private static final java.util.Map<ClassLoader, Class<?>> sRvCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     private static boolean isRecyclerView(Object o) {
         if (o == null) {
             return false;
         }
-        try {
-            Class<?> c = Class.forName(RECYCLER_VIEW, false, o.getClass().getClassLoader());
-            return c.isInstance(o);
-        } catch (Throwable t) {
-            return false;
+        ClassLoader cl = o.getClass().getClassLoader();
+        Class<?> c = sRvCache.get(cl);
+        if (c == null) {
+            try {
+                c = Class.forName(RECYCLER_VIEW, false, cl);
+                sRvCache.put(cl, c);
+            } catch (Throwable t) {
+                return false;
+            }
         }
+        return c.isInstance(o);
     }
 
     /** 深度优先找视图树里第一个 RecyclerView（面板内容容器内的列表）。 */

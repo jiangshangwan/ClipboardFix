@@ -739,11 +739,15 @@ public final class PanelColorHook {
         return Color.TRANSPARENT;
     }
 
+    /** 相对亮度（Rec.601 加权，0~255）：{@code (r*299 + g*587 + b*114)/1000}。 */
+    private static int relativeLuminance(int color) {
+        return (Color.red(color) * 299 + Color.green(color) * 587
+                + Color.blue(color) * 114) / 1000;
+    }
+
     /** 颜色是否偏暗（感知亮度 &lt; 128）：系统合成色够暗才配当作深色模式的底。 */
     private static boolean isDarkColor(int color) {
-        int lum = (Color.red(color) * 299 + Color.green(color) * 587
-                + Color.blue(color) * 114) / 1000;
-        return lum < 128;
+        return relativeLuminance(color) < 128;
     }
 
     /**
@@ -982,7 +986,7 @@ public final class PanelColorHook {
         if (max - min > 20) {
             return false;
         }
-        int lum = (r * 299 + g * 587 + b * 114) / 1000;
+        int lum = relativeLuminance(Color.rgb(r, g, b));
         return lum >= 200;
     }
 
@@ -1003,7 +1007,7 @@ public final class PanelColorHook {
         if (max - min > 20) {
             return false;
         }
-        int lum = (r * 299 + g * 587 + b * 114) / 1000;
+        int lum = relativeLuminance(Color.rgb(r, g, b));
         return lum >= 200;
     }
 
@@ -1240,7 +1244,7 @@ public final class PanelColorHook {
         if (max - min > 24) {
             return false; // 彩色文字（链接/强调）不动
         }
-        int lum = (r * 299 + g * 587 + b * 114) / 1000;
+        int lum = relativeLuminance(Color.rgb(r, g, b));
         return dark ? lum <= 90 : lum >= 200;
     }
 

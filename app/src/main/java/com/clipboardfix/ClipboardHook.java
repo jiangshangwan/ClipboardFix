@@ -182,27 +182,10 @@ public final class ClipboardHook {
                     return chain.proceed();
                 }
                 PackageManager pm = (PackageManager) chain.getThisObject();
-                Bypass.begin();
-                try {
-                    // 诊断：真实签名查询到底返回什么
-                    try {
-                        android.content.pm.PackageInfo real = pm.getPackageInfo(name, flags);
-                        if (real == null) {
-                            log("sig lookup: " + name + " -> null PackageInfo");
-                        } else if (real.signatures == null || real.signatures.length == 0) {
-                            log("sig lookup: " + name + " -> no signatures");
-                        } else {
-                            StringBuilder sb = new StringBuilder();
-                            for (android.content.pm.Signature s : real.signatures) {
-                                sb.append(' ').append(sha1Hex(s));
-                            }
-                            log("sig lookup: " + name + " ->" + sb);
-                        }
-                    } catch (Throwable t) {
-                        log("sig lookup: " + name + " threw " + t);
-                    }
-                    // 换白名单证书（com.xiaomi.type 的 MIUI 平台证书）
-                    try {
+        Bypass.begin();
+        try {
+            // 换白名单证书（com.xiaomi.type 的 MIUI 平台证书）
+            try {
                         android.content.pm.PackageInfo mi =
                                 pm.getPackageInfo(ALLOWED_PACKAGES[1], flags);
                         if (mi != null && mi.signatures != null && mi.signatures.length > 0) {

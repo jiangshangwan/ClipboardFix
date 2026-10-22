@@ -234,8 +234,8 @@ public final class BottomSheet {
                 int p = Math.max(0, Math.min(100, percent));
                 tvPercent.setText(total > 0 ? (p + "%") : "…");
                 tvBytes.setText(total > 0
-                        ? formatMb(read) + " / " + formatMb(total)
-                        : "已下载 " + formatMb(read));
+                        ? BottomSheet.formatMb(read) + " / " + BottomSheet.formatMb(total)
+                        : "已下载 " + BottomSheet.formatMb(read));
                 setWeight(fill, p);
                 setWeight(spacer, 100 - p);
             });
@@ -276,10 +276,11 @@ public final class BottomSheet {
                 v.setLayoutParams(lp);
             }
         }
+    }
 
-        private static String formatMb(long bytes) {
-            return String.format(Locale.US, "%.2f MB", bytes / 1048576.0);
-        }
+    /** 字节数格式化为 MB（两位小数），供进度弹卡与更新检查共用。 */
+    public static String formatMb(long bytes) {
+        return String.format(Locale.US, "%.2f MB", bytes / 1048576.0);
     }
 
     /**

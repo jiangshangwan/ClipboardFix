@@ -2,7 +2,6 @@ package com.clipboardfix;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.ProgressDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
@@ -157,11 +156,6 @@ public class UpdateChecker {
         }
 
     private void downloadAndInstall(ReleaseInfo release) {
-        // 兜底：理论上 UpdateChecker 仅由 Activity 构造；非 Activity 上下文仍用系统弹窗
-        if (!(context instanceof Activity)) {
-            legacyDownloadAndInstall(release);
-            return;
-        }
         final Activity activity = (Activity) context;
         final CancelToken token = new CancelToken();
         final BottomSheet.ProgressSheet sheet = BottomSheet.showProgress(
@@ -178,7 +172,7 @@ public class UpdateChecker {
                 downloadFile(release.downloadUrl, apkFile, token, (read, total) -> {
                     if (total > 0 && !sizeKnown[0]) {
                         sizeKnown[0] = true;
-                        sheet.setSubTitle("HyperClipFix " + release.tagName + " · 共 " + formatMb(total));
+                        sheet.setSubTitle("HyperClipFix " + release.tagName + " · 共 " + BottomSheet.formatMb(total));
                     }
                     sheet.setProgress(total > 0 ? (int) (read * 100 / total) : 0, read, total);
                 });
@@ -205,35 +199,6 @@ public class UpdateChecker {
         }, "cf-apk-download").start();
     }
 
-    /** 非 Activity 上下文的兜底下载（保留系统 ProgressDialog）。 */
-    private void legacyDownloadAndInstall(ReleaseInfo release) {
-        final ProgressDialog dialog = new ProgressDialog(context);
-        dialog.setMessage(context.getString(R.string.uc_downloading));
-        dialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
-        dialog.setMax(100);
-        dialog.setCancelable(false);
-        dialog.show();
-
-        new Thread(() -> {
-            try {
-                File apkFile = new File(context.getCacheDir(), "clipboardfix_update.apk");
-                downloadFile(release.downloadUrl, apkFile, new CancelToken(), (read, total) ->
-                        handler.post(() -> {
-                            if (total > 0) dialog.setProgress((int) (read * 100 / total));
-                        }));
-                handler.post(() -> {
-                    dialog.dismiss();
-                    installApk(apkFile);
-                });
-            } catch (Exception e) {
-                android.util.Log.e("ClipboardFix", "legacyDownloadAndInstall failed", e);
-                handler.post(() -> {
-                    dialog.dismiss();
-                    showMessage(context.getString(R.string.uc_download_fail) + e.getClass().getSimpleName() + ": " + e.getMessage());
-                });
-            }
-        }, "cf-apk-download").start();
-    }
 
     /** 下载取消令牌：标志位 + 连接引用（取消时 disconnect 让读循环立刻抛错退出）。 */
     private static final class CancelToken {
@@ -293,9 +258,6 @@ public class UpdateChecker {
         conn.disconnect();
     }
 
-    private static String formatMb(long bytes) {
-        return String.format(java.util.Locale.US, "%.2f MB", bytes / 1048576.0);
-    }
 
     private void installApk(File apkFile) {
         // Android 8+ 需要 REQUEST_INSTALL_PACKAGES 权限
@@ -484,18 +446,6 @@ public class UpdateChecker {
         return urls.isEmpty() ? null : urls.get(0);
     }
 
-    private String extractStringFromObjects(String arrayJson, String key) {
-        // 用 indexOf 替代正则，更可靠地从 JSON 对象数组中提取值
-        int keyIdx = arrayJson.indexOf("\"" + key + "\"");
-        if (keyIdx == -1) return null;
-        int colonIdx = arrayJson.indexOf(':', keyIdx + key.length() + 2);
-        if (colonIdx == -1) return null;
-        int startQuote = arrayJson.indexOf('"', colonIdx + 1);
-        if (startQuote == -1) return null;
-        int endQuote = arrayJson.indexOf('"', startQuote + 1);
-        if (endQuote == -1) return null;
-        return arrayJson.substring(startQuote + 1, endQuote);
-    }
 
     /** 剥离 markdown 标记（AlertDialog 不支持渲染 markdown） */
     private String stripMarkdown(String text) {
