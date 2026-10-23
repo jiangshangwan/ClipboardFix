@@ -1,7 +1,10 @@
 package com.clipboardfix;
 
+import android.app.UiModeManager;
+import android.content.Context;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -75,8 +78,48 @@ public final class PanelColorHook {
      */
     private static final int BLUR_RADIUS = 60;
 
+    /**
+     * 模糊态（玻璃键盘）下浅色主题的条目磨砂底：40% 白。
+     *
+     * <p>phrase 原生日间值是 {@code #99FFFFFF}（60% 白），叠在亮背景上接近纯白块、
+     * 背后的系统模糊被完全挡住——用户 2026-10-23 反馈「条目背景太白，要再透再模糊」。
+     * 降到 40% 后模糊层次能透出来，同时保留足够的卡片可读性。
+     *
+     * <p>与 {@link #RGB_CARD_ON_LIGHT} 的区别：后者是<b>实色</b>分支补的底（补成不透明），
+     * 模糊态必须保持半透明磨砂，否则「透明模糊」观感被打回实色（用户 2026-10-23 反馈）。
+     */
+    private static final int RGB_CARD_ON_LIGHT_FROSTED = 0x66FFFFFF;
+
+    /** 模糊态下深色主题的条目磨砂底：phrase 原生夜间值 {@code #24FFFFFF}（14% 白）。 */
+    private static final int RGB_CARD_ON_DARK_FROSTED = 0x24FFFFFF;
+
+    /**
+     * 系统明暗轮询间隔。
+     *
+     * <p>HyperOS 没有可靠透给模块的 configuration 回调：phrase 弹窗视图的 context 是
+     * {@code createPhraseThemeContext} 充气时拷的快照，系统切换深浅色后它不更新；原生
+     * 刷新入口 {@code setPhraseBackgroundDarkTheme} 又只有 {@code showClipBoard} 一个
+     * 调用方。只能自己按间隔看一次（详见 {@link #startThemeWatch}）。
+     */
+    private static final long THEME_WATCH_MS = 250L;
+
     /** 当前显示的面板内容容器，供换色时同步刷新（面板消失即被回收）。 */
     private static volatile WeakReference<View> sPanelBodyRef = new WeakReference<>(null);
+
+    /**
+     * 当前显示的面板弹窗实例（弱引用）：系统深浅色切换时借它调 phrase 原生的
+     * {@code setPhraseBackgroundDarkTheme} 刷新入口（详见 {@link #refreshPhraseTheme}）。
+     */
+    private static volatile WeakReference<Object> sPopupRef = new WeakReference<>(null);
+
+    /** 最近一次观测到的<b>系统</b>深色模式，供轮询发现「切换了深浅色」。 */
+    private static volatile boolean sLastNight = false;
+
+    /** 模糊态下前景（磨砂卡片 / 文字 / 图标）正在跟随的系统明暗。 */
+    private static volatile boolean sBlurNight = false;
+
+    /** 系统明暗轮询是否在跑（面板不可见即自停，下次开面板由 {@link #startThemeWatch} 重启）。 */
+    private static volatile boolean sThemeWatch = false;
 
     /**
      * 面板当前是深色底还是浅色底（由实际背景亮度决定，不是系统 uiMode）。
@@ -126,16 +169,25 @@ public final class PanelColorHook {
     private static final int RGB_TEXT_ON_LIGHT = 0x001A1A1A;
 
     /**
-     * 浅色面板上的条目卡片实色底。
+     * 浅色<b>实色</b>面板上的条目卡片底（模块合成的近白实色）。
      *
-     * <p>卡片背景同样来自 phrase 资源的 {@code -night} 限定：夜间是半透明白（实测约 12%
-     * alpha），叠在本模块涂成浅色的面板底上只剩 {@code #E5E6EA}，与底色 {@code #E1E2E6}
-     * 几乎无差，条目看起来"糊在背景里"；日间实色底实测为 {@code #F3F3F5}。
+     * <p>卡片背景同样来自 phrase 资源的 {@code -night} 限定：日间原生是 60% 白磨砂
+     * {@code #99FFFFFF}（见 {@link #RGB_CARD_ON_LIGHT_FROSTED}）、夜间是半透明白
+     * （实测约 12% alpha），叠在本模块涂成浅色的面板底上只剩 {@code #E5E6EA}，与底色
+     * {@code #E1E2E6} 几乎无差，条目看起来"糊在背景里"；实色分支下无法保留磨砂
+     * （那正是模糊分支的职责），故合成一个不透明近白色把卡片"提"出来。
      */
     private static final int RGB_CARD_ON_LIGHT = 0xFFF3F3F5;
 
-    /** 已补过底的视图（按视图 + 背景实例记账，避免每帧重复处理）。 */
-    private static final java.util.WeakHashMap<View, Drawable> sCardOurs =
+    /**
+     * 本模块重涂过的卡片背景 drawable → 写入的颜色。
+     *
+     * <p>键用 <b>drawable 实例</b>而非视图：RecyclerView 复用同一个条目 View，但 adapter
+     * 每次 bind 都会 {@code setBackground} 一个新 drawable 实例——按视图记账会漏涂新
+     * drawable，按 drawable 记账才能既幂等（同实例同色跳过）又覆盖新实例；主题切换时
+     * 目标色一变也自然重涂。drawable 被回收即自动清理。
+     */
+    private static final java.util.WeakHashMap<Drawable, Integer> sCardOurs =
             new java.util.WeakHashMap<>();
 
     /** 当前正在上色的面板根容器（根背景由 {@link #applyPanelBackground} 负责，不参与补底）。 */
@@ -194,6 +246,25 @@ public final class PanelColorHook {
      * {@link #phraseThemeOverride}。
      */
     private static volatile int sAppliedPanelColor = -1;
+
+    /**
+     * 面板当前是否处于「模糊背景」状态（底部栏被第三方强改成全透明时的分支）。
+     *
+     * <p><b>为什么需要这个标志</b>：模糊分支只负责给面板套系统高斯模糊，前景（文字/图标/
+     * 条目卡片）必须全部交还原生——phrase 自带的卡片资源就是为模糊态设计的磨砂
+     * （浅色 {@code #99FFFFFF} / 深色 {@code #24FFFFFF}，见
+     * {@code input_method_clipboard_phrase_item_bg}），任何补底或明暗纠偏都会把
+     * 「透明模糊」打回实色（用户 2026-10-23 反馈：深浅色下条目与面板背景均失去透明模糊）。
+     *
+     * <p>实色分支（面板被涂成不透明底色）才需要纠偏：那时夜间半透明白卡片会与浅色实底
+     * 糊成一片、系统夜间文字会白底白字，二者都以「面板有实色底」为前提，模糊态下前提
+     * 不成立（面板观感由裸模糊决定，没有可判明暗的实色底）。
+     *
+     * <p>该标志同时把 pre-draw 守卫回调分流到 {@link #blurWalk}（面板从实色切回模糊时，
+     * 旧监听器仍会每帧回调 {@link #contrastWalk}）：平时什么都不做，唯独在系统切换过
+     * 深浅色后按当前主题重涂磨砂卡片与文字（见 {@link #applyBlurForeground}）。
+     */
+    private static volatile boolean sBlurPanel = false;
 
     private PanelColorHook() {
     }
@@ -597,7 +668,9 @@ public final class PanelColorHook {
                         return;
                     }
                     sPanelBodyRef = new WeakReference<>(body);
+                    sPopupRef = new WeakReference<>(pw);
                     captureFallback(body);
+                    startThemeWatch(body);
 
                     int color = barColor(sBarBgColor);
                     if (color == -1) {
@@ -614,6 +687,169 @@ public final class PanelColorHook {
             }
         };
         new Handler(Looper.getMainLooper()).postDelayed(attempt, 50L);
+    }
+
+    /**
+     * 系统实时深色模式（多源，任一源给出确定答案即返回）。
+     *
+     * <p><b>为什么不能读面板视图自己的 configuration</b>：面板视图的 context 来自
+     * {@code createPhraseThemeContext(type)}——它在充气时把 Configuration 拷了一份快照
+     * （type 为 1/2 时固定日/夜，为 3 时拷当时的系统值），此后系统再切换深浅色，
+     * 这份快照也不会更新。实测（2026-10-23 真机）：系统切到深色后 {@link #isNight} 仍报
+     * 浅色，磨砂卡片与文字因此停在旧主题——这正是「切换后不跟随」的直接原因。
+     *
+     * <p><b>为什么不用 hook configuration 回调</b>：HyperOS 没有可靠透给模块的
+     * configuration 回调（弹窗挂在独立 ViewRootImpl 上，{@code View.onConfigurationChanged}
+     * 未必被分发），只能自己看（见 {@link #startThemeWatch}）。
+     */
+    private static boolean isSystemNight(View body) {
+        // ① UiModeManager：Binder 直读系统服务，永远实时——设置里手动切的深浅色开关就是它。
+        try {
+            UiModeManager umm = body.getContext().getSystemService(UiModeManager.class);
+            if (umm != null) {
+                int mode = umm.getNightMode();
+                if (mode == UiModeManager.MODE_NIGHT_YES) {
+                    return true;
+                }
+                if (mode == UiModeManager.MODE_NIGHT_NO) {
+                    return false;
+                }
+                // AUTO / CUSTOM（按时间或就寝时间自动切换）：落到下面按 configuration 判。
+            }
+        } catch (Throwable ignored) {
+            // 服务异常，试下一个源
+        }
+        // ② Application 级 resources（InputMethodService 的 Application，其 configuration
+        //    随进程级 configuration 变化更新）。
+        try {
+            Context ctx = body.getContext().getApplicationContext();
+            Configuration cfg = ctx.getResources().getConfiguration();
+            return (cfg.uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                    == Configuration.UI_MODE_NIGHT_YES;
+        } catch (Throwable ignored) {
+            // context 被多层 wrapper 包住时兜底试系统资源
+        }
+        try {
+            Configuration cfg = Resources.getSystem().getConfiguration();
+            return (cfg.uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                    == Configuration.UI_MODE_NIGHT_YES;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * 启动系统明暗轮询：解决「切换深浅色后模糊条目和字体颜色不立即跟随、要关掉剪贴板
+     * 重开才正常」（用户 2026-10-23 反馈）。
+     *
+     * <p><b>根因</b>：模糊态（玻璃键盘）下面板视图的 context 是
+     * {@code createPhraseThemeContext} 的快照，系统切换深浅色后不更新；而 phrase 唯一的
+     * 主题刷新入口 {@code setPhraseBackgroundDarkTheme} 只被
+     * {@code InputMethodBottomManager.showClipBoard} 调用（开面板时），切换时无人重解析，
+     * PopupWindow 视图也不会随配置变化重建。
+     *
+     * <p><b>为什么用轮询而不是 hook</b>：HyperOS 没有可靠透给模块的 configuration
+     * 回调（弹窗挂在独立 ViewRootImpl 上，{@code View.onConfigurationChanged} 未必被
+     * 分发），而 250ms 自看一次 configuration 的代价可以忽略。面板不可见即自停。
+     */
+    private static void startThemeWatch(View body) {
+        sLastNight = isSystemNight(body);
+        if (sThemeWatch) {
+            return;
+        }
+        sThemeWatch = true;
+        final Runnable watch = new Runnable() {
+            int beat = 0;
+
+            @Override
+            public void run() {
+                View b = sPanelBodyRef.get();
+                if (b == null || !b.isAttachedToWindow()) {
+                    sThemeWatch = false;
+                    return;
+                }
+                try {
+                    boolean night = isSystemNight(b);
+                    if (night != sLastNight) {
+                        sLastNight = night;
+                        onThemeChanged(b);
+                    } else if (++beat % 20 == 0) {
+                        // 心跳：对比「系统实时」与「面板快照」，确认两个源都在跟踪
+                        log("theme watch alive: sysNight=" + night
+                                + " panelNight=" + isNight(b) + " blur=" + sBlurPanel);
+                    }
+                } catch (Throwable t) {
+                    log("theme watch error - " + t);
+                }
+                if (sThemeWatch) {
+                    new Handler(Looper.getMainLooper()).postDelayed(this, THEME_WATCH_MS);
+                }
+            }
+        };
+        new Handler(Looper.getMainLooper()).postDelayed(watch, THEME_WATCH_MS);
+    }
+
+    /**
+     * 系统深浅色切换后的面板刷新（只处理<b>模糊态</b>）。
+     *
+     * <p><b>为什么不碰实色态</b>：实色态下面板 context 被 {@link #phraseThemeOverride}
+     * 固定成「跟随输入法底栏」，条目磨砂、文字、图标一整套资源都按输入法主题解析，本就与
+     * 系统 uiMode 无关，系统切换不破坏任何东西；文字纠偏也只看实际底色亮度。真正会坏的是
+     * 模糊态——它的 context 是系统主题快照，切换后整套资源停在旧主题上。
+     *
+     * <p>实色态也不能顺手调原生刷新：{@code refreshPhraseThemeView} 会把 insideView 背景
+     * 重置成 phrase 原生资源，而实色态的底色是本模块涂上去的，重置后不重涂就会掉回原生色。
+     *
+     * <p><b>实测踩坑（2026-10-23 真机）</b>：切换深浅色瞬间输入法常把面板刷成实色态
+     * （{@code setBottomColor} 重发），本方法曾在此静默早退，而 {@code sLastNight} 已更新；
+     * 等面板回模糊态时轮询认为「无变化」不再触发，内容就停在旧主题。现在早退也打日志，
+     * 且模糊分支本身已改用 {@link #isSystemNight}，回模糊态时自然是新主题。
+     */
+    private static void onThemeChanged(View body) {
+        boolean night = isSystemNight(body);
+        log("ui mode changed -> " + (night ? "night" : "day") + ", refreshing panel");
+        if (!sBlurPanel) {
+            log("theme refresh skipped: panel currently solid");
+            return;
+        }
+        refreshPhraseTheme(night);
+        // 先按新主题把前景（磨砂卡片 / 文字 / 图标）翻过来，再重施面板背景：
+        // 即便底栏色此刻丢失（barColor==-1，applyPanelBackground 会 skip），前景也已刷新。
+        applyBlurForeground(body, night);
+        applyPanelBackground(body, barColor(sBarBgColor));
+    }
+
+    /**
+     * 调 phrase 原生的主题刷新入口 {@code setPhraseBackgroundDarkTheme(int type, int arg2)}，
+     * 让它自己重刷能刷的部分（insideView 背景、导航条 colorMode、空视图文字色、三个
+     * adapter {@code notifyDataSetChanged}、RecyclerView 重排）。
+     *
+     * <p>{@code type} 传 {@code night ? 2 : 1}（1=日 / 2=夜），即跟随<b>系统</b>——正是
+     * 用户诉求；模糊态下 {@link #phraseThemeOverride} 返回 -1 不干预，type 原样生效。
+     * {@code arg2} 传 2：原生只在 {@code arg2 != 2} 时把 insideView 背景 setAlpha(0)，
+     * 而模块随后会整体替换背景，没必要让它先抹成透明。
+     *
+     * <p>方法名/签名随 phrase 版本可能变化，一律 try/catch 降级：刷不了只打日志，
+     * 前景由本模块的 {@link #blurWalk} 兜底。
+     */
+    private static void refreshPhraseTheme(boolean night) {
+        Object pw = sPopupRef.get();
+        if (pw == null) {
+            return;
+        }
+        try {
+            Method m = findMethodInHierarchy(pw.getClass(),
+                    "setPhraseBackgroundDarkTheme", int.class, int.class);
+            if (m == null) {
+                log("phrase refresh: setPhraseBackgroundDarkTheme not found");
+                return;
+            }
+            m.setAccessible(true);
+            m.invoke(pw, night ? 2 : 1, 2);
+            log("phrase refresh invoked, type=" + (night ? 2 : 1));
+        } catch (Throwable t) {
+            log("phrase refresh failed - " + t);
+        }
     }
 
     /**
@@ -680,22 +916,32 @@ public final class PanelColorHook {
      * </ul>
      */
     private static void applyPanelBackground(View body, int bottomColor) {
-        boolean night = isNight(body);
         if (bottomColor == -1) {
             // 取色尚未就绪（输入法刚起），不是「被强改透明」：保持面板原样，等下次同步。
             log("skip: bottom color unknown");
             return;
         }
         if (Color.alpha(bottomColor) == 0) {
-            // 底部栏被第三方美化模块强改成全透明 → 改用「系统高斯模糊 + 半透明底色」，
-            // 与该模块的玻璃键盘观感一致；模糊不可用时再退回不透明实色。
-            if (applyBlurPanel(body, night)) {
-                // 观感由裸模糊决定，没有可判明暗的实色底 → 主题纠偏保持不干预。
+            // 模糊态跟随<b>系统实时</b>主题：面板 context 是 createPhraseThemeContext 的快照，
+            // 系统切换深浅色后 isNight(body) 已过期（真机实测：切深色后仍报 light，磨砂卡与
+            // 文字停在旧主题，用户 2026-10-23 反馈「切换后不跟随」）。而 phrase 的磨砂卡片、
+            // 文字、图标一整套资源本来就是按<b>系统</b>主题为模糊态设计的，半透明合成色也来自
+            // 系统下发——所以模糊分支的明暗一律以 isSystemNight 为准。
+            boolean sysNight = isSystemNight(body);
+            if (applyBlurPanel(body, sysNight)) {
+                // 模糊态：面板观感由裸模糊决定，没有可判明暗的实色底 → 主题纠偏保持不干预；
+                // 前景（磨砂卡片 / 系统主题文字）全部交还原生，补底与纠偏一律不执行
+                // （见 sBlurPanel 注释）。
+                sBlurPanel = true;
                 sAppliedPanelColor = -1;
+                applyBlurForeground(body, sysNight);
                 return;
             }
         }
-        int base = ensureOpaque(bottomColor, night);
+        sBlurPanel = false;
+        // 实色态的兜底色取面板自身 context 的主题（= 被 phraseThemeOverride 固定的输入法
+        // 主题，与系统 uiMode 无关）。
+        int base = ensureOpaque(bottomColor, isNight(body));
         tint(body, base);
         // 面板主题（Tab 选中胶囊 / 导航条底色）跟随输入法底栏，而不是系统 uiMode。
         sAppliedPanelColor = base;
@@ -755,6 +1001,14 @@ public final class PanelColorHook {
      * 生成的真实背景模糊；仅当 {@link #barLikeTint} 给出非透明底色（系统下发的深色合成色）时
      * 才在上层补一层半透明底，否则保持与功能区一致的裸模糊；圆角沿用面板自身的圆角。
      *
+     * <p><b>只做模糊、不碰前景</b>：条目卡片的磨砂底与文字色都是 phrase 为模糊态设计的原配
+     * （磨砂卡片浅色 {@code #99FFFFFF} / 深色 {@code #24FFFFFF}，文字跟随<b>系统</b>主题）。
+     * 早期版本在此调用 {@code applyTextContrast}，用底栏内容色推断面板明暗——但模糊态面板
+     * 呈现的是背后壁纸而非底栏色，该推断不成立：实测把原生深色文字翻成白色、压在浅色磨砂
+     * 卡片上直接白字（用户 2026-10-23 反馈），且条目补底还会把磨砂卡片涂成不透明实色。
+     * 故模糊分支的前景一律保持原生，由 sBlurPanel 标志保证（含抑制实色分支遗留的
+     * pre-draw 守卫）。
+     *
      * @return true 表示模糊已应用；false 表示不支持，调用方应退回实色。
      */
     private static boolean applyBlurPanel(View body, boolean night) {
@@ -778,25 +1032,29 @@ public final class PanelColorHook {
         }
         body.setBackground(bg);
         body.invalidate();
-        // 玻璃面板下文字同样可能处于错误的明暗侧（系统深色 + 输入法浅色）：
-        // 底栏内容色（content）本身跟随输入法主题，用它判断更准，取不到再退回系统 uiMode。
-        applyTextContrast(body, panelDarkFromContent(night));
         log("blur applied: radius=" + BLUR_RADIUS + " corner=" + radius
                 + " tint=" + hex(tint) + (night ? " (dark)" : " (light)"));
         return true;
     }
 
     /**
-     * 深色主题判定：优先用底栏下发的「内容色」——它跟着输入法主题走
-     * （深色主题内容色偏亮，浅色主题偏暗），比系统 {@code uiMode} 更贴合实际观感。
-     * 内容色未就绪时退回系统 uiMode。
+     * 模糊态的前景跟随：条目磨砂底、文字、图标全部按<b>系统</b>明暗重判。
+     *
+     * <p>模糊分支不碰前景的「原生」有两个例外，都只发生在<b>系统切换深浅色</b>时——
+     * 此时面板 context 的快照停在旧主题，原生资源已不代表当前系统观感：
+     * <ul>
+     *   <li>条目卡片：把旧主题那层磨砂白重涂成当前主题的值（深 {@code #24FFFFFF} /
+     *       浅 {@code #99FFFFFF}，即 phrase 原生 {@code -night} 两个值）；</li>
+     *   <li>文字/图标：按当前系统明暗翻到可读的一侧（深色系统白字、浅色系统深字）。</li>
+     * </ul>
+     *
+     * <p>pre-draw 守卫照旧接管 RecyclerView 后续回收复用的新条目（守卫在实色分支也可能
+     * 已挂上，{@link #contrastWalk} 的早退会分流到 {@link #blurWalk}）。
      */
-    private static boolean panelDarkFromContent(boolean night) {
-        int c = sBarContentColor;
-        if (c != -1 && Color.alpha(c) > 0) {
-            return !isDarkColor(c);
-        }
-        return night;
+    private static void applyBlurForeground(View body, boolean night) {
+        sBlurNight = night;
+        ensureContrastWatched(body);
+        contrastWalk(body, night);
     }
 
     /**
@@ -846,28 +1104,23 @@ public final class PanelColorHook {
     }
 
     private static void contrastWalk(View v, boolean dark) {
+        // 模糊态下前景交还原生（磨砂卡片与系统主题文字是 phrase 为模糊面板设计的原配，
+        // 补底/纠偏都会破坏「透明模糊」观感，用户 2026-10-23 反馈）；但系统切换过深浅色时
+        // 这套「原配」已停在旧主题，由 blurWalk 按当前系统明暗重涂。该提前返回同时覆盖
+        // 实色分支遗留的 pre-draw 监听器（面板切回模糊后仍会每帧回调本方法）。
+        if (sBlurPanel) {
+            blurWalk(v, sBlurNight);
+            return;
+        }
         if (v instanceof TextView) {
-            TextView tv = (TextView) v;
-            int cur = tv.getCurrentTextColor();
-            Integer prev = sContrastApplied.get(tv);
-            boolean ours = prev != null && prev.intValue() == cur;
-            if (!ours && needsFlip(cur, dark)) {
-                int target = flipTextColor(cur, dark);
-                tv.setTextColor(target);
-                sContrastApplied.put(tv, target);
-                if (sContrastLogLeft > 0) {
-                    sContrastLogLeft--;
-                    log("contrast flip " + hex(cur) + " -> " + hex(target)
-                            + (dark ? " (dark bg)" : " (light bg)"));
-                }
-            }
+            flipText((TextView) v, dark);
         }
         if (v instanceof ImageView) {
             contrastIcon((ImageView) v, dark);
         }
         // 浅色面板上补条目卡片底：夜间半透明白叠在浅底上会与底色糊成一片
         if (!dark) {
-            guardCardBackground(v);
+            guardCardBackground(v, RGB_CARD_ON_LIGHT, true);
         }
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
@@ -878,19 +1131,88 @@ public final class PanelColorHook {
     }
 
     /**
-     * 条目卡片补底（深色系统 + 浅色输入法场景）。
-     *
-     * <p>面板文字、图标和卡片背景都来自 phrase 资源的 {@code -night} 限定，跟随<b>系统</b>
-     * uiMode；而面板底色被本模块改成跟随<b>输入法主题</b>。系统深色 + 输入法浅色时，
-     * 卡片背景仍是夜间那层半透明白（实测约 12% alpha），叠在浅底上得到 {@code #E5E6EA}，
-     * 与面板底 {@code #E1E2E6} 几乎同色，条目失去卡片感（用户 2026-10-20 反馈）。
-     *
-     * <p>安全边界：只处理「白系 + 半透明」的背景图层，补成日间实色
-     * {@link #RGB_CARD_ON_LIGHT}，圆角、描边、阴影层保持原 drawable 不动；实色背景
-     * （含首页 Tab 选中胶囊）和彩色背景一律不碰；面板根容器由
-     * {@link #applyPanelBackground} 单独负责，这里跳过。
+     * 模糊态的前景遍历（只在 {@link #applyBlurForeground} 与 pre-draw 守卫里走到）：
+     * 文字/图标按系统明暗翻转，条目卡片按当前主题的磨砂值重涂——见
+     * {@link #applyBlurForeground} 的说明。
      */
-    private static void guardCardBackground(View v) {
+    private static void blurWalk(View v, boolean night) {
+        if (v instanceof TextView) {
+            flipText((TextView) v, night);
+        }
+        if (v instanceof ImageView) {
+            contrastIcon((ImageView) v, night);
+        }
+        // 磨砂卡片：主题切换后旧视图里还挂着旧主题那层白，按当前主题重涂
+        // （深 14% 白 / 浅 60% 白，即 phrase 原生 -night 两个值；保持半透明，不补实色）。
+        guardCardBackground(v, night ? RGB_CARD_ON_DARK_FROSTED : RGB_CARD_ON_LIGHT_FROSTED,
+                false);
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                blurWalk(g.getChildAt(i), night);
+            }
+        }
+    }
+
+    /**
+     * 文字按目标明暗翻转。
+     *
+     * <p>本模块上次写进去的颜色（{@link #sContrastApplied} 记账且未被别人重设）也要按
+     * 当前目标重判：否则「切换深浅色后旧文字停在旧主题」（用户 2026-10-23 反馈）。
+     * 被别人重设过的（adapter rebind）当作新文字重新判，命中才翻。
+     */
+    private static void flipText(TextView tv, boolean dark) {
+        int cur = tv.getCurrentTextColor();
+        Integer prev = sContrastApplied.get(tv);
+        boolean ours = prev != null && prev.intValue() == cur;
+        if (ours) {
+            int target = flipTextColor(cur, dark);
+            if (target == cur) {
+                return;
+            }
+            tv.setTextColor(target);
+            sContrastApplied.put(tv, target);
+            logFlip(cur, target, dark);
+            return;
+        }
+        if (needsFlip(cur, dark)) {
+            int target = flipTextColor(cur, dark);
+            tv.setTextColor(target);
+            sContrastApplied.put(tv, target);
+            logFlip(cur, target, dark);
+        }
+    }
+
+    /** 翻转日志限流（每次面板上色重置计数）。 */
+    private static void logFlip(int cur, int target, boolean dark) {
+        if (sContrastLogLeft > 0) {
+            sContrastLogLeft--;
+            log("contrast flip " + hex(cur) + " -> " + hex(target)
+                    + (dark ? " (dark bg)" : " (light bg)"));
+        }
+    }
+
+    /**
+     * 条目卡片背景重涂。
+     *
+     * <p>实色分支（深色系统 + 浅色输入法场景）：面板文字、图标和卡片背景都来自 phrase 资源的
+     * {@code -night} 限定，跟随<b>系统</b> uiMode；而面板底色被本模块改成跟随
+     * <b>输入法主题</b>。系统深色 + 输入法浅色时，卡片背景仍是夜间那层半透明白（实测约
+     * 12% alpha），叠在浅底上得到 {@code #E5E6EA}，与面板底 {@code #E1E2E6} 几乎同色，
+     * 条目失去卡片感（用户 2026-10-20 反馈）——此时补成日间实色 {@link #RGB_CARD_ON_LIGHT}。
+     *
+     * <p>模糊分支（玻璃键盘）：面板观感由裸模糊决定，补实色会打破「透明模糊」
+     * （用户 2026-10-23 反馈），改为按<b>系统</b>明暗涂对应的半透明磨砂值
+     * （{@link #RGB_CARD_ON_DARK_FROSTED} / {@link #RGB_CARD_ON_LIGHT_FROSTED}），
+     * 透明度原样保留。
+     *
+     * <p>安全边界：只处理「白系 + 半透明」的背景图层；实色背景（含首页 Tab 选中胶囊）
+     * 和彩色背景一律不碰；面板根容器由 {@link #applyPanelBackground} 单独负责，这里跳过。
+     *
+     * @param target 目标色（实色分支传不透明值，模糊分支传磨砂值）
+     * @param opaque 是否顺手把 drawable 整体 alpha 拉满（仅实色分支需要）
+     */
+    private static void guardCardBackground(View v, int target, boolean opaque) {
         if (v == sCurrentBody) {
             return;
         }
@@ -898,32 +1220,35 @@ public final class PanelColorHook {
         if (bg == null) {
             return;
         }
-        if (sCardOurs.get(v) == bg) {
+        Integer ours = sCardOurs.get(bg);
+        if (ours != null && ours.intValue() == target) {
             return;
         }
-        if (recolorNightWhite(bg, RGB_CARD_ON_LIGHT)) {
-            sCardOurs.put(v, bg);
+        if (recolorNightWhite(bg, target, opaque)) {
+            sCardOurs.put(bg, target);
             if (sContrastLogLeft > 0) {
                 sContrastLogLeft--;
-                log("card bg " + viewName(v) + " -> " + hex(RGB_CARD_ON_LIGHT));
+                log("card bg " + viewName(v) + " -> " + hex(target));
             }
         }
     }
 
     /**
-     * 递归把「夜间半透明白」的图层改成指定实色，返回是否改动。
+     * 递归把「夜间半透明白」的图层改成指定颜色，返回是否改动。
      *
      * <p>逐层判断（{@link LayerDrawable} 常见于 MIUI 卡片：阴影层 + 实色层）。白系判定用
      * {@link #isWhiteish}（不约束 alpha），半透明判定再叠加 {@code Color.alpha(cur) < 240 ||
      * d.getAlpha() < 240}，从而同时覆盖「颜色自带低 alpha」与「纯白 drawable 整体 alpha 被压低」
      * 两种实现。深色阴影层、彩色描边、不透明实色层（含首页 Tab 选中胶囊）都原样保留。
+     *
+     * @param opaque 目标是不透明实色时把 drawable alpha 拉满；磨砂目标（模糊态）保留透明度
      */
-    private static boolean recolorNightWhite(Drawable d, int solid) {
+    private static boolean recolorNightWhite(Drawable d, int solid, boolean opaque) {
         // RippleDrawable 是 LayerDrawable 的子类，必须先判它，取静态底 content 层。
         if (d instanceof android.graphics.drawable.RippleDrawable) {
             Drawable content = rippleContent(d);
             if (content != null) {
-                return recolorNightWhite(content, solid);
+                return recolorNightWhite(content, solid, opaque);
             }
         }
         if (d instanceof LayerDrawable) {
@@ -931,7 +1256,7 @@ public final class PanelColorHook {
             boolean any = false;
             for (int i = 0; i < ld.getNumberOfLayers(); i++) {
                 Drawable layer = ld.getDrawable(i);
-                if (layer != null && recolorNightWhite(layer, solid)) {
+                if (layer != null && recolorNightWhite(layer, solid, opaque)) {
                     any = true;
                 }
             }
@@ -940,12 +1265,12 @@ public final class PanelColorHook {
         // 条目卡片背景实为 StateListDrawable（各个 pressed/normal 态），取当前生效子层再判。
         if (d instanceof android.graphics.drawable.StateListDrawable) {
             Drawable cur = stateListCurrent(d);
-            return cur != null && recolorNightWhite(cur, solid);
+            return cur != null && recolorNightWhite(cur, solid, opaque);
         }
         // InsetDrawable / ScaleDrawable 等包装层，拆开后同样只判内层实色。
         if (d instanceof android.graphics.drawable.DrawableWrapper) {
             Drawable inner = ((android.graphics.drawable.DrawableWrapper) d).getDrawable();
-            return inner != null && recolorNightWhite(inner, solid);
+            return inner != null && recolorNightWhite(inner, solid, opaque);
         }
         int cur = solidColorOf(d);
         if (!isWhiteish(cur)) {
@@ -958,12 +1283,16 @@ public final class PanelColorHook {
         }
         if (d instanceof GradientDrawable) {
             ((GradientDrawable) d).setColor(solid);
-            d.setAlpha(255);
+            if (opaque) {
+                d.setAlpha(255);
+            }
             return true;
         }
         if (d instanceof ColorDrawable) {
             ((ColorDrawable) d).setColor(solid);
-            d.setAlpha(255);
+            if (opaque) {
+                d.setAlpha(255);
+            }
             return true;
         }
         return false;
@@ -1502,9 +1831,9 @@ public final class PanelColorHook {
         return o instanceof Integer ? (Integer) o : -1;
     }
 
-    /** 颜色转 {@code #aarrggbb}；-1 显示为 {@code -1}。 */
+    /** 颜色转 {@code #aarrggbb}；-1 显示为 {@code -1}（0xFFFFFFFF 这类负值色正常显示十六进制）。 */
     private static String hex(int color) {
-        return color == -1 ? "-1" : String.format("#%08x", color);
+        return color == -1 ? "-1" : String.format("#%08x", color & 0xFFFFFFFFL);
     }
 
     /** 读取 drawable 的纯色（ColorDrawable / GradientDrawable）；读不到返回 0。 */
