@@ -12,7 +12,6 @@ import android.database.ContentObserver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
-import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -39,6 +38,10 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.ui.platform.ComposeView
 import com.clipboardfix.ui.AppConfig
 import com.clipboardfix.ui.BoolAction
+import com.clipboardfix.ui.GlassSheetAction
+import com.clipboardfix.ui.GlassSheetBridge
+import com.clipboardfix.ui.GlassSheetContent
+import com.clipboardfix.ui.GlassSheetRequest
 import com.clipboardfix.ui.IntAction
 import com.clipboardfix.ui.installPages
 import com.clipboardfix.ui.installWelcome
@@ -194,8 +197,7 @@ class AboutActivity : ComponentActivity() {
             Runnable { showChangelog() },
             Runnable { showDonateSheet() },
             Runnable { openUrl(TELEGRAM_URL) },
-            Runnable { showThanksSheet() },
-            Runnable { openUrl(MIUIX_URL) },
+            Runnable { openLicenses() },
             uiThemeMode, AppConfig.getLangMode(this), uiUpdateDisabled,
             IntAction { selectTheme(it) },
             IntAction { selectLanguage(it) },
@@ -898,175 +900,86 @@ class AboutActivity : ComponentActivity() {
     }
 
     // ---------------- 弹卡：更新日志（最近几版） ----------------
+    // 走柔光玻璃弹卡（GlassSheetBridge）：与功能页语言 / 主题下拉同一套玻璃材质与弹簧动画，
+    // 折射源是本页内容，故必须画在页面 Compose 覆盖层里而不是独立弹窗。
     private fun showChangelog() {
-        val content = LinearLayout(this)
-        content.orientation = LinearLayout.VERTICAL
-        content.addView(BottomSheet.buildVersionBlock(this, "V2.0.4", getString(R.string.changelog_v204)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V2.0.3", getString(R.string.changelog_v203)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V2.0.2", getString(R.string.changelog_v202)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V2.0.1", getString(R.string.changelog_v201)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V2.0", getString(R.string.changelog_v20)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.13", getString(R.string.changelog_v1413)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.12", getString(R.string.changelog_v1412)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.11", getString(R.string.changelog_v1411)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.10", getString(R.string.changelog_v1410)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.9", getString(R.string.changelog_v149)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.8", getString(R.string.changelog_v148)))
-        content.addView(BottomSheet.buildVersionBlock(this, "V1.4.7", getString(R.string.changelog_v147)))
-        BottomSheet.show(this, getString(R.string.sheet_changelog_title), content, true, null, null)
+        val blocks = listOf(
+            "V2.0.4" to getString(R.string.changelog_v204),
+            "V2.0.3" to getString(R.string.changelog_v203),
+            "V2.0.2" to getString(R.string.changelog_v202),
+            "V2.0.1" to getString(R.string.changelog_v201),
+            "V2.0" to getString(R.string.changelog_v20),
+            "V1.4.13" to getString(R.string.changelog_v1413),
+            "V1.4.12" to getString(R.string.changelog_v1412),
+            "V1.4.11" to getString(R.string.changelog_v1411),
+            "V1.4.10" to getString(R.string.changelog_v1410),
+            "V1.4.9" to getString(R.string.changelog_v149),
+            "V1.4.8" to getString(R.string.changelog_v148),
+            "V1.4.7" to getString(R.string.changelog_v147),
+        )
+        GlassSheetBridge.show(
+            GlassSheetRequest(
+                title = getString(R.string.sheet_changelog_title),
+                content = GlassSheetContent.Blocks(blocks),
+            )
+        )
     }
 
-    // ---------------- 弹卡：为爱发电（捐赠码 / 捐赠名单） ----------------
+    // ---------------- 弹卡：向开发者捐赠（捐赠码 / 捐赠名单） ----------------
     private fun showDonateSheet() {
-        val content = LinearLayout(this)
-        content.orientation = LinearLayout.VERTICAL
-        content.addView(
-            sheetRow(R.drawable.ic_heart, getString(R.string.donate_qr_title),
-                getString(R.string.support_text)) { showDonateQr() }
+        // 不再带副标题：support_text 已改为「向开发者捐赠」，与行标题重复
+        val actions = listOf(
+            GlassSheetAction(R.drawable.ic_heart, getString(R.string.donate_qr_title)) { showDonateQr() },
+            GlassSheetAction(R.drawable.ic_books, getString(R.string.donate_list_title)) { showDonateList() },
         )
-        content.addView(sheetDivider())
-        content.addView(
-            sheetRow(R.drawable.ic_books, getString(R.string.donate_list_title),
-                getString(R.string.support_text)) { showDonateList() }
+        GlassSheetBridge.show(
+            GlassSheetRequest(
+                title = getString(R.string.sheet_donate_title),
+                content = GlassSheetContent.Actions(actions),
+            )
         )
-        BottomSheet.show(this, getString(R.string.sheet_donate_title), content, true, null, null)
     }
 
     private fun showDonateQr() {
-        val density = resources.displayMetrics.density
-        val content = LinearLayout(this)
-        content.orientation = LinearLayout.VERTICAL
-        content.gravity = Gravity.CENTER_HORIZONTAL
-
         val qr = BitmapFactory.decodeResource(resources, R.drawable.donate_qrcode)
-        val img = ImageView(this)
-        img.setImageBitmap(qr)
-        val size = Math.round(220 * density)
-        img.layoutParams = LinearLayout.LayoutParams(size, size)
-        img.adjustViewBounds = true
-        content.addView(img)
-
-        val note = TextView(this)
-        note.text = getString(R.string.donate_note)
-        note.setTextColor(getColor(R.color.text_tertiary))
-        note.textSize = 14f
-        note.gravity = Gravity.CENTER
-        note.setPadding(0, Math.round(12 * density), 0, 0)
-        content.addView(note)
-
-        BottomSheet.show(
-            this, getString(R.string.donate_qr_title), content, true,
-            getString(R.string.donate_save),
-            Runnable {
-                if (saveQrToGallery(qr)) {
-                    showSnackLong(getString(R.string.donate_qr_saved))
-                    openWeChat()
-                }
-            }
+        GlassSheetBridge.show(
+            GlassSheetRequest(
+                title = getString(R.string.donate_qr_title),
+                content = GlassSheetContent.Picture(qr, getString(R.string.donate_note)),
+                actionText = getString(R.string.donate_save),
+                onAction = {
+                    if (saveQrToGallery(qr)) {
+                        showSnackLong(getString(R.string.donate_qr_saved))
+                        openWeChat()
+                    }
+                },
+            )
         )
     }
 
     private fun showDonateList() {
-        val density = resources.displayMetrics.density
-        val donors = arrayOf(
+        val donors = listOf(
             "酷安 / 匿名网友 — 5 元",
             "酷安 / 匿名网友 — 10 元",
             "酷安 / 热心用户 — 20 元",
             "微博 / 小江 — 6.6 元",
             "酷安 / 杨旻昊 — 0.82 元"
         )
-        val content = LinearLayout(this)
-        content.orientation = LinearLayout.VERTICAL
-        for (d in donors) {
-            val t = TextView(this)
-            t.text = d
-            t.setTextColor(getColor(R.color.text_primary))
-            t.textSize = 16f
-            t.setPadding(0, Math.round(10 * density), 0, Math.round(10 * density))
-            content.addView(t)
-            content.addView(sheetDivider())
-        }
-        BottomSheet.show(this, getString(R.string.donate_list_title), content, true, null, null)
-    }
-
-    // ---------------- 弹卡：致谢名单（蓝字可点击） ----------------
-    private fun showThanksSheet() {
-        val density = resources.displayMetrics.density
-        val content = LinearLayout(this)
-        content.orientation = LinearLayout.VERTICAL
-
-        val link = TextView(this)
-        link.text = getString(R.string.thanks_miui_ime)
-        link.setTextColor(getColor(R.color.text_link))
-        link.textSize = 16f
-        link.setTypeface(null, Typeface.BOLD)
-        link.setPadding(0, Math.round(4 * density), 0, Math.round(4 * density))
-        link.setOnClickListener { openUrl("https://github.com/RC1844/MIUI_IME_Unlock") }
-        content.addView(link)
-
-        BottomSheet.show(this, getString(R.string.sheet_thanks_title), content, true, null, null)
-    }
-
-    // ---------------- 弹卡内通用行 / 分隔线 ----------------
-    private fun sheetRow(iconRes: Int, title: String, subtitle: String, onClick: View.OnClickListener): View {
-        val density = resources.displayMetrics.density
-        val row = LinearLayout(this)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.gravity = Gravity.CENTER_VERTICAL
-        row.setBackgroundResource(R.drawable.row_ripple)
-        row.isClickable = true
-        row.isFocusable = true
-        row.minimumHeight = Math.round(64 * density)
-        row.setPadding(
-            Math.round(4 * density), Math.round(14 * density),
-            Math.round(4 * density), Math.round(14 * density)
+        GlassSheetBridge.show(
+            GlassSheetRequest(
+                title = getString(R.string.donate_list_title),
+                content = GlassSheetContent.Lines(donors),
+            )
         )
-        row.setOnClickListener(onClick)
-
-        val icon = ImageView(this)
-        val iconLp = LinearLayout.LayoutParams(Math.round(24 * density), Math.round(24 * density))
-        iconLp.setMargins(0, 0, Math.round(16 * density), 0)
-        icon.layoutParams = iconLp
-        icon.setImageResource(iconRes)
-        icon.setColorFilter(getColor(R.color.text_secondary))
-        row.addView(icon)
-
-        val textWrap = LinearLayout(this)
-        textWrap.orientation = LinearLayout.VERTICAL
-        textWrap.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-
-        val t1 = TextView(this)
-        t1.text = title
-        t1.setTextColor(getColor(R.color.text_primary))
-        t1.textSize = 17f
-        textWrap.addView(t1)
-
-        val t2 = TextView(this)
-        t2.text = subtitle
-        t2.setTextColor(getColor(R.color.text_tertiary))
-        t2.textSize = 14f
-        t2.setPadding(0, Math.round(4 * density), 0, 0)
-        textWrap.addView(t2)
-
-        row.addView(textWrap)
-
-        val chevron = ImageView(this)
-        chevron.layoutParams = LinearLayout.LayoutParams(Math.round(24 * density), Math.round(24 * density))
-        chevron.setImageResource(R.drawable.ic_chevron)
-        chevron.setColorFilter(getColor(R.color.text_secondary))
-        row.addView(chevron)
-
-        return row
     }
 
-    private fun sheetDivider(): View {
-        val density = resources.displayMetrics.density
-        val v = View(this)
-        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
-        lp.setMargins(Math.round(4 * density), 0, Math.round(4 * density), 0)
-        v.layoutParams = lp
-        v.setBackgroundColor(getColor(R.color.divider))
-        return v
+    // ---------------- 二级页面：开源许可证 ----------------
+    private fun openLicenses() {
+        try {
+            startActivity(Intent(this, LicensesActivity::class.java))
+        } catch (e: Exception) {
+            showSnack(getString(R.string.open_failed))
+        }
     }
 
     override fun onResume() {
@@ -1082,6 +995,9 @@ class AboutActivity : ComponentActivity() {
         // root 身份实时监听：每次回到前台立即重查，并启动周期轮询
         refreshRootStatus()
         startRootPoller()
+        // 从二级页面（如开源许可证）返回时，玻璃导航条的折射背景已被系统丢弃，
+        // 主动重录一次，避免导航栏短暂「透明」直到再次点击标签才恢复
+        bottomNav?.refreshBackdrop()
         // 引导展示期间：从 LSPosed / 授权管理器等返回时，重新探测 ROOT
         if (welcomeOverlay != null) {
             detectRootAsync()
@@ -1110,6 +1026,11 @@ class AboutActivity : ComponentActivity() {
 
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onBackPressed() {
+        // 玻璃弹卡优先：返回键先关弹卡，再交给 BottomSheet / 系统
+        if (GlassSheetBridge.isOpen()) {
+            GlassSheetBridge.close()
+            return
+        }
         if (BottomSheet.dismissTop()) return
         onBackPressedDispatcher.onBackPressed()
     }
@@ -1210,7 +1131,6 @@ class AboutActivity : ComponentActivity() {
         private const val KEY_BADGES_VISIBLE = "status_badges_visible"
         private const val TELEGRAM_URL =
             "https://qun.qq.com/universal-share/share?ac=1&authKey=n9wFDXy4i20n15nDlUwLTGqI8AnQ%2BiyzC2XPQxpeOs2MxMYDsqRw0MNRPXYvx9WS&busi_data=eyJncm91cENvZGUiOiIxMTI0MTgwNjM1IiwidG9rZW4iOiJTSVhYbUhsYUNnWVYvb2wzVUlRb0J6SDRQMTNCdUxBMUNocUMzeU9taFpvakJRRHhZNDFBeDJIdFVQeTNZVnRmIiwidWluIjoiOTAzNzU1MzQ1In0%3D&data=qWsg9TN3ydud1Rb7MCThG73KtRkUY7UumTdXIsBBKS2W9kcpZ-W8kSgWfZFjkdqqGSxXGkUmeL9Dmb5VYsXf3A&svctype=4&tempid=h5_group_info"
-        private const val MIUIX_URL = "https://compose-miuix-ui.github.io/miuix/zh_CN/"
 
         // ---- 页面切换动画参数（淡入淡出 + 方向性横移 + 轻微缩放）----
         /** 新页入场时长（略长，收尾有减速，观感更「软」）。 */

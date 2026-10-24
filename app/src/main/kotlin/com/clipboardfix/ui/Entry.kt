@@ -74,7 +74,6 @@ fun installPages(
     onDonate: Runnable,
     onOpenTelegram: Runnable,
     onUpstream: Runnable,
-    onOpenMiuix: Runnable,
     themeMode: State<Int>,
     langMode: Int,
     updateDisabled: State<Boolean>,
@@ -131,7 +130,6 @@ fun installPages(
                 onDonate = { onDonate.run() },
                 onOpenTelegram = { onOpenTelegram.run() },
                 onUpstream = { onUpstream.run() },
-                onOpenMiuix = { onOpenMiuix.run() },
                 onCheckUpdate = { onCheckUpdate.run() },
             )
         }

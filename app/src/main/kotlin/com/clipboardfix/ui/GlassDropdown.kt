@@ -117,15 +117,15 @@ private const val ITEM_CHECK_SLOT_DP = 20f
 private const val ITEM_CHECK_GAP_DP = 12f
 
 /** 弹出：弹簧稍软、回弹明显（stiffness 232）。 */
-private const val ENTER_STIFFNESS = 232f
+internal const val ENTER_STIFFNESS = 232f
 /** 收起：更硬更快（stiffness 400）。 */
-private const val EXIT_STIFFNESS = 400f
+internal const val EXIT_STIFFNESS = 400f
 internal const val GLASS_SPRING_DAMPING = 0.78f
 /** 起止缩放：0.24 → 1，从锚点顶部「展开」。 */
 private const val SCALE_MIN = 0.24f
 /** 透明度时长：进场更快、退场更慢。 */
-private const val ENTER_ALPHA_MS = 120
-private const val EXIT_ALPHA_MS = 320
+internal const val ENTER_ALPHA_MS = 120
+internal const val EXIT_ALPHA_MS = 320
 
 /** 一次「打开下拉」的请求：行被点击时按当前锚点位置构造。 */
 internal class DropdownRequest(

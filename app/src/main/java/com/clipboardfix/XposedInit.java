@@ -136,13 +136,16 @@ public class XposedInit extends XposedModule {
             ClipboardPinHook.init(param);
         }
 
+        // 跨设备剪贴板云端图片「关闭面板再打开消失」的显示层修复：面板实际运行在输入法进程，
+        // 必须装在输入法进程才生效，故放全包区域（进程无关，内部自有去重）。
+        CrossDeviceClipboardHook.initPanelMerge(param);
+
         if (PKG_PHRASE.equals(pkg)) {
             log("phrase: v" + BuildConfig.VERSION_NAME);
             ClipboardHook.init();
             // DexKit 需要扫描 dex，耗时较长，放到最后执行，
             // 保证剪贴板相关的 hook 已经装好，不会拖慢 com.miui.phrase 启动。
             PackageValidationHook.init(param);
-            CrossDeviceClipboardHook.init(param);
             // 解除常用语/剪贴板条数、时间与字数限制（两个功能开关独立控制，默认关/开）
             boolean countUnlock = ModulePrefs.isUnlimitCountEnabled();
             boolean timeUnlock = ModulePrefs.isUnlimitTimeEnabled();

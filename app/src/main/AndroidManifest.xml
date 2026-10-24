@@ -35,6 +35,13 @@
             </intent-filter>
         </activity>
 
+        <!-- 二级页面：开源许可证（由关于页「项目引用」进入，不对外暴露） -->
+        <activity
+            android:name=".LicensesActivity"
+            android:label="@string/licenses_title"
+            android:exported="false"
+            android:theme="@style/AppTheme" />
+
         <!-- 桌面图标别名：禁用后桌面图标消失，但 AboutActivity 仍可通过 LSPosed 访问 -->
         <activity-alias
             android:name=".LauncherAlias"

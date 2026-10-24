@@ -322,6 +322,28 @@ class LiquidGlassBarView @JvmOverloads constructor(
         super.onAttachedToWindow()
         attachBackgroundListeners()
         registerTiltSensor()
+        // 重新挂载后 RenderNode 里没有任何显示列表，必须重录一次
+        invalidateBackdrop()
+    }
+
+    /**
+     * 窗口重新可见时强制重录折射背景。
+     *
+     * <p>背景是录进 [mGlassNode] 的显示列表，而窗口不可见（切到后台、或启动二级 Activity
+     * 覆盖到本页之上）期间，系统会丢弃该 RenderNode 的内容。若不重录，回到本页时玻璃条
+     * 只剩一层 18% 白的容器色 —— 视觉上就是「导航栏变成透明的」，直到用户点一下标签
+     * 触发 [setSelectedIndex] 才恢复。
+     */
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility == View.VISIBLE) {
+            invalidateBackdrop()
+        }
+    }
+
+    /** 宿主页面回到前台时调用：强制重录折射背景（与 [onWindowVisibilityChanged] 互为保险）。 */
+    fun refreshBackdrop() {
+        invalidateBackdrop()
     }
 
     override fun onDetachedFromWindow() {
@@ -510,7 +532,9 @@ class LiquidGlassBarView @JvmOverloads constructor(
         try {
             // 只有背景真的变了才重录（滚动/布局/切页/尺寸变化时置脏）。
             // 动画期间每帧重录整个内容区是「切页反应慢」的主因。
-            if (mBackdropDirty) {
+            // hasDisplayList() 兜底：显示列表可能被系统直接丢弃（窗口不可见、GC），
+            // 此时即便没置脏也必须重录，否则玻璃条没有折射内容、看起来是透明的。
+            if (mBackdropDirty || !node.hasDisplayList()) {
                 node.setPosition(0, 0, nw, nh)
                 val rc = node.beginRecording(nw, nh)
                 try {

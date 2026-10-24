@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -114,7 +115,6 @@ fun AboutPage(
     onDonate: () -> Unit,
     onOpenTelegram: () -> Unit,
     onUpstream: () -> Unit,
-    onOpenMiuix: () -> Unit,
     onCheckUpdate: () -> Unit,
 ) {
     val density = LocalDensity.current
@@ -133,6 +133,12 @@ fun AboutPage(
     val snackbarBackdrop = rememberKyantLayerBackdrop()
     // Haze 渐进模糊状态：头部条 ④ 据此模糊背后滚动内容（同帧录制，无拖影）
     val hazeState = rememberHazeState()
+    // 柔光玻璃弹卡（更新日志 / 捐赠）的请求槽位：由 GlassSheetBridge 投递，本页渲染
+    val sheetReq = remember { mutableStateOf<GlassSheetRequest?>(null) }
+    DisposableEffect(Unit) {
+        GlassSheetBridge.bind(sheetReq)
+        onDispose { GlassSheetBridge.unbind(sheetReq) }
+    }
 
     // 滚动联动的淡出参数（对齐原「关于」页观感：上滑流光迅速消失、LOGO 先淡出）
     val scrollY by remember(listState) {
@@ -281,7 +287,6 @@ fun AboutPage(
                     SectionLabel(stringResource(R.string.sec_thanks))
                     GlassCard(backdrop = backdrop, night = night, scrollYProvider = { scrollY }) {
                         LinkRow(R.drawable.ic_bookshelf, stringResource(R.string.ref_solution), onUpstream)
-                        LinkRow(R.drawable.ic_link, stringResource(R.string.miuix), onOpenMiuix)
                     }
                 }
             }
@@ -340,6 +345,13 @@ fun AboutPage(
         }
         // Snackbar 宿主：玻璃面板折射本页内容（与毛玻璃卡片同源），浮在底部导航条上方
         PageSnackbarHost(backdrop = snackbarBackdrop)
+        // 柔光玻璃弹卡（更新日志 / 捐赠）：与 Snackbar 共用同一折射源与玻璃配方，
+        // 放在最上层——折射源已登记为 ①+②+③ 整体，弹卡画在其上不被裁切
+        PageGlassSheetOverlay(
+            request = sheetReq.value,
+            backdrop = snackbarBackdrop,
+            onDismiss = { GlassSheetBridge.close() },
+        )
     }
 }
 

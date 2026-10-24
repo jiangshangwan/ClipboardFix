@@ -65,7 +65,7 @@
     <string name="about_title">About</string>
     <string name="sec_developer">Developer</string>
     <string name="sec_donate">Support</string>
-    <string name="support_text">Your support is my biggest motivation</string>
+    <string name="support_text">Donate to the developer</string>
     <string name="sec_project">Project</string>
     <string name="github">GitHub</string>
     <string name="changelog">Changelog</string>
@@ -74,9 +74,8 @@
     <string name="sec_check_update">Check Update</string>
     <string name="check_update">Check Update</string>
     <string name="check_update_sub">Check GitHub for new versions</string>
-    <string name="sec_thanks">Acknowledgements</string>
-    <string name="ref_solution">References</string>
-    <string name="miuix">Miuix</string>
+    <string name="sec_thanks">Project References</string>
+    <string name="ref_solution">Open Source Licenses</string>
     <string name="author_name1">江上晚</string>
     <string name="author_handle1">Coolapk @江上晚</string>
     <string name="author_name2">李十六的日记本</string>
@@ -96,7 +95,7 @@
     <string name="sheet_changelog_title">Changelog</string>
     <string name="changelog_v20">1. Fully rebuilt the module UI: cleaner and more refreshing, upgraded visuals\n2. Added liquid-glass navigation for smoother swipes and more responsive touch\n3. Continuously fixing third-party input methods failing to use the system clipboard\n4. Added the Optimize Clipboard Panel Background toggle: unifies clipboard and keyboard function-area colors when enabled\n5. Added the Pin Clipboard Entry feature: swipe an entry right in the clipboard panel to pin it (one at most)\n6. Added the Disable Update Check feature: module runs fully offline when enabled (you will no longer receive update pushes)\n7. Added the Reload Processes feature: load the latest hooks by reloading processes after a module update (reboot on first install)\n8. Added a Settings page: module settings and feature settings shown separately\n9. Expanded the home info panel: device info and module status at a glance\n10. Brand-new About page: richer content, easier to use</string>
     <string name="changelog_v203">1. Fixed an issue where clipboard text was hard to read in certain scenarios\n2. Added the clipboard and quick phrases (com.miui.phrase) version to the home page info panel\n3. Fixed an issue where clipboard panel text could match the background color when the keyboard theme differs from the system theme</string>
-    <string name="changelog_v204">1. Improved module stability\n2. Optimized module smoothness</string>
+    <string name="changelog_v204">1. Fixed clipboard image entries not persisting\n2. Optimized module UI animations\n3. Removed dead code</string>
     <string name="changelog_v201">1. Fixed clipboard entries being cleared after 72 hours; added a toggle in the module feature page so you can choose freely\n2. Fixed the pin button margin being too large</string>
     <string name="changelog_v1413">Added clipboard panel background optimization; fixed clipboard and phrase panel color issues with the function area</string>
     <string name="changelog_v1412">Optimized display; fixed some errors</string>
@@ -114,9 +113,28 @@
     <string name="donate_save">Save to Gallery</string>
     <string name="donate_qr_saved">QR code saved to gallery\nWeChat opened; use \"Scan\" → \"Gallery\" to recognize it</string>
 
-    <!-- Sheet: Credits -->
-    <string name="sheet_thanks_title">Credits</string>
-    <string name="thanks_miui_ime">MIUI_IME_Unlock</string>
+    <!-- Sub page: Open Source Licenses (entered from "Project References" on the About page) -->
+    <string name="licenses_title">Open Source Licenses</string>
+    <string name="license_apache_2">Apache-2.0</string>
+    <string name="license_dexkit">Apache-2.0 / LGPL-3.0 (Core)</string>
+    <string name="license_opensource">Open Source</string>
+    <string name="lic_miuix_name">Miuix</string>
+    <string name="lic_miuix_desc">HyperOS-style Compose UI component library</string>
+    <string name="lic_libxposed_name">libxposed API</string>
+    <string name="lic_libxposed_desc">Modern Xposed module API (102)</string>
+    <string name="lic_dexkit_name">DexKit</string>
+    <string name="lic_dexkit_desc">Dex parsing and method locating</string>
+    <string name="lic_compose_name">AndroidX Compose</string>
+    <string name="lic_compose_desc">Declarative UI framework</string>
+    <string name="lic_haze_name">Haze</string>
+    <string name="lic_haze_desc">Progressive blur effect library</string>
+    <string name="lic_backdrop_name">Backdrop</string>
+    <string name="lic_backdrop_desc">Liquid glass material library</string>
+    <string name="lic_kotlin_name">Kotlin</string>
+    <string name="lic_kotlin_desc">Programming language</string>
+    <string name="lic_miui_ime_name">MIUI_IME_Unlock</string>
+    <string name="lic_miui_ime_desc">Reference for input method unlocking</string>
+    <string name="licenses_intro">HyperClipFix uses or references the following projects. Thanks to all their developers and contributors.</string>
 
     <!-- Common toasts -->
     <string name="open_failed">Cannot open link</string>
