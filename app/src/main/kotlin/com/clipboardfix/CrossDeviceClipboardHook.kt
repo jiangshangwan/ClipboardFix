@@ -52,6 +52,12 @@ import java.lang.reflect.Method
  *     判断直接早退——修剪与 remove(-1) 崩溃同时绕开；显示改由 setClipboardList 的全量
  *     本地 + 本 hook 的增量合入（prepend + notify）维护，面板显示全部条目。
  *     开关关闭时行为与本版之前完全一致（云端裁 20 防崩 + 原生修剪）。
+ *  v4.6【云端图片重复条目】：v4.3 的 time 去重对图片条目永久失效——phrase 每次新云
+ *     推送到达都会刷新图片条目的 time（DIAG 实证同图两次查询 time 相差数百 ms），
+ *     同一张图每推一次插一条，用户感知「云端图片同步过来一次性出现两条」。去重键升级
+ *     为稳定身份键 [entryKey]：图片条目取 {@code img:<deviceId>:<uriType>:<dataSize>}
+ *     （均取自 determineContent 的 ClipDataItemModel JSON，不含 time；uriFileName 含
+ *     到达时间戳也不能用），文本条目 time 稳定沿用 time 键。
  *
  *  历史上曾尝试用「保活 /across 观察者」（定时器 + 拦截 endObserveThumbnailInfoChange）来
  *  间接刷新显示层，但观察者活着 ≠ /across 会变更，对显示层无效，相关代码已作为失效代码删除；
@@ -388,26 +394,32 @@ object CrossDeviceClipboardHook {
      * 2026-10-25 复测确认）。改按 time 去重：云端条目的 time 不在入参列表里才算缺失。
      * 同一毫秒的复制事件才可能撞键，实际不存在；判不了 time 的条目按缺失处理（宁可多显示）。
      *
+     * <p><b>v4.6：图片条目不能用 time 去重</b>——phrase 侧每次新云推送到达都会刷新图片
+     * 条目的 time（DIAG 实证：同图两次查询 time 相差数百 ms），time 键对图片永久失效，
+     * 同一张图每推一次插一条（用户 2026-10-25 反馈「云端图片同步过来一次性出现两条」）。
+     * 图片条目改按 [entryKey] 稳定身份（deviceId + uriType + dataSize，均不含 time）
+     * 判重；文本条目 time 稳定，沿用 time 键。
+     *
      * <p>原地修改入参即同步了面板的 {@code mCurrentImeClipboardList} 字段——
      * {@code $2$1} 与 reload 分支传给本方法的都是该字段本身（同一对象），
      * 点击取值按位置索引两边一致，不会错位。
      */
     private fun prependMissingCloud(list: MutableList<Any?>, cache: List<Any?>) {
-        val present = HashSet<Long>()
+        val present = HashSet<String>()
         for (e in list) {
-            val t = entryTime(e)
-            if (t != null) {
-                present.add(t)
+            val k = entryKey(e)
+            if (k != null) {
+                present.add(k)
             }
         }
         var added = 0
         for (c in cache) {
-            val t = entryTime(c)
-            if (t == null || t !in present) {
+            val k = entryKey(c)
+            if (k == null || k !in present) {
                 list.add(added, c)
                 added++
-                if (t != null) {
-                    present.add(t)
+                if (k != null) {
+                    present.add(k)
                 }
             }
         }
@@ -430,6 +442,57 @@ object CrossDeviceClipboardHook {
         } catch (_: Throwable) {
             null
         }
+    }
+
+    /**
+     * 条目稳定身份键（v4.6 去重主键）。
+     *
+     * <p>文本条目：time 稳定（落库/查询均保留），用 time。
+     * <p>图片条目：phrase 每次新云推送到达都会刷新 time（DIAG 实证），time 不可用；
+     * 改从 determineContent 的 ClipDataItemModel JSON 里取不含 time 的稳定字段组合：
+     * {@code img:<deviceId>:<uriType>:<dataSize>}。同一张图的多次推送/落库副本这些
+     * 字段相同 → 判重合并；不同图 dataSize 或类型不同 → 不误合并。
+     * 解析失败（非图片/无 determineContent）回退 time；再失败返回 null（按缺失处理）。
+     */
+    private fun entryKey(e: Any?): String? {
+        if (e == null) {
+            return null
+        }
+        val dc = determineContent(e)
+        if (!dc.isNullOrEmpty()) {
+            try {
+                val arr = org.json.JSONArray(dc)
+                if (arr.length() > 0) {
+                    val item = arr.getJSONObject(0)
+                    val uriType = item.optString("uriType")
+                    if (uriType.contains("image")) {
+                        val dev = stringField(e, "getDeviceId") ?: ""
+                        val size = item.optLong("dataSize", -1L)
+                        // 键只取不含 time 的稳定字段；uriFileName 经 DIAG 验证若含
+                        // 到达时间戳则不可用，不纳入
+                        return "img:$dev:$uriType:$size"
+                    }
+                }
+            } catch (_: Throwable) {
+                // 解析失败回退 time
+            }
+        }
+        return entryTime(e)?.toString()
+    }
+
+    /** 反射取字符串字段/无参 getter；失败返回 null。 */
+    private fun stringField(e: Any, name: String): String? {
+        return try {
+            e.javaClass.getMethod(name).invoke(e) as? String
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** determineContent（equals 用的内容指纹）；失败返回 null。 */
+    private fun determineContent(e: Any): String? {
+        return stringField(e, "getDetermineContent")
+            ?: stringField(e, "getContent")
     }
 
     /** 反射调一次面板的 setRemoteDataToView()（合入云端条目）。 */
