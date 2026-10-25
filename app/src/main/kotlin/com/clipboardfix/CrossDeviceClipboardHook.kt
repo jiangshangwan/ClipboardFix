@@ -151,6 +151,18 @@ object CrossDeviceClipboardHook {
     private val sSeenCloud = java.util.LinkedHashMap<String, Any?>()
 
     /**
+     * 最近一次「一键清空」的时刻（0 = 尚未清空过）。
+     *
+     * <p>v4.13：清空后旧云端条目（如跨设备镜像、PC 侧仍保留的条目）可能被重新拉回
+     * （getCrossDeviceClipboardData 重查）或残留在缓存里，导致「清空后一复制旧内容就复活」。
+     * 记下清空时刻后，[prependMissingCloud] 跳过 time <= 本时刻 的旧条目，只放行清空之后
+     * 真正的新条目（time > 本时刻），从源头堵住旧内容复活。
+     */
+    @Volatile
+    private var sWipeTime = 0L
+
+
+    /**
      * 本次面板打开会话是否已见过非空云端数据。
      *
      * <p>重启后 com.miui.phrase 进程/数据未就绪，第三方输入法进程里首帧
@@ -543,6 +555,15 @@ object CrossDeviceClipboardHook {
         }
         var added = 0
         for (c in cache) {
+            // v4.13：跳过「一键清空前」的旧条目，防止清空后旧云端/图片条目复活
+            // （来源：跨设备重拉 or 缓存残留）。只放行清空之后真正的新条目（time > sWipeTime）。
+            // 判不了 time 的条目（time<=0）在清空后也按旧条目跳过（保守，宁可不显示）。
+            if (sWipeTime > 0L) {
+                val t = entryTime(c) ?: 0L
+                if (t <= sWipeTime) {
+                    continue
+                }
+            }
             val k = entryKey(c)
             if (k == null || k !in present) {
                 list.add(added, c)
@@ -672,6 +693,25 @@ object CrossDeviceClipboardHook {
             }
         }
         return out
+    }
+
+    /**
+     * v4.12：清空面板（clearClipboardDataMethod）时同步清空补回缓存。
+     *
+     * <p>sCloudCache / sSeenCloud 本是为「关面板再开图片/云条目被整表替换冲掉时补回」
+     * （v4.5~v4.7）而设、跨面板会话保留。但用户「清理剪贴板」清空全部内容后，这两个缓存
+     * 里仍是已清空的旧条目——下次复制新内容触发 setClipboardList / mergeCloudIntoDisplay 时
+     * prependMissingCloud 会把它们当「缺失」补回头部，表现为「清空后一复制旧内容就复活」。
+     * 清空动作发生即作废这两个缓存，令补回来源为空，已清空内容不再复活。
+     *
+     * <p>不影响 v4.7 正常补回：清空后新复制的图片会被 recordSeenCloud 重新捕获，
+     * 再遇「关面板再开被冲掉」仍能从新缓存补回。
+     */
+    fun clearRestoreCaches() {
+        sCloudCache = null
+        sSeenCloud.clear()
+        sWipeTime = System.currentTimeMillis()
+        log("restore caches cleared (panel wiped), wipeTime=" + sWipeTime)
     }
 
 

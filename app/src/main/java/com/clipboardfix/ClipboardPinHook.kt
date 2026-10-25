@@ -607,6 +607,10 @@ object ClipboardPinHook {
                     if (METHOD_CLEAR != methodArg) {
                         return@hook r
                     }
+                    // v4.12：清空已执行——先作废补回缓存（云端/图片旧条目不再复活），
+                    // 再写回置顶条目并刷新面板。顺序要紧：先清缓存，否则随后的刷新会
+                    // 走 prependMissingCloud 把刚清掉的旧条目又补回头部。
+                    CrossDeviceClipboardHook.clearRestoreCaches()
                     // 清空已执行：写回置顶条目并刷新面板
                     val uri = chain.getArg(0) as? Uri
                     restorePinnedAfterClear(uri)
