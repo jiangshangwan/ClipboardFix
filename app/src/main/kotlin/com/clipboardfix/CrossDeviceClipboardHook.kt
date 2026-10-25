@@ -58,6 +58,14 @@ import java.lang.reflect.Method
  *     为稳定身份键 [entryKey]：图片条目取 {@code img:<deviceId>:<uriType>:<dataSize>}
  *     （均取自 determineContent 的 ClipDataItemModel JSON，不含 time；uriFileName 含
  *     到达时间戳也不能用），文本条目 time 稳定沿用 time 键。
+ *  v4.7【关面板再开图片丢失】：用户报告「先复制图片条目、再复制一条纯文字条目、关面板再
+ *     打开面板，之前复制的图片条目丢失」。实证：开面板 phrase 会下发两次 setClipboardList，
+ *     第一次含全部（含图片，22 行），约 20ms 后第二次只含文字（15 行，图片被整表冲掉）。
+ *     数量上限解锁开启时本 hook 让 getCrossDeviceClipboardData 返回空令 lambda$9 早退，
+ *     而该空返回只截断了「最新一条云端推送」，无法提供此前已落本地库、却不是最新推送的
+ *     图片（用户场景里最新推送是那条纯文字）。故新增 [sSeenCloud]：记住显示列表里出现过的
+ *     图片条目（按 entryKey 索引其对象），任何一次 setClipboardList 若把它们冲掉即按原顺序
+ *     补回头部。幂等于 v4.6 的 entryKey 去重，不重复；仅数量上限解锁开启时启用，关时走原逻辑。
  *
  *  历史上曾尝试用「保活 /across 观察者」（定时器 + 拦截 endObserveThumbnailInfoChange）来
  *  间接刷新显示层，但观察者活着 ≠ /across 会变更，对显示层无效，相关代码已作为失效代码删除；
@@ -126,6 +134,21 @@ object CrossDeviceClipboardHook {
      */
     @Volatile
     private var sAdapterRef: java.lang.ref.WeakReference<Any>? = null
+
+    /**
+     * 图片条目缓存（按 [entryKey] 索引其对象引用），进程生命周期内持久。
+     *
+     * <p>v4.7：phrase 在开面板时会下发一次「不含跨设备图片」的 setClipboardList，把图片整表冲掉。
+     * 数量上限解锁开启时本 hook 让 getCrossDeviceClipboardData 返回空令 lambda$9 早退，该空返回
+     * 只截断「最新一条云端推送」——用户「先图后文」场景里最新推送是文字，旧图无从获取，图片永久丢失。
+     *
+     * <p><b>关键</b>：旧图**不在**本地剪贴板库（getClipboardData 的 fresh 查询结果不含它），
+     * 仅存在于「它刚同步那会儿是最新推送」的云端查询结果里。故必须在**它成为最新推送那一刻**
+     * （getCrossDeviceClipboardData 返回时）把它存进本缓存，且**跨面板会话保留不清空**——
+     * 关面板再开、它已不是最新推送时，靠本缓存把它补回头部，图片才不丢。
+     * 去重按 entryKey 幂等（v4.6），不会重复；仅数量上限解锁开启时参与合并（见 [mergedCloudCache]）。
+     */
+    private val sSeenCloud = java.util.LinkedHashMap<String, Any?>()
 
     /**
      * 本次面板打开会话是否已见过非空云端数据。
@@ -198,6 +221,7 @@ object CrossDeviceClipboardHook {
         sMerged[self] = true
         // 每次打开都是新会话：重置「已见到云端数据」标志，供重试窗口判断。
         sCloudSeen = false
+        // v4.7：sSeenCloud **不清空**——旧图关面板再开后已不是最新推送，靠本缓存补回。
         // 面板类（动态 dex）此刻已加载：装上云端缓存 + setClipboardList 补回两个 hook，
         // 保证随后 $2$1 灌本地列表时云端条目不被整表替换冲掉（打开即出的关键）。
         ensurePanelClassHooks(self.javaClass.classLoader)
@@ -282,6 +306,9 @@ object CrossDeviceClipboardHook {
                                 if (r.isNotEmpty()) {
                                     // 拿到过非空云端数据：重试窗口可以收了
                                     sCloudSeen = true
+                                    // v4.7：图片此刻还是「最新推送」就存进 sSeenCloud——
+                                    // 之后它不再是最新时（先图后文），靠这份缓存补回，图片才不丢。
+                                    recordSeenCloud(r)
                                 }
                                 if (ModulePrefs.isUnlimitCountEnabled()) {
                                     // v4.5：数量上限解锁开启——全量缓存（不裁）后向调用方
@@ -314,6 +341,22 @@ object CrossDeviceClipboardHook {
                         break
                     }
                 }
+                // v4.7：另 hook getClipboardData，捕获本地库查询结果里的图片条目作备用来源
+                // （覆盖「旧图已落本地库」的场景；不改返回值，只读）。
+                for (m in mgr.methods) {
+                    if (m.name == "getClipboardData" && m.parameterTypes.size == 1) {
+                        m.isAccessible = true
+                        XposedInit.hook(m) { chain ->
+                            val r = chain.proceed()
+                            if (r is List<*>) {
+                                recordSeenCloud(r)
+                            }
+                            r
+                        }
+                        log("OK: hooked getClipboardData (image capture)")
+                        break
+                    }
+                }
             }
             val ad = Reflect.findClassIfExists(CLIP_ADAPTER, cl)
             if (ad != null) {
@@ -333,9 +376,25 @@ object CrossDeviceClipboardHook {
                                 if (arg is MutableList<*>) {
                                     @Suppress("UNCHECKED_CAST")
                                     val list = arg as MutableList<Any?>
-                                    val cache = sCloudCache
-                                    if (cache != null && cache.isNotEmpty()) {
+                                    val imgIn = list.count { entryKey(it)?.startsWith("img:") == true }
+                                    // v4.7：先记下列表里出现过的图片条目（下次被 strip 冲掉时补回）。
+                                    recordSeenCloud(list)
+                                    val cache = mergedCloudCache()
+                                    var restored = 0
+                                    if (cache.isNotEmpty()) {
+                                        val before = list.size
                                         prependMissingCloud(list, cache)
+                                        restored = list.size - before
+                                    }
+                                    val imgAfter = list.count { entryKey(it)?.startsWith("img:") == true }
+                                    if (imgIn == 0 && imgAfter > 0) {
+                                        // 本次灌入原本无图、被我们补回图片 = strip 后恢复；记下调用方便于诊断
+                                        log("RESTORE $restored imgs into stripped list"
+                                                + " (img $imgIn->$imgAfter seen=${sSeenCloud.size});"
+                                                + " caller <- ${callerFrames()}")
+                                    } else {
+                                        log("setClipboardList size=${list.size} img=$imgIn"
+                                                + " restore=$restored imgAfter=$imgAfter seen=${sSeenCloud.size}")
                                     }
                                 }
                             } catch (t: Throwable) {
@@ -363,8 +422,8 @@ object CrossDeviceClipboardHook {
      * 与 setClipboardList hook 内的 prepend 走同一 time 去重逻辑，幂等。
      */
     private fun mergeCloudIntoDisplay() {
-        val cache = sCloudCache
-        if (cache.isNullOrEmpty()) return
+        val cache = mergedCloudCache()
+        if (cache.isEmpty()) return
         val adapter = sAdapterRef?.get() ?: return
         mainHandler.post {
             try {
@@ -488,6 +547,77 @@ object CrossDeviceClipboardHook {
             null
         }
     }
+
+    /**
+     * v4.7：记住显示列表里出现过的图片条目（按 [entryKey] 索引其对象引用）。
+     *
+     * <p>仅记录图片（entryKey 以 {@code img:} 开头）；文本条目稳定且来自最新云端推送，
+     * 无需额外记忆。内存上限 60 条，超出丢弃最早记录，防止极端情况下无限增长。
+     */
+    private fun recordSeenCloud(list: List<*>) {
+        for (e in list) {
+            if (e == null) continue
+            val k = entryKey(e)
+            if (k != null && k.startsWith("img:")) {
+                sSeenCloud[k] = e
+            }
+        }
+        while (sSeenCloud.size > 60) {
+            val it = sSeenCloud.keys.iterator()
+            if (it.hasNext()) sSeenCloud.remove(it.next())
+        }
+    }
+
+    /** 诊断用：取 setClipboardList 调用方栈帧（跳过本类/反射/线程帧），定位 strip 来源。 */
+    private fun callerFrames(): String {
+        return try {
+            Thread.currentThread().stackTrace
+                .drop(1)
+                .map { "${it.className.substringAfterLast('.')}.${it.methodName}" }
+                .filterNot {
+                    it.startsWith("Thread") || it.contains("CrossDeviceClipboardHook")
+                            || it.contains("XposedInit") || it.contains("reflect")
+                            || it.contains("Method.invoke")
+                }
+                .take(6)
+                .joinToString(" < ")
+        } catch (_: Throwable) {
+            "?"
+        }
+    }
+
+    /**
+     * v4.7：合并「本次云端查询缓存」与「显示列表里见过的图片」作为补回来源。
+     *
+     * <p>数量上限解锁开启时：除了 hook 缓存的最近一次云端查询结果（开启态全量、仅 1 条最新推送），
+     * 还要并回在本会话显示列表里见到过、却不是最新推送的图片条目——否则第二次 setClipboardList
+     * 把图片整表冲掉时，仅靠最新推送无法恢复它们（用户场景：先图后文，最新推送是文字）。
+     * 关闭数量上限解锁时维持原行为：只返回 getCrossDeviceClipboardData 的缓存结果。
+     * 去重交给 [prependMissingCloud]（按 entryKey），不重复插入。
+     */
+    private fun mergedCloudCache(): List<Any?> {
+        val base = sCloudCache
+        if (base.isNullOrEmpty()) {
+            // 连基础云端缓存都没有：仍尝试用见过的图片救场（数量上限开启且列表被 strip 的场景）。
+            if (!ModulePrefs.isUnlimitCountEnabled()) return emptyList()
+            return sSeenCloud.values.filterNotNull()
+        }
+        if (!ModulePrefs.isUnlimitCountEnabled()) return base
+        val out = ArrayList<Any?>(base)
+        val keys = HashSet<String>()
+        for (e in out) {
+            val k = entryKey(e)
+            if (k != null) keys.add(k)
+        }
+        for ((k, e) in sSeenCloud) {
+            if (k !in keys) {
+                out.add(e)
+                keys.add(k)
+            }
+        }
+        return out
+    }
+
 
     /** determineContent（equals 用的内容指纹）；失败返回 null。 */
     private fun determineContent(e: Any): String? {
