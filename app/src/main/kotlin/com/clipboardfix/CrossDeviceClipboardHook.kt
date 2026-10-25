@@ -113,6 +113,12 @@ object CrossDeviceClipboardHook {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /** v4.16：兜底重拉本地列表的冷却间隔（ms），避免同一条云端推送反复触发重拉。 */
+    private const val RELOAD_COOLDOWN_MS = 1500L
+
+    /** v4.16：上次兜底重拉本地列表的时刻（ms）。 */
+    private var sLastReloadMs = 0L
+
     /** 显示层（v4）是否已安装：进程内只装一次。 */
     private var panelMergeInited = false
 
@@ -151,15 +157,26 @@ object CrossDeviceClipboardHook {
     private val sSeenCloud = java.util.LinkedHashMap<String, Any?>()
 
     /**
-     * 最近一次「一键清空」的时刻（0 = 尚未清空过）。
+     * 已被「一键清空」的条目：entryKey → 被清空那条的 time（精确屏蔽其复活）。
      *
-     * <p>v4.13：清空后旧云端条目（如跨设备镜像、PC 侧仍保留的条目）可能被重新拉回
-     * （getCrossDeviceClipboardData 重查）或残留在缓存里，导致「清空后一复制旧内容就复活」。
-     * 记下清空时刻后，[prependMissingCloud] 跳过 time <= 本时刻 的旧条目，只放行清空之后
-     * 真正的新条目（time > 本时刻），从源头堵住旧内容复活。
+     * <p>v4.13 曾按「清空时刻」一刀切（time <= wipeTime 全拦），结果误伤面板开着时正常到达的
+     * 云端条目（时间过滤持久生效，新云条也被拦）——表现为「云端条目不实时显示、关面板重开才有」。
+     * 改为只屏蔽**被清空的那些具体条目**（按 entryKey 记账）：清空时把当时显示列表/缓存里条目的
+     * entryKey 记进来，之后任何补回路径（缓存残留 / 跨设备重拉）都跳过这些 key；新条目
+     * （entryKey 不同）照常显示。
+     *
+     * <p><b>v4.16：屏蔽改为「一次复制一代」，不再永久屏蔽</b>——图片条目的 entryKey 是稳定键
+     * （{@code img:<deviceId>:<uriType>:<dataSize>}，v4.6 因图片 time 每次推送都刷新而
+     * 不能用 time 做键），同一张图清空后再复制一次，键与已屏蔽的完全相同 → 被永久拦掉。
+     * 而云端图片**推送瞬间就落本地库**（日志实证 {@code setClipBoardDataToLocal size = 1}），
+     * 关面板重开走本地列表（不过本过滤）能显示，于是表现为「面板开着时云端图片不实时显示，
+     * 关掉重开才出现」——正好是用户 2026-10-26 反馈的症状（文本条目 time 键每次复制都变，
+     * 天然不受影响，故只有图片中招）。修法：屏蔽值记「被清空条目的 time」，
+     * 仅当补回条目的 time <= 该值时才拦（= 云端存储里残留的旧副本，v4.13 要防的复活）；
+     * 新一次复制的推送 time 会刷新（变大）→ 放行，并解除该键的屏蔽。
      */
-    @Volatile
-    private var sWipeTime = 0L
+    private val sWipedKeys = java.util.LinkedHashMap<String, Long>()
+
 
 
     /**
@@ -508,21 +525,103 @@ object CrossDeviceClipboardHook {
     private fun mergeCloudIntoDisplay() {
         val cache = mergedCloudCache()
         if (cache.isEmpty()) return
-        val adapter = sAdapterRef?.get() ?: return
+        val adapter = sAdapterRef?.get()
+        if (adapter == null) {
+            log("merge skipped: adapter not captured")
+            fallbackReloadLocal()
+            return
+        }
         mainHandler.post {
             try {
                 @Suppress("UNCHECKED_CAST")
                 val list = adapter.javaClass.getMethod("getAdapterList").invoke(adapter)
                         as? MutableList<Any?>
-                if (list != null) {
-                    if (prependMissingCloud(list, cache)) {
-                        adapter.javaClass.getMethod("notifyDataSetChanged").invoke(adapter)
-                        log("cloud merged into live list (prepended and/or pinned re-pinned)")
-                    }
+                if (list == null) {
+                    log("merge skipped: adapter list unavailable")
+                    fallbackReloadLocal()
+                    return@post
+                }
+                if (prependMissingCloud(list, cache)) {
+                    adapter.javaClass.getMethod("notifyDataSetChanged").invoke(adapter)
+                    // 空面板时 RecyclerView 被 phrase 置 GONE，仅 notify 不会切换可见性，
+                    // 补调 phrase 的空视图状态机令 RecyclerView 重新 VISIBLE（v4.15）。
+                    ClipboardPinHook.syncEmptyState(list)
+                    log("cloud merged into live list (prepended and/or pinned re-pinned)")
+                } else if (missingRowCount(list, cache) > 0) {
+                    // v4.16：缓存里有显示列表没有的条目却一条都没补进去（被清空屏蔽等），
+                    // 云端推送此刻**已经落本地库**（日志实证 setClipBoardDataToLocal），
+                    // 重拉一次本地列表即可让面板实时显示——与「关面板重开」走同一数据源。
+                    // 本地库里没有的陈旧云端副本不会被这次重拉带回来，v4.13 的防复活不受影响。
+                    log("merge: rows missing but none prepended; reload local list")
+                    fallbackReloadLocal()
                 }
             } catch (t: Throwable) {
                 log("merge into display error - $t")
             }
+        }
+    }
+
+    /**
+     * v4.16：兜底重拉本地剪贴板列表刷新面板（带冷却，避免同一推送反复重拉）。
+     *
+     * <p>云端条目在推送到达时会被 phrase 同步落本地库（{@code setClipBoardDataToLocal}），
+     * 因此「重拉本地列表」与「关面板再打开」看到的是同一份数据、渲染链路完全一致
+     * （走 buildRecyclerViewDisplayList 定型），是实时显示最稳的兜底。
+     */
+    private fun fallbackReloadLocal() {
+        val now = System.currentTimeMillis()
+        if (now - sLastReloadMs < RELOAD_COOLDOWN_MS) return
+        sLastReloadMs = now
+        ClipboardPinHook.refreshFromLocal("cloud merge fallback")
+    }
+
+    /** 缓存里有、但显示列表里没有的条目数（被清空屏蔽的也算），用于判断要不要兜底重拉。 */
+    private fun missingRowCount(list: List<Any?>, cache: List<Any?>): Int {
+        val present = HashSet<String>()
+        for (e in list) {
+            val k = entryKey(e)
+            if (k != null) present.add(k)
+        }
+        var n = 0
+        for (c in cache) {
+            val k = entryKey(c)
+            if (k == null || k !in present) n++
+        }
+        return n
+    }
+
+    /**
+     * v4.16：把要补回显示列表的云端条目类型归一，与「关面板重开」路径一致。
+     *
+     * <p>重开面板时条目会经 {@code buildRecyclerViewDisplayList}——type==0 的由原生
+     * {@code buildClipboardModelDataType} 定型，图文误判再由 [fixImageType] 纠正；
+     * 而实时合入拿的是 {@code getCrossDeviceClipboardData} 直出模型，没走这两步，
+     * 类型不对时 adapter 直接落到 {@code invalid clip type} 分支，图片行渲染不出来。
+     */
+    private fun normalizeEntryType(e: Any?): Any? {
+        if (e == null) return null
+        var cur: Any = e
+        val type = try {
+            (Reflect.callMethod(cur, "getType") as? Number)?.toInt()
+        } catch (_: Throwable) { null }
+        if (type == 0) {
+            cur = rebuildModelType(cur)
+        }
+        fixImageType(listOf(cur))
+        return cur
+    }
+
+    /** 反射调 {@code MiuiClipboardManager.buildClipboardModelDataType(model)} 给未定型条目定型。 */
+    private fun rebuildModelType(e: Any): Any {
+        return try {
+            val cls = java.lang.Class.forName(MIUI_CLIPBOARD_MANAGER, false, e.javaClass.classLoader)
+            val m = cls.getDeclaredMethod("buildClipboardModelDataType", e.javaClass)
+            m.isAccessible = true
+            val out = m.invoke(null, e)
+            if (out == null) e else out
+        } catch (t: Throwable) {
+            log("rebuild type failed - $t")
+            e
         }
     }
 
@@ -554,19 +653,32 @@ object CrossDeviceClipboardHook {
             }
         }
         var added = 0
+        var blocked = 0
         for (c in cache) {
-            // v4.13：跳过「一键清空前」的旧条目，防止清空后旧云端/图片条目复活
-            // （来源：跨设备重拉 or 缓存残留）。只放行清空之后真正的新条目（time > sWipeTime）。
-            // 判不了 time 的条目（time<=0）在清空后也按旧条目跳过（保守，宁可不显示）。
-            if (sWipeTime > 0L) {
-                val t = entryTime(c) ?: 0L
-                if (t <= sWipeTime) {
-                    continue
+            // v4.14：精确跳过「已被一键清空」的条目（按 entryKey 屏蔽），防复活。
+            // 不再按时间一刀切——正常云端/新条目（entryKey 不同）照常实时显示，
+            // 修 v4.13 回归（云端条目面板开着时不显示、关面板重开才有）。
+            // v4.16：只屏蔽「被清空那一代副本」——time <= 记账值才算旧副本；
+            // 新一次复制的推送 time 刷新（变大）→ 放行并解除屏蔽（图片稳定键不再被永久拦）。
+            val k = entryKey(c)
+            if (k != null) {
+                val wt = sWipedKeys[k]
+                if (wt != null) {
+                    val t = entryTime(c) ?: 0L
+                    if (t <= wt) {
+                        blocked++
+                        continue
+                    }
+                    sWipedKeys.remove(k)
+                    log("wipe block lifted: $k (new copy t=$t > wiped t=$wt)")
                 }
             }
-            val k = entryKey(c)
             if (k == null || k !in present) {
-                list.add(added, c)
+                // v4.16：云端条目直出（未经 buildRecyclerViewDisplayList）可能未定型或
+                // 类型被误判成文本，补进列表也渲染不出图片行。这里按「重开面板」那条的
+                // 处理流程归一类型（type==0 走原生定型 + 修正图文误判），保证实时合入
+                // 与关面板重开显示一致。
+                list.add(added, normalizeEntryType(c))
                 added++
                 if (k != null) {
                     present.add(k)
@@ -576,6 +688,8 @@ object CrossDeviceClipboardHook {
         var changed = added > 0
         if (added > 0) {
             log("prepend $added cloud rows into setClipboardList (list now ${list.size} rows)")
+        } else if (blocked > 0) {
+            log("prepend skipped: $blocked wiped cloud rows still blocked")
         }
         // v4.11：云端条目插入头部后，把置顶条目归位到 index 0，与查询层 reorder() 一致，
         // 修复「面板开启 + 有置顶时云端来数据，置顶被挤到第二位」的缺陷。
@@ -708,12 +822,52 @@ object CrossDeviceClipboardHook {
      * 再遇「关面板再开被冲掉」仍能从新缓存补回。
      */
     fun clearRestoreCaches() {
+        // v4.14：先把「当前被清空的这些条目」的 entryKey 记入 sWipedKeys，之后任何补回路径
+        // 都不得再塞回它们。关键：此时刷新尚未跑，adapter 显示列表仍是清空前内容，正是要屏蔽的集合。
+        // v4.16：值记该条目的 time（屏蔽「这一代副本」，不是永久屏蔽同一内容）。
+        val wiped = java.util.LinkedHashMap<String, Long>()
+        fun mark(key: String?, e: Any?) {
+            if (key == null) return
+            val t = entryTime(e) ?: 0L
+            val old = wiped[key]
+            if (old == null || t > old) wiped[key] = t
+        }
+        try {
+            val adapter = sAdapterRef?.get()
+            if (adapter != null) {
+                val list = adapter.javaClass.getMethod("getAdapterList").invoke(adapter) as? List<*>
+                if (list != null) {
+                    for (e in list) {
+                        mark(entryKey(e), e)
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            log("capture wiped keys (display) failed - " + t)
+        }
+        sCloudCache?.let { base ->
+            for (e in base) {
+                mark(entryKey(e), e)
+            }
+        }
+        for ((k, v) in sSeenCloud) {
+            mark(k, v)
+        }
+        for ((k, t) in wiped) {
+            val old = sWipedKeys[k]
+            if (old == null || t > old) sWipedKeys[k] = t
+        }
+        while (sWipedKeys.size > 400) {
+            val it = sWipedKeys.keys.iterator()
+            if (it.hasNext()) {
+                it.next()
+                it.remove()
+            }
+        }
         sCloudCache = null
         sSeenCloud.clear()
-        sWipeTime = System.currentTimeMillis()
-        log("restore caches cleared (panel wiped), wipeTime=" + sWipeTime)
+        log("panel wiped: caches cleared, blocked " + wiped.size + " keys (total " + sWipedKeys.size + ")")
     }
-
 
     /** determineContent（equals 用的内容指纹）；失败返回 null。 */
     private fun determineContent(e: Any): String? {
@@ -735,7 +889,9 @@ object CrossDeviceClipboardHook {
             val type = try {
                 (Reflect.callMethod(e, "getType") as? Number)?.toInt()
             } catch (_: Throwable) { null }
-            if (type != 2 && type != 3 && type != 10) continue
+            // v4.16：一并覆盖 type==0（云端直出、原生定型失败的未定型条目），
+            // 保底不让它落到 adapter 的 invalid clip type 分支。
+            if (type != 0 && type != 2 && type != 3 && type != 10) continue
             val dc = determineContent(e) ?: continue
             var hasImg = false
             var hasText = false

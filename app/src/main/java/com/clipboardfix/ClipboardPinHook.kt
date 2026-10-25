@@ -722,17 +722,23 @@ object ClipboardPinHook {
                 val display = Reflect.callStaticMethod(
                         mgr, "buildRecyclerViewDisplayList", data)
                 Reflect.callMethod(adapter, "setClipboardList", display)
-                // 同步 popup 内部状态，保证空视图 / 清空按钮显示正确
+                // 同步 popup 内部状态，保证空视图 / 清空按钮显示正确。
+                // 【关键不变量】mCurrentImeClipboardList 必须与 adapter 持有的列表是
+                // **同一个对象**：maybeChangeEmptyViewAndClearButtonState 在判定入参列表
+                // 非空后，还要再看 mCurrentImeClipboardList.size() 才决定 RecyclerView
+                // 可见性（popup_view:697-719）。写 data（另一份列表）会让两者分叉——
+                // 之后实时合入补进 adapter 列表的条目，会因该字段为空而让 RecyclerView
+                // 一直 GONE、条目全部不可见（v4.16 回归：日志显示补入成功但面板空白）。
                 try {
-                    Reflect.setField(pw, "mCurrentImeClipboardList", data)
+                    Reflect.setField(pw, "mCurrentImeClipboardList", display)
                 } catch (ignored: Throwable) {
                     // 字段不存在或类型不符时忽略
                 }
                 try {
-                    Reflect.callMethod(pw, "maybeChangeEmptyViewAndClearButtonState", data)
+                    Reflect.callMethod(pw, "maybeChangeEmptyViewAndClearButtonState", display)
                 } catch (t2: Throwable) {
                     try {
-                        Reflect.callMethod(pw, "maybeChangeEmptyViewAndClearButtonState", display)
+                        Reflect.callMethod(pw, "maybeChangeEmptyViewAndClearButtonState", data)
                     } catch (ignored: Throwable) {
                         // 两种参数形态都不匹配时忽略
                     }
@@ -752,6 +758,44 @@ object ClipboardPinHook {
             } catch (t: Throwable) {
                 log("refresh failed - " + t)
             }
+        }
+    }
+
+    /**
+     * v4.15：把云端条目合入显示列表后，同步 popup 的空视图/列表可见性。
+     *
+     * <p>空面板时 phrase 的 {@code maybeChangeEmptyViewAndClearButtonState} 已把 RecyclerView 置 GONE、
+     * NoItemsView 置 VISIBLE；{@code mergeCloudIntoDisplay} 直接改 adapter 列表 + notifyDataSetChanged
+     * 并不切换可见性，导致条目进了列表却看不见（关面板重开走 setClipboardList 重设才显示）。
+     * 补完后调用本方法令 RecyclerView 重新 VISIBLE，云端条目即实时可见（修「空面板云端不实时显示」）。
+     */
+    /**
+     * v4.16：供云端合并模块调用的面板重拉入口。
+     *
+     * <p>云端条目推送到达时会被 phrase 同步落本地库，因此「重拉本地列表」得到的就是
+     * 「关面板再打开」所见的同一份数据、同一条渲染链路。当增量合入补不进条目时
+     * （例如该条目在清空屏蔽名单里）用它兜底，保证面板开着也能实时显示云端内容。
+     */
+    @JvmStatic
+    fun refreshFromLocal(reason: String) {
+        log("refresh from local: $reason")
+        refreshPanel()
+    }
+
+    @JvmStatic
+    fun syncEmptyState(list: List<Any?>) {
+        val pw = popupOf() ?: return
+        // 先保证空视图状态机所看的 mCurrentImeClipboardList 就是当前显示列表本身
+        // （见 refreshPanel 里的不变量说明），否则列表非空也会被判成空、RecyclerView 保持 GONE。
+        try {
+            Reflect.setField(pw, "mCurrentImeClipboardList", list)
+        } catch (ignored: Throwable) {
+            // 字段不存在或类型不符时忽略
+        }
+        try {
+            Reflect.callMethod(pw, "maybeChangeEmptyViewAndClearButtonState", list)
+        } catch (t: Throwable) {
+            log("sync empty state failed - " + t)
         }
     }
 
