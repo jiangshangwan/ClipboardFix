@@ -23,7 +23,7 @@ import java.lang.reflect.Method
  * 进程刚起时不在 classpath，按名 loadClass 必抛 ClassNotFound。因此修复必须装在面板实际出现的
  * 进程，用框架 PopupWindow 的显示点（按实例类名识别面板）触发——与 PanelColorHook 同思路。
  *
- * ============ 修复（v4 / v4.1，本类全部实现）============
+ * ============ 修复（v4 / v4.1 / v4.2，本类全部实现）============
  *  v4【显示层·进程无关】：hook 框架 android.widget.PopupWindow.showAtLocation，回调里用实例
  *     类名识别面板，每次面板打开主动调两次 setRemoteDataToView()（立即 + 600ms 后），把云端
  *     条目强制合进列表，绕开「必须等 /across 变更通知」的限制。该 hook 装在所有被 hook 进程，
@@ -31,6 +31,19 @@ import java.lang.reflect.Method
  *  v4.1【打开即出】：hook MiuiClipboardManager.getCrossDeviceClipboardData 缓存云端数据；
  *     hook InputMethodClipboardAdapter.setClipboardList，在本地列表灌入时把缺失的云端条目
  *     补回列表头部（云端在顶、幂等去重），避免被整表替换冲掉，面板首帧即含云端图。
+ *  v4.3【去重键修正】：v4.1 原用 {@code list.contains(cache[0])} 判断云端条目是否已在列表里，
+ *     实测恒为 true——{@code ClipboardContentModel.equals()} 是粗粒度实现（未落库条目 id 均为
+ *     默认值，任意两条目即相等），导致 prepend 永远被跳过，表现为「数据查到了但不显示」
+ *     （用户 2026-10-25 复测：15 Pro 重启后第三方输入法面板云端 21 条裁 20 条成功、两次
+ *     setClipboardList 均实录，但 prepend 日志零触发）。改用 time 去重：同一毫秒的复制事件
+ *     才可能撞键，实际不存在；云条目 time 不在入列表即缺失，补回头部。
+ *  v4.2【重启就绪重试】：开机后 com.miui.phrase 进程/数据未就绪，第三方输入法进程里首帧
+ *     getCrossDeviceClipboardData（经 content://com.miui.phrase.input.provider 实时查询）
+ *     返回空列表，而 /across observer 只在数据「变更」时回调（provider 首次加载不算变更），
+ *     云端条目再也合不进来——表现为「重启后云同步假失效」，需切到默认输入法打开面板再切回
+ *     才恢复（用户 2026-10-25 反馈）。修法：面板打开后有界重试 setRemoteDataToView()
+ *     （其内部每次都重新查询 provider），拿到非空云端数据即停；面板消失或超上限也停
+ *     （缓存仍在，下次打开走 setClipboardList 补回）。
  *
  *  历史上曾尝试用「保活 /across 观察者」（定时器 + 拦截 endObserveThumbnailInfoChange）来
  *  间接刷新显示层，但观察者活着 ≠ /across 会变更，对显示层无效，相关代码已作为失效代码删除；
@@ -42,6 +55,24 @@ object CrossDeviceClipboardHook {
 
     /** 面板打开后二次合并云端的延迟，覆盖 initData 内异步填本地列表的时序。 */
     private const val MERGE_DELAY_MS = 600L
+
+    /** 云端就绪重试间隔：重启后 phrase provider 异步就绪，首帧合并常拿到空列表。 */
+    private const val CLOUD_RETRY_MS = 1000L
+
+    /** 云端就绪重试次数上限（约 30s 窗口，覆盖开机后 provider 进程启动与数据就绪）。 */
+    private const val CLOUD_RETRY_MAX = 30
+
+    /**
+     * 剪贴板列表显示上限（phrase 的 {@code MAX_CLIPBOARD_LIST_SIZE}）。
+     *
+     * <p><b>为什么必须裁到这个数</b>：phrase 的云端合并逻辑
+     * {@code lambda$setRemoteDataToView$9} 修剪循环有缺陷——总条数超 20 时执行
+     * {@code remove((本地数-1)-i)}，云端 > 20 条时修剪量必然超过本地列表长度，索引算到
+     * -1 抛 {@code IndexOutOfBoundsException} 直接崩掉输入法进程（小米15 Pro 云端 21 条，
+     * 每次开剪贴板面板必闪退，用户 2026-10-25 反馈；本模块 v4 起强制开面板合并使其必触发，
+     * observer 路径同样经该方法）。裁到最新 20 条后修剪量 ≤ 本地数，索引恒 ≥ 0。
+     */
+    private const val MAX_CLIP_LIST = 20
 
     /** 框架 PopupWindow 全限定名（任何进程都能按名拿到）。 */
     private const val POPUP_WINDOW = "android.widget.PopupWindow"
@@ -69,6 +100,18 @@ object CrossDeviceClipboardHook {
     /** 云端条目缓存（getCrossDeviceClipboardData 最近一次返回），供 setClipboardList 补回。 */
     @Volatile
     private var sCloudCache: List<Any?>? = null
+
+    /**
+     * 本次面板打开会话是否已见过非空云端数据。
+     *
+     * <p>重启后 com.miui.phrase 进程/数据未就绪，第三方输入法进程里首帧
+     * getCrossDeviceClipboardData 返回空列表，而 /across observer 只在数据变更时回调
+     * （provider 首次加载不算变更）→ 云端条目再也合不进来，表现为「重启后云同步假
+     * 失效」：需切到默认输入法打开面板（provider 就此就绪）再切回才恢复
+     * （用户 2026-10-25 反馈）。重试窗口据此判断「还没拿到，继续试」。
+     */
+    @Volatile
+    private var sCloudSeen = false
 
     /** 面板类（动态 dex）的两个 hook 是否已装：进程内只装一次。 */
     private var panelClassHooksInited = false
@@ -127,6 +170,8 @@ object CrossDeviceClipboardHook {
     private fun scheduleMerge(self: Any) {
         if (sMerged.containsKey(self)) return
         sMerged[self] = true
+        // 每次打开都是新会话：重置「已见到云端数据」标志，供重试窗口判断。
+        sCloudSeen = false
         // 面板类（动态 dex）此刻已加载：装上云端缓存 + setClipboardList 补回两个 hook，
         // 保证随后 $2$1 灌本地列表时云端条目不被整表替换冲掉（打开即出的关键）。
         ensurePanelClassHooks(self.javaClass.classLoader)
@@ -137,7 +182,56 @@ object CrossDeviceClipboardHook {
             } catch (_: Throwable) {
             }
         }, MERGE_DELAY_MS)
+        startCloudRetry(self)
         log("force setRemoteDataToView on panel open")
+    }
+
+    /**
+     * 云端就绪重试窗口（v4.2）：开机后 phrase provider 异步就绪，首帧合并常拿到空列表，
+     * 而 /across observer 不会因 provider 首次加载触发——「重启后云同步假失效」
+     * （用户 2026-10-25 反馈）正源于此。每 1s 调一次 setRemoteDataToView()（其内部经
+     * mSubHandler 重新查询 provider，不卡 UI 线程），拿到非空云端数据即停；
+     * 面板已消失或超上限也停（sCloudCache 仍在，下次打开走 setClipboardList 补回）。
+     */
+    private fun startCloudRetry(self: Any) {
+        val attempt = object : Runnable {
+            var tries = 0
+
+            override fun run() {
+                if (sCloudSeen || tries >= CLOUD_RETRY_MAX) {
+                    return
+                }
+                tries++
+                if (!isPanelAlive(self)) {
+                    // 面板已关：缓存里若有数据，下次打开由 setClipboardList 补回，无需再试。
+                    return
+                }
+                try {
+                    invokeMerge(self)
+                    if (sCloudSeen) {
+                        log("cloud retry got data after $tries tries")
+                        return
+                    }
+                } catch (_: Throwable) {
+                    // 单次失败不致命，下一拍继续
+                }
+                if (tries < CLOUD_RETRY_MAX) {
+                    mainHandler.postDelayed(this, CLOUD_RETRY_MS)
+                } else {
+                    log("cloud retry exhausted, cloud data still empty")
+                }
+            }
+        }
+        mainHandler.postDelayed(attempt, CLOUD_RETRY_MS)
+    }
+
+    /** 面板是否还在显示（PopupWindow.isShowing 安全反射；判不了就当活着，靠超时收尾）。 */
+    private fun isPanelAlive(self: Any): Boolean {
+        return try {
+            self.javaClass.getMethod("isShowing").invoke(self) as? Boolean ?: true
+        } catch (_: Throwable) {
+            true
+        }
     }
 
     /**
@@ -157,6 +251,19 @@ object CrossDeviceClipboardHook {
                         XposedInit.hook(m) { chain ->
                             val r = chain.proceed()
                             if (r is List<*>) {
+                                if (r.isNotEmpty()) {
+                                    // 拿到过非空云端数据：重试窗口可以收了
+                                    sCloudSeen = true
+                                }
+                                if (r.size > MAX_CLIP_LIST) {
+                                    // 裁到最新 20 条（列表新在前）：见 MAX_CLIP_LIST 说明——
+                                    // 不裁的话 phrase 合并修剪循环 remove(-1) 崩输入法进程。
+                                    val capped = ArrayList<Any?>(r.subList(0, MAX_CLIP_LIST))
+                                    sCloudCache = capped
+                                    log("cloud rows ${r.size} > $MAX_CLIP_LIST,"
+                                            + " capped to newest $MAX_CLIP_LIST")
+                                    return@hook capped
+                                }
                                 sCloudCache = ArrayList(r)
                                 log("cloud cache updated: ${r.size} rows")
                             }
@@ -177,13 +284,15 @@ object CrossDeviceClipboardHook {
                         XposedInit.hook(m) { chain ->
                             try {
                                 val arg = chain.getArg(0)
-                                if (arg is ArrayList<*>) {
+                                // 用 MutableList 而非 ArrayList：phrase 各版本灌入的列表
+                                // 实现类不完全一致（Arrays$ArrayList / 包装 list 均有可能），
+                                // 只要可写就补，不可写静默跳过（下同）。
+                                if (arg is MutableList<*>) {
                                     @Suppress("UNCHECKED_CAST")
-                                    val list = arg as ArrayList<Any?>
+                                    val list = arg as MutableList<Any?>
                                     val cache = sCloudCache
-                                    if (cache != null && cache.isNotEmpty() && !list.contains(cache[0])) {
-                                        list.addAll(0, cache)
-                                        log("prepend cloud rows into setClipboardList")
+                                    if (cache != null && cache.isNotEmpty()) {
+                                        prependMissingCloud(list, cache)
                                     }
                                 }
                             } catch (t: Throwable) {
@@ -198,6 +307,59 @@ object CrossDeviceClipboardHook {
             }
         } catch (t: Throwable) {
             log("FAIL: ensurePanelClassHooks - $t")
+        }
+    }
+
+    /**
+     * 把缓存里缺失的云端条目补回列表头部（云端在上、保持缓存原顺序），幂等。
+     *
+     * <p><b>为什么不能用 contains/equals 去重</b>：{@code ClipboardContentModel.equals()}
+     * 是粗粒度实现——未落库条目 id 均为默认值，任意两条目即判等，导致「本地列表明明没有
+     * 云端条目，contains 却返回 true」，prepend 永远被跳过（v4.1 实测零触发，用户
+     * 2026-10-25 复测确认）。改按 time 去重：云端条目的 time 不在入参列表里才算缺失。
+     * 同一毫秒的复制事件才可能撞键，实际不存在；判不了 time 的条目按缺失处理（宁可多显示）。
+     *
+     * <p>原地修改入参即同步了面板的 {@code mCurrentImeClipboardList} 字段——
+     * {@code $2$1} 与 reload 分支传给本方法的都是该字段本身（同一对象），
+     * 点击取值按位置索引两边一致，不会错位。
+     */
+    private fun prependMissingCloud(list: MutableList<Any?>, cache: List<Any?>) {
+        val present = HashSet<Long>()
+        for (e in list) {
+            val t = entryTime(e)
+            if (t != null) {
+                present.add(t)
+            }
+        }
+        var added = 0
+        for (c in cache) {
+            val t = entryTime(c)
+            if (t == null || t !in present) {
+                list.add(added, c)
+                added++
+                if (t != null) {
+                    present.add(t)
+                }
+            }
+        }
+        if (added > 0) {
+            log("prepend $added cloud rows into setClipboardList"
+                    + " (list now ${list.size} rows)")
+        } else {
+            log("skip prepend: all ${cache.size} cloud rows already in list")
+        }
+    }
+
+    /** 取条目 time（{@code ClipboardContentModel.getTime()}，long）；反射失败返回 null。 */
+    private fun entryTime(e: Any?): Long? {
+        if (e == null) {
+            return null
+        }
+        return try {
+            val m = e.javaClass.getMethod("getTime")
+            (m.invoke(e) as? Number)?.toLong()
+        } catch (_: Throwable) {
+            null
         }
     }
 
