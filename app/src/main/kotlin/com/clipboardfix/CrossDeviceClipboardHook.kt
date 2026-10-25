@@ -44,6 +44,14 @@ import java.lang.reflect.Method
  *     才恢复（用户 2026-10-25 反馈）。修法：面板打开后有界重试 setRemoteDataToView()
  *     （其内部每次都重新查询 provider），拿到非空云端数据即停；面板消失或超上限也停
  *     （缓存仍在，下次打开走 setClipboardList 补回）。
+ *  v4.5【数量上限解锁兼容】：phrase 的 lambda$setRemoteDataToView$9 修剪循环
+ *     （云端+显示-20>0 时从显示列表尾部删）会把面板总量恒定压到 20——开启「解锁剪贴板
+ *     数量上限」后本地可存 20+ 条，每次开面板都被砍回 20，用户感知「上限解锁失效」。
+ *     而 getCrossDeviceClipboardData 全 dex 只有 lambda$9 一个调用方（指令级扫描实证），
+ *     故解锁开启时：hook 内全量缓存云端数据（不裁）后向 lambda$9 返回空列表，其 isEmpty
+ *     判断直接早退——修剪与 remove(-1) 崩溃同时绕开；显示改由 setClipboardList 的全量
+ *     本地 + 本 hook 的增量合入（prepend + notify）维护，面板显示全部条目。
+ *     开关关闭时行为与本版之前完全一致（云端裁 20 防崩 + 原生修剪）。
  *
  *  历史上曾尝试用「保活 /across 观察者」（定时器 + 拦截 endObserveThumbnailInfoChange）来
  *  间接刷新显示层，但观察者活着 ≠ /across 会变更，对显示层无效，相关代码已作为失效代码删除；
@@ -71,6 +79,9 @@ object CrossDeviceClipboardHook {
      * -1 抛 {@code IndexOutOfBoundsException} 直接崩掉输入法进程（小米15 Pro 云端 21 条，
      * 每次开剪贴板面板必闪退，用户 2026-10-25 反馈；本模块 v4 起强制开面板合并使其必触发，
      * observer 路径同样经该方法）。裁到最新 20 条后修剪量 ≤ 本地数，索引恒 ≥ 0。
+     *
+     * <p><b>仅在「解锁剪贴板数量上限」关闭时生效</b>：开启时走 v4.5 路径（返回空列表
+     * 短路 lambda$9），不修剪也不崩，本常量不参与。
      */
     private const val MAX_CLIP_LIST = 20
 
@@ -100,6 +111,15 @@ object CrossDeviceClipboardHook {
     /** 云端条目缓存（getCrossDeviceClipboardData 最近一次返回），供 setClipboardList 补回。 */
     @Volatile
     private var sCloudCache: List<Any?>? = null
+
+    /**
+     * 当前面板 adapter 实例的弱引用（setClipboardList 被调时记录）。
+     *
+     * <p>v4.5 起用于「数量上限解锁开启」时把云端条目增量合入面板**当前显示列表**
+     * （observer 路径下 $2$1 不会重跑，只能直接操作 adapter 的列表再刷新）。
+     */
+    @Volatile
+    private var sAdapterRef: java.lang.ref.WeakReference<Any>? = null
 
     /**
      * 本次面板打开会话是否已见过非空云端数据。
@@ -236,8 +256,10 @@ object CrossDeviceClipboardHook {
 
     /**
      * 面板类 hook（动态 dex，进程内只装一次）：
-     *  1) getCrossDeviceClipboardData：缓存云端条目；
-     *  2) adapter.setClipboardList：本地列表灌入时把缺失的云端条目补回头部（云端在顶、幂等）。
+     *  1) getCrossDeviceClipboardData：缓存云端条目；数量上限解锁开启时返回空列表
+     *     短路 phrase 的合并修剪（见 v4.5）；
+     *  2) adapter.setClipboardList：本地列表灌入时把缺失的云端条目补回头部（云端在顶、幂等），
+     *     并记录 adapter 实例供增量合入用。
      */
     private fun ensurePanelClassHooks(cl: ClassLoader) {
         if (panelClassHooksInited) return
@@ -254,6 +276,19 @@ object CrossDeviceClipboardHook {
                                 if (r.isNotEmpty()) {
                                     // 拿到过非空云端数据：重试窗口可以收了
                                     sCloudSeen = true
+                                }
+                                if (ModulePrefs.isUnlimitCountEnabled()) {
+                                    // v4.5：数量上限解锁开启——全量缓存（不裁）后向调用方
+                                    // （全 dex 唯一的调用方就是 lambda$setRemoteDataToView$9）
+                                    // 返回空列表，令其 isEmpty 判断直接早退：既绕开「总量
+                                    // 压到 20」的修剪循环（解锁后本地 20+ 条不再被砍），
+                                    // 也绕开 remove(-1) 崩溃。显示改由 setClipboardList 的
+                                    // 全量本地 + 下面的增量合入维护。
+                                    sCloudCache = ArrayList<Any?>(r)
+                                    log("cloud cache updated: ${r.size} rows"
+                                            + " (uncapped, count-unlock on)")
+                                    mergeCloudIntoDisplay()
+                                    return@hook ArrayList<Any?>()
                                 }
                                 if (r.size > MAX_CLIP_LIST) {
                                     // 裁到最新 20 条（列表新在前）：见 MAX_CLIP_LIST 说明——
@@ -282,6 +317,8 @@ object CrossDeviceClipboardHook {
                     ) {
                         m.isAccessible = true
                         XposedInit.hook(m) { chain ->
+                            // 记录 adapter 实例（v4.5 增量合入用；弱引用不碍回收）
+                            sAdapterRef = java.lang.ref.WeakReference(chain.thisObject)
                             try {
                                 val arg = chain.getArg(0)
                                 // 用 MutableList 而非 ArrayList：phrase 各版本灌入的列表
@@ -307,6 +344,38 @@ object CrossDeviceClipboardHook {
             }
         } catch (t: Throwable) {
             log("FAIL: ensurePanelClassHooks - $t")
+        }
+    }
+
+    /**
+     * v4.5：数量上限解锁开启时，把缓存里的云端条目增量合入面板当前显示列表（主线程执行）。
+     *
+     * <p>调用点：getCrossDeviceClipboardData hook——其调用方 lambda$9 已被返回空列表短路，
+     * 不会自行合并/修剪。两种场景都需要这里兜底：① 开面板首帧 $2$1 灌全量本地时缓存还没
+     * 就绪（重启后 provider 异步就绪），云端条目靠这里补；② 面板开着期间 PC 来了新条目
+     * （/across observer 路径），$2$1 不会重跑，只能直接操作 adapter 列表再刷新。
+     * 与 setClipboardList hook 内的 prepend 走同一 time 去重逻辑，幂等。
+     */
+    private fun mergeCloudIntoDisplay() {
+        val cache = sCloudCache
+        if (cache.isNullOrEmpty()) return
+        val adapter = sAdapterRef?.get() ?: return
+        mainHandler.post {
+            try {
+                @Suppress("UNCHECKED_CAST")
+                val list = adapter.javaClass.getMethod("getAdapterList").invoke(adapter)
+                        as? MutableList<Any?>
+                if (list != null) {
+                    val before = list.size
+                    prependMissingCloud(list, cache)
+                    if (list.size != before) {
+                        adapter.javaClass.getMethod("notifyDataSetChanged").invoke(adapter)
+                        log("cloud merged into live list: ${list.size - before} new rows")
+                    }
+                }
+            } catch (t: Throwable) {
+                log("merge into display error - $t")
+            }
         }
     }
 
