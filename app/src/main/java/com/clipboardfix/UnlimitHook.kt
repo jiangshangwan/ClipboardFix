@@ -63,6 +63,17 @@ object UnlimitHook {
     /** 72 小时（毫秒）——仅用于日志对照，hook 本身不依赖该值。 */
     private const val CLIPBOARD_EXPIRE_MS = 259200000L
 
+    /** 本地图/文件 keep hook 是否已装（进程内只装一次，防 loadDex 多次回调重复拦截）。 */
+    @Volatile
+    private var localImageKeepInited = false
+
+    /** 本机图片保存门 hook 是否已装（进程内只装一次）。 */
+    @Volatile
+    private var localImageSaveGateInited = false
+
+    /** IME 超级剪贴板能力 meta-data 键（manifest 声明，第三方输入法均未声明）。 */
+    private const val SUPER_CLIP_META_KEY = "is_support_miui_super_clipboard"
+
     /**
      * @param countUnlock 条数上限解锁开关（常用语条数/字数 + 剪贴板保存路径清理）
      * @param timeUnlock  时间限制解锁开关（剪贴板保存路径时间清理 + 读取路径 72h 过滤）
@@ -79,6 +90,12 @@ object UnlimitHook {
             log("FAIL: no classloader - $t")
             return
         }
+        // 本机复制图片/文件 keep（读取路径）：与解锁开关无关，尽早装上，防止 phrase 侧
+        // 查询触发 shouldRemoveCurrentElement 把本地图删掉。输入法进程侧另由
+        // ImeUnlockHook 的 loadDex 回调转来安装（见 hookShouldRemoveLocalImages）。
+        hookShouldRemoveLocalImages(cl)
+        // 本机复制图片「不落库」修复（保存路径）：同上，两侧进程都装。
+        hookLocalImageSaveGate(cl)
         // 固定类名的部分直接装，不依赖 DexKit
         if (countUnlock) {
             hookPhraseCountLimit(cl)
@@ -165,6 +182,200 @@ object UnlimitHook {
             log("OK: clipboard 72h filter ($CLIPBOARD_EXPIRE_MS ms) bypassed, curTime=0, on ${target.name}")
         } catch (t: Throwable) {
             log("FAIL: clipboard time hook - $t")
+        }
+    }
+
+    /**
+     * 本机复制的图片/文件「显示即被删」修复。
+     *
+     * <p><b>根因（v4.9 修正版）</b>：{@code getNoExpiredClipboardData} 的删除分支有三个触发条件
+     * （age>72h / content 空 / {@code shouldRemoveCurrentElement} 返回 true），命中即
+     * {@code v1.remove()} 移出查询结果，且对图片类条目调 {@code deleteExpiredImgBasedClipboard}
+     * **连图片文件一起删**（日志 {@code "no remain time delete ... type : 11"} 实证 2026-10-25）。
+     * 其中 {@code shouldRemoveCurrentElement} 对本地条目要求 {@code canReadFileUri} 非空且文件
+     * 存在，而保存路径常只写 {@code fileUri} → 恒命中删除。更隐蔽的是：本机复制的图片经
+     * 通用剪贴板通道（{@code setClipBoardDataToLocal}）保存时被强写 {@code acrossDevices=1}，
+     * 旧版仅放行 {@code across==false} 的 keep 规则完全不生效（{@code keep local} 日志零出现）。
+     *
+     * <p><b>修法</b>：三类条目一律放行保留——① 本地（{@code across==false}）；② 图片/文件类型
+     * （type 11..24）；③ content 里任一 item 带 {@code content://}/{@code file://} 文件引用或
+     * 缩略图。其余条目走原逻辑。另 hook {@code deleteExpiredImgBasedClipboard} 为 no-op，
+     * 条目保留的同时图片文件也不再被误删。与各解锁开关无关，只要类可加载就装。
+     */
+    @JvmStatic
+    fun hookShouldRemoveLocalImages(cl: ClassLoader) {
+        if (localImageKeepInited) return
+        try {
+            val mgrCls = Reflect.findClassIfExists(CLIPBOARD_MANAGER, cl)
+            if (mgrCls == null) {
+                log("WARN: $CLIPBOARD_MANAGER not found for local-image keep")
+                return
+            }
+            var target: Method? = null
+            var delTarget: Method? = null
+            for (m in mgrCls.declaredMethods) {
+                if (m.name == "shouldRemoveCurrentElement" && m.parameterTypes.size == 2) {
+                    target = m
+                } else if (m.name == "deleteExpiredImgBasedClipboard" && m.parameterTypes.size == 2) {
+                    delTarget = m
+                }
+            }
+            if (target == null) {
+                log("WARN: shouldRemoveCurrentElement(Context,*) not found")
+                return
+            }
+            localImageKeepInited = true
+            target.isAccessible = true
+            XposedInit.hook(target) { chain ->
+                try {
+                    val model = chain.getArg(1)
+                    if (model != null) {
+                        val across = Reflect.callMethod(model, "isAcrossDevices") as? Boolean ?: false
+                        val type = runCatching {
+                            (Reflect.callMethod(model, "getType") as? Number)?.toInt()
+                        }.getOrNull()
+                        if (!across) {
+                            // 本机条目：canReadFileUri 常为空会被误删，放行保留
+                            return@hook false
+                        }
+                        if (type != null && type >= 11 && type <= 24) {
+                            // 图片/文件类型（含通用剪贴板通道强写 across=1 的本机图片）：
+                            // 走原逻辑会因 fileUri/fileName 空被误删并删文件，放行保留
+                            return@hook false
+                        }
+                        if (hasFileRef(model)) {
+                            // content 带文件引用/缩略图：可渲染的条目一律保留
+                            return@hook false
+                        }
+                    }
+                } catch (_: Throwable) {
+                    // 识别失败走原逻辑
+                }
+                chain.proceed()
+            }
+            log("OK: local image/file keep on ${target.name}")
+            if (delTarget != null) {
+                delTarget.isAccessible = true
+                XposedInit.hook(delTarget) { chain ->
+                    // 过期/误判删除会连图片文件一起清掉；本模块的定位是「保留」，
+                    // 文件删除直接短路（唯一调用点就是 getNoExpiredClipboardData 删除分支）。
+                    null
+                }
+                log("OK: deleteExpiredImgBasedClipboard disabled")
+            }
+        } catch (t: Throwable) {
+            log("FAIL: local image keep hook - $t")
+        }
+    }
+
+    /**
+     * 条目 content（{@code ClipDataItemModel} JSON 数组）里是否有文件/缩略图引用。
+     * 键名不做精确假设：item 任一字符串值以 {@code content://} 或 {@code file://} 开头、
+     * 或键名含 {@code humb}（thumbImage）且值非空，即认为有可用文件引用。
+     */
+    private fun hasFileRef(model: Any): Boolean {
+        val content = runCatching {
+            Reflect.callMethod(model, "getContent") as? String
+        }.getOrNull() ?: return false
+        return try {
+            val arr = JSONArray(content)
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                for (k in o.keys()) {
+                    val v = o.optString(k)
+                    if (v.isEmpty()) continue
+                    if (v.startsWith("content://") || v.startsWith("file://")) return true
+                    if (k.contains("humb") && v.length > 8) return true
+                }
+            }
+            false
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * 本机复制的图片「不落库」修复（v4.10 根因，2026-10-25 日志实证）。
+     *
+     * <p><b>根因</b>：图片/URI 剪贴板条目的保存入口
+     * {@code callPhraseToSaveUriAndFileAbsolutePath} 被静态能力位
+     * {@code MiuiClipboardManager.sIsCurrentImeSupportSuperClipboard} 把关——该位由
+     * {@code init()} 读输入法 manifest meta-data {@code is_support_miui_super_clipboard}
+     * 得到，第三方输入法（微信输入法/豆包等）均未声明 → 恒 false → 保存分支整段跳过
+     * （不写 fileUri、不落库），仅打一条 {@code "sIsCurrentImeSupportSuperClipboard is false"}
+     * 与 {@code "recordClipboardData: not process this clipboard data"}。旁路（通用剪贴板
+     * ThumbnailInfo 投递）只在剪贴板面板打开、observer 注册的窗口内生效，面板关着复制
+     * 就永久丢失。查询结果因此永远只有文本条目——面板「本机图片不显示」的总根源。
+     *
+     * <p><b>修法</b>：① hook {@code InputMethodUtil.hasBooleanMetaData}，对该 key 返回 true
+     * （init() 读取点）；② hook {@code recordClipboardData} 入口把静态位强置 true
+     * （覆盖 clinit 清零 / init 早于 hook 的时序）。置位后保存分支正常执行：phrase provider
+     * {@code set_clip_data} 复制文件、写 fileUri、{@code saveClipboardCipherText} 落库；
+     * {@code shouldRemoveCurrentElement} 尾部的判断也从「恒删」恢复为「有文件项即保留」。
+     */
+    @JvmStatic
+    fun hookLocalImageSaveGate(cl: ClassLoader) {
+        if (localImageSaveGateInited) return
+        try {
+            val mgrCls = Reflect.findClassIfExists(CLIPBOARD_MANAGER, cl)
+            if (mgrCls == null) {
+                log("WARN: $CLIPBOARD_MANAGER not found for save gate")
+                return
+            }
+            var any = false
+            val utilCls = Reflect.findClassIfExists(INPUT_METHOD_UTIL, cl)
+            if (utilCls != null) {
+                for (m in utilCls.declaredMethods) {
+                    if (m.name == "hasBooleanMetaData" && m.parameterTypes.size == 2) {
+                        m.isAccessible = true
+                        XposedInit.hook(m) { chain ->
+                            try {
+                                val key = chain.getArg(1) as? String
+                                if (key == SUPER_CLIP_META_KEY) {
+                                    return@hook true
+                                }
+                            } catch (_: Throwable) {
+                            }
+                            chain.proceed()
+                        }
+                        log("OK: hasBooleanMetaData save gate hooked")
+                        any = true
+                        break
+                    }
+                }
+            }
+            for (m in mgrCls.declaredMethods) {
+                if (m.name == "recordClipboardData" && m.parameterTypes.size == 1) {
+                    m.isAccessible = true
+                    XposedInit.hook(m) { chain ->
+                        forceSuperClipboardFlag(mgrCls)
+                        chain.proceed()
+                    }
+                    log("OK: recordClipboardData flag force on")
+                    any = true
+                    break
+                }
+            }
+            if (any) {
+                localImageSaveGateInited = true
+            } else {
+                log("WARN: save gate targets not found (hasBooleanMetaData/recordClipboardData)")
+            }
+        } catch (t: Throwable) {
+            log("FAIL: local image save gate - $t")
+        }
+    }
+
+    /** 把 {@code sIsCurrentImeSupportSuperClipboard} 静态位强置 true（幂等，已为 true 不重复打日志）。 */
+    private fun forceSuperClipboardFlag(mgrCls: Class<*>) {
+        try {
+            val f = mgrCls.getDeclaredField("sIsCurrentImeSupportSuperClipboard")
+            f.isAccessible = true
+            if (!f.getBoolean(null)) {
+                f.setBoolean(null, true)
+            }
+        } catch (t: Throwable) {
+            log("WARN: force superClipboard flag - $t")
         }
     }
 

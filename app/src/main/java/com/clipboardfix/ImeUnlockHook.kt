@@ -450,6 +450,13 @@ object ImeUnlockHook {
                     // 剪贴板 72h 过滤旁路：面板跑在输入法进程，必须用 dex 的 classloader 装
                     UnlimitHook.hookClipboardTimeLimit(loader)
                 }
+                // 本机复制图片/文件「显示即被删」修复：shouldRemoveCurrentElement 会把
+                // canReadFileUri 缺失的本地图条目判为应删除并删文件，无条件放行保留
+                // （与解锁开关无关，且须早于任何 getNoExpiredClipboardData 查询）。
+                UnlimitHook.hookShouldRemoveLocalImages(loader)
+                // 本机复制图片「不落库」修复：sIsCurrentImeSupportSuperClipboard 能力位
+                // 把关保存入口，第三方输入法恒 false → 图片永远进不了剪贴板库。
+                UnlimitHook.hookLocalImageSaveGate(loader)
                 return@hook null
             }
             log("OK: InputMethodModuleManager.loadDex")

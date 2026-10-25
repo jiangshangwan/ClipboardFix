@@ -348,12 +348,31 @@ object CrossDeviceClipboardHook {
                         m.isAccessible = true
                         XposedInit.hook(m) { chain ->
                             val r = chain.proceed()
+                            // 只读捕获：本地库查询里的图片条目汇入 sSeenCloud，作为
+                            // 关面板再开被整表替换冲掉时的补回来源（不改返回值）。
                             if (r is List<*>) {
                                 recordSeenCloud(r)
                             }
                             r
                         }
                         log("OK: hooked getClipboardData (image capture)")
+                        break
+                    }
+                }
+                // v4.9：hook buildRecyclerViewDisplayList，纠正「图文条目被算成纯文本」的
+                // 类型误判（见 fixImageType）。
+                for (m in mgr.declaredMethods) {
+                    if (m.name == "buildRecyclerViewDisplayList" && m.parameterTypes.size == 1) {
+                        m.isAccessible = true
+                        XposedInit.hook(m) { chain ->
+                            val r = chain.proceed()
+                            // 纠正「图文条目被算成纯文本」的类型误判：content 含图片 item
+                            // 却落成纯文本类型（10/2/3）的条目改为图文(12)/纯图(11)，
+                            // 否则图片行永远不出现。仅改显示列表副本类型，不影响落库。
+                            if (r is List<*>) fixImageType(r)
+                            r
+                        }
+                        log("OK: hooked buildRecyclerViewDisplayList (type fix)")
                         break
                     }
                 }
@@ -376,25 +395,11 @@ object CrossDeviceClipboardHook {
                                 if (arg is MutableList<*>) {
                                     @Suppress("UNCHECKED_CAST")
                                     val list = arg as MutableList<Any?>
-                                    val imgIn = list.count { entryKey(it)?.startsWith("img:") == true }
-                                    // v4.7：先记下列表里出现过的图片条目（下次被 strip 冲掉时补回）。
+                                    // 先记下显示列表里出现过的图片条目（下次被 strip 整表替换冲掉时补回）。
                                     recordSeenCloud(list)
                                     val cache = mergedCloudCache()
-                                    var restored = 0
                                     if (cache.isNotEmpty()) {
-                                        val before = list.size
                                         prependMissingCloud(list, cache)
-                                        restored = list.size - before
-                                    }
-                                    val imgAfter = list.count { entryKey(it)?.startsWith("img:") == true }
-                                    if (imgIn == 0 && imgAfter > 0) {
-                                        // 本次灌入原本无图、被我们补回图片 = strip 后恢复；记下调用方便于诊断
-                                        log("RESTORE $restored imgs into stripped list"
-                                                + " (img $imgIn->$imgAfter seen=${sSeenCloud.size});"
-                                                + " caller <- ${callerFrames()}")
-                                    } else {
-                                        log("setClipboardList size=${list.size} img=$imgIn"
-                                                + " restore=$restored imgAfter=$imgAfter seen=${sSeenCloud.size}")
                                     }
                                 }
                             } catch (t: Throwable) {
@@ -404,6 +409,73 @@ object CrossDeviceClipboardHook {
                         }
                         log("OK: hooked adapter setClipboardList")
                         break
+                    }
+                }
+                // v4.9【本机图片渲染修复】loadVideoOrImage 的 across 分支只认 thumbImage，
+                // 本机条目（通用剪贴板通道 across=1、只有 fileUri、无 thumb）会落到
+                // loadFiledImage 占位图/不渲染。对「无 thumb 但有 fileUri/canReadFileUri」的
+                // 条目把 across 实参改 false，走本地分支——其内部 canReadFileUri 缺省回退
+                // fileUri，Glide 直接加载本机图片。
+                for (m in ad.declaredMethods) {
+                    if (m.name == "loadVideoOrImage" && m.parameterTypes.size == 4) {
+                        m.isAccessible = true
+                        XposedInit.hook(m) { chain ->
+                            try {
+                                val args = chain.getArgs()
+                                if (args.size == 4) {
+                                    val item = args[1]
+                                    val across = args[2] as? Boolean ?: false
+                                    if (across && item != null) {
+                                        val thumb = stringField(item, "getThumbImage")
+                                        if (thumb.isNullOrEmpty()) {
+                                            val file = stringField(item, "getFileUri").orEmpty()
+                                            val canR = stringField(item, "getCanReadFileUri").orEmpty()
+                                            if (file.isNotEmpty() || canR.isNotEmpty()) {
+                                                // 无缩略图但有本地文件引用：走本地渲染分支
+                                                // （其内部 canReadFileUri 缺省回退 fileUri，直接加载本机图片）。
+                                                val mod = args.toTypedArray()
+                                                mod[2] = false
+                                                return@hook chain.proceed(mod)
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (t: Throwable) {
+                                log("loadVideoOrImage hook error - $t")
+                            }
+                            chain.proceed()
+                        }
+                        log("OK: hooked adapter loadVideoOrImage (local img render)")
+                    }
+                }
+                // v4.9【本机图片渲染修复】getImageItemMode：across 条目只取带 thumbImage 的 item，
+                // 本机图片 item（只有 fileUri）会被跳过、返回末尾无关 item（如文本），
+                // 导致 loadVideoOrImage 拿错 item 渲染空白。原结果三 URI 全空时，
+                // 全量扫 content 换成第一个带文件引用的 item。
+                for (m in ad.declaredMethods) {
+                    if (m.name == "getImageItemMode" && m.parameterTypes.size == 1) {
+                        m.isAccessible = true
+                        XposedInit.hook(m) { chain ->
+                            val r = chain.proceed()
+                            try {
+                                val model = chain.getArg(0)
+                                val refsEmpty = r == null || (
+                                    stringField(r, "getThumbImage").isNullOrEmpty()
+                                        && stringField(r, "getFileUri").isNullOrEmpty()
+                                        && stringField(r, "getCanReadFileUri").isNullOrEmpty()
+                                )
+                                if (refsEmpty && model != null) {
+                                    val alt = findRenderableItem(model)
+                                    if (alt != null) {
+                                        return@hook alt
+                                    }
+                                }
+                            } catch (t: Throwable) {
+                                log("getImageItemMode hook error - $t")
+                            }
+                            r
+                        }
+                        log("OK: hooked adapter getImageItemMode (file-ref item)")
                     }
                 }
             }
@@ -483,10 +555,7 @@ object CrossDeviceClipboardHook {
             }
         }
         if (added > 0) {
-            log("prepend $added cloud rows into setClipboardList"
-                    + " (list now ${list.size} rows)")
-        } else {
-            log("skip prepend: all ${cache.size} cloud rows already in list")
+            log("prepend $added cloud rows into setClipboardList (list now ${list.size} rows)")
         }
     }
 
@@ -568,24 +637,6 @@ object CrossDeviceClipboardHook {
         }
     }
 
-    /** 诊断用：取 setClipboardList 调用方栈帧（跳过本类/反射/线程帧），定位 strip 来源。 */
-    private fun callerFrames(): String {
-        return try {
-            Thread.currentThread().stackTrace
-                .drop(1)
-                .map { "${it.className.substringAfterLast('.')}.${it.methodName}" }
-                .filterNot {
-                    it.startsWith("Thread") || it.contains("CrossDeviceClipboardHook")
-                            || it.contains("XposedInit") || it.contains("reflect")
-                            || it.contains("Method.invoke")
-                }
-                .take(6)
-                .joinToString(" < ")
-        } catch (_: Throwable) {
-            "?"
-        }
-    }
-
     /**
      * v4.7：合并「本次云端查询缓存」与「显示列表里见过的图片」作为补回来源。
      *
@@ -623,6 +674,77 @@ object CrossDeviceClipboardHook {
     private fun determineContent(e: Any): String? {
         return stringField(e, "getDetermineContent")
             ?: stringField(e, "getContent")
+    }
+
+    /**
+     * v4.9：纠正「图文条目被算成纯文本」的类型误判。{@code buildClipboardModelDataType} 对
+     * text 非空的 item 不再看其 uri 字段（图文同 item 时图标志 v5=0），图片 item 缺
+     * fileName/fileUri 时也不置图标志 → 类型落 10/2/3，图片行永远不出现
+     * （用户 2026-10-25：本机图片面板里完全没这一条）。凡 content 含图片 item
+     * （uriType 含 image 或有 thumb）却落成纯文本类型的，改为 12（图文）/11（纯图）。
+     * 仅动显示列表副本的类型，不影响落库。
+     */
+    private fun fixImageType(list: List<*>) {
+        for (e in list) {
+            if (e == null) continue
+            val type = try {
+                (Reflect.callMethod(e, "getType") as? Number)?.toInt()
+            } catch (_: Throwable) { null }
+            if (type != 2 && type != 3 && type != 10) continue
+            val dc = determineContent(e) ?: continue
+            var hasImg = false
+            var hasText = false
+            try {
+                val arr = org.json.JSONArray(dc)
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    if (o.optString("uriType").contains("image") || o.optString("thumbImage").isNotEmpty()) {
+                        hasImg = true
+                    }
+                    val txt = o.optString("text").ifEmpty { o.optString("textItemData") }
+                    if (txt.isNotEmpty()) hasText = true
+                }
+            } catch (_: Throwable) {
+                continue
+            }
+            if (!hasImg) continue
+            val newType = if (hasText) 12 else 11
+            try {
+                Reflect.callMethod(e, "setType", newType)
+                log("retype $type -> $newType (image item in text-typed entry)")
+            } catch (t: Throwable) {
+                log("retype failed - $t")
+            }
+        }
+    }
+
+    /**
+     * v4.9：从 content 里找第一个「有文件/缩略图引用」的 {@code ClipDataItemModel}。
+     * 经目标应用自己的 {@code fromJSONObject} 反序列化（键名以目标实现为准），失败回 null。
+     */
+    private fun findRenderableItem(model: Any): Any? {
+        return try {
+            val dc = determineContent(model) ?: return null
+            val arr = org.json.JSONArray(dc)
+            val itemCls = java.lang.Class.forName(
+                "com.miui.inputmethod.ClipDataItemModel", false, model.javaClass.classLoader
+            )
+            val fromJson = itemCls.getDeclaredMethod(
+                "fromJSONObject", org.json.JSONObject::class.java
+            )
+            fromJson.isAccessible = true
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val item = fromJson.invoke(null, o) ?: continue
+                val file = stringField(item, "getFileUri").orEmpty()
+                val canR = stringField(item, "getCanReadFileUri").orEmpty()
+                val thumb = stringField(item, "getThumbImage").orEmpty()
+                if (file.isNotEmpty() || canR.isNotEmpty() || thumb.isNotEmpty()) return item
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /** 反射调一次面板的 setRemoteDataToView()（合入云端条目）。 */
