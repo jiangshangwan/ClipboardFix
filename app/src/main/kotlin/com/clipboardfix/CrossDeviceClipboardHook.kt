@@ -503,11 +503,9 @@ object CrossDeviceClipboardHook {
                 val list = adapter.javaClass.getMethod("getAdapterList").invoke(adapter)
                         as? MutableList<Any?>
                 if (list != null) {
-                    val before = list.size
-                    prependMissingCloud(list, cache)
-                    if (list.size != before) {
+                    if (prependMissingCloud(list, cache)) {
                         adapter.javaClass.getMethod("notifyDataSetChanged").invoke(adapter)
-                        log("cloud merged into live list: ${list.size - before} new rows")
+                        log("cloud merged into live list (prepended and/or pinned re-pinned)")
                     }
                 }
             } catch (t: Throwable) {
@@ -535,7 +533,7 @@ object CrossDeviceClipboardHook {
      * {@code $2$1} 与 reload 分支传给本方法的都是该字段本身（同一对象），
      * 点击取值按位置索引两边一致，不会错位。
      */
-    private fun prependMissingCloud(list: MutableList<Any?>, cache: List<Any?>) {
+    private fun prependMissingCloud(list: MutableList<Any?>, cache: List<Any?>): Boolean {
         val present = HashSet<String>()
         for (e in list) {
             val k = entryKey(e)
@@ -554,9 +552,16 @@ object CrossDeviceClipboardHook {
                 }
             }
         }
+        var changed = added > 0
         if (added > 0) {
             log("prepend $added cloud rows into setClipboardList (list now ${list.size} rows)")
         }
+        // v4.11：云端条目插入头部后，把置顶条目归位到 index 0，与查询层 reorder() 一致，
+        // 修复「面板开启 + 有置顶时云端来数据，置顶被挤到第二位」的缺陷。
+        if (ClipboardPinHook.ensurePinnedFirst(list)) {
+            changed = true
+        }
+        return changed
     }
 
     /** 取条目 time（{@code ClipboardContentModel.getTime()}，long）；反射失败返回 null。 */

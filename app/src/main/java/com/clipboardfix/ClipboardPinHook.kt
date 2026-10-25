@@ -1404,6 +1404,39 @@ object ClipboardPinHook {
         return 0L
     }
 
+    /**
+     * v4.11：把显示列表里的置顶条目归位到 index 0（原地修改）。
+     *
+     * <p>面板开着期间云端来新数据（[mergeCloudIntoDisplay] / setClipboardList hook 经
+     * prependMissingCloud 把云端条目插到头部）会覆盖查询层 reorder() 设置的置顶首位，
+     * 表现为「被置顶的条目排到第二位，关面板重开才恢复」。此函数在云端合并完成后调用，
+     * 把 time == [sPinnedTime] 的条目移到列表头部，与重新查询时 reorder() 的效果一致。
+     *
+     * @return 是否发生了移动（用于决定是否触发 adapter 刷新）
+     */
+    @JvmStatic
+    fun ensurePinnedFirst(list: MutableList<Any?>): Boolean {
+        val pin = sPinnedTime
+        if (pin == 0L || list.isEmpty()) {
+            return false
+        }
+        var idx = -1
+        for (i in list.indices) {
+            if (timeOfItem(list[i]) == pin) {
+                idx = i
+                break
+            }
+        }
+        if (idx > 0) {
+            // 从当前位置取走、插到头部，保持其余条目相对顺序
+            val it = list.removeAt(idx)
+            list.add(0, it)
+            log("ensurePinnedFirst: moved pinned time=$pin from pos $idx to 0")
+            return true
+        }
+        return false
+    }
+
     // ---------------- 置顶条目标注（「（已置顶）」提醒） ----------------
 
     /**
