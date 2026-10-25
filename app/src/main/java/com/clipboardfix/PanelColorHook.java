@@ -10,6 +10,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
@@ -92,6 +93,16 @@ public final class PanelColorHook {
 
     /** 模糊态下深色主题的条目磨砂底：phrase 原生夜间值 {@code #24FFFFFF}（14% 白）。 */
     private static final int RGB_CARD_ON_DARK_FROSTED = 0x24FFFFFF;
+
+    /**
+     * 深色模式下类型徽标（链接 / 淘宝等圆形底）的目标色。
+     *
+     * <p>phrase 原生夜间圆底是近灰 {@code #3B3E43}，叠在深色卡片上比卡片还暗（用户 2026-10-25
+     * 反馈「深色下太深」）；而 {@link #RGB_CARD_ON_DARK_FROSTED}（14% 白）又太淡，几乎看不见。
+     * 这里取更亮一档的半透明白 {@code #40FFFFFF}（25% 白），使徽标呈「明显比卡片亮的柔和圆」，
+     * 既不死黑也不刺眼。浅色模式保持 phrase 原生观感，不动。
+     */
+    private static final int RGB_BADGE_ON_DARK = 0x40FFFFFF;
 
     /**
      * 系统明暗轮询间隔。
@@ -180,6 +191,20 @@ public final class PanelColorHook {
     private static final int RGB_CARD_ON_LIGHT = 0xFFF3F3F5;
 
     /**
+     * 条目标题行「类型徽标」容器的 view id（phrase 资源 {@code clipboard_type_layout}）。
+     *
+     * <p><b>为什么要精确接管这一个视图</b>：链接 / 淘宝条目右侧那枚圆形底，是容器的
+     * {@code android:background}（一个不透明的近灰圆，日间固定灰、夜间深灰，跟随<b>系统</b>
+     * uiMode），而不是图标 {@code src} 的一部分。{@link #guardCardBackground} 只重涂
+     * 「白系 + 半透明」图层，这个不透明近灰圆两层判据都不满足，于是两个分支都跳过它——
+     * 磨砂面板上它始终是一枚实色贴片，与半透明的磨砂条目卡片割裂（用户 2026-10-25 反馈）。
+     *
+     * <p>id 取自 phrase 5.7.4(10274) 的 {@code type_icon} / {@code clipboard_type_layout}
+     * 结构；若 phrase 升级导致资源 id 变化，本判据自动失配、该重涂静默停用（绝不误染别的视图）。
+     */
+    private static final int ID_TYPE_BADGE = 0x7F0A00DF;
+
+    /**
      * 本模块重涂过的卡片背景 drawable → 写入的颜色。
      *
      * <p>键用 <b>drawable 实例</b>而非视图：RecyclerView 复用同一个条目 View，但 adapter
@@ -188,6 +213,17 @@ public final class PanelColorHook {
      * 目标色一变也自然重涂。drawable 被回收即自动清理。
      */
     private static final java.util.WeakHashMap<Drawable, Integer> sCardOurs =
+            new java.util.WeakHashMap<>();
+
+    /**
+     * 本模块上次写入 {@link #ID_TYPE_BADGE} 圆底 background 的磨砂目标色（按<b>视图</b>记账）。
+     *
+     * <p>键用视图而非 drawable 实例：RecyclerView 复用 ViewHolder 时视图对象不变、但其
+     * background drawable 常被 {@code setBackground} 替换成新实例（并丢失我们挂的 ColorFilter）。
+     * 按视图记账 + 每帧比对「当前 bg 是否还带着 PorterDuffColorFilter」即可自愈——phrase 替换
+     * 圆底或重置 filter 后，下一帧会被自动纠回，无需关面板重开（用户 2026-10-25 反馈）。
+     */
+    private static final java.util.WeakHashMap<View, Integer> sBadgeTarget =
             new java.util.WeakHashMap<>();
 
     /** 当前正在上色的面板根容器（根背景由 {@link #applyPanelBackground} 负责，不参与补底）。 */
@@ -581,7 +617,7 @@ public final class PanelColorHook {
                 sBarContentColor = content;
                 sBarAlphaColor = alphaColor;
                 Object result = chain.proceed();
-                View body = sPanelBodyRef.get();
+                View body = getLiveBody();
                 if (body != null) {
                     applyPanelBackground(body, barColor(bg));
                 }
@@ -760,14 +796,22 @@ public final class PanelColorHook {
         sThemeWatch = true;
         final Runnable watch = new Runnable() {
             int beat = 0;
+            int miss = 0;
 
             @Override
             public void run() {
-                View b = sPanelBodyRef.get();
-                if (b == null || !b.isAttachedToWindow()) {
-                    sThemeWatch = false;
+                // 用活 body：主题切换若使 phrase 重建面板，缓存的 sPanelBodyRef 会 detached，
+                // 这里改从当前 PopupWindow 重新定位，避免轮询误判「面板不可见」而停摆。
+                View b = getLiveBody();
+                if (b == null) {
+                    // 面板可能正在被 phrase 重建（短暂 detached）。给一小段重试窗口，
+                    // 避免重建期间误判「面板关闭」而停摆（否则要等重开面板才恢复刷新）。
+                    if (++miss > 12) {
+                        sThemeWatch = false;
+                    }
                     return;
                 }
+                miss = 0;
                 try {
                     boolean night = isSystemNight(b);
                     if (night != sLastNight) {
@@ -801,22 +845,35 @@ public final class PanelColorHook {
      * 重置成 phrase 原生资源，而实色态的底色是本模块涂上去的，重置后不重涂就会掉回原生色。
      *
      * <p><b>实测踩坑（2026-10-23 真机）</b>：切换深浅色瞬间输入法常把面板刷成实色态
-     * （{@code setBottomColor} 重发），本方法曾在此静默早退，而 {@code sLastNight} 已更新；
-     * 等面板回模糊态时轮询认为「无变化」不再触发，内容就停在旧主题。现在早退也打日志，
-     * 且模糊分支本身已改用 {@link #isSystemNight}，回模糊态时自然是新主题。
+     * （{@code setBottomColor} 重发），曾在此静默早退导致 {@code sBlurNight} 失新，徽标圆底
+     * 与磨砂卡停在旧主题、需关面板重开（用户 2026-10-25 复现）。现改为：先无条件记下最新
+     * {@code sBlurNight}，再走 {@link #applyPanelBackground} 统一按当前底栏色重判 blur/solid
+     * 并刷新前景，两条路都跟随新主题，不再依赖面板重开。
      */
     private static void onThemeChanged(View body) {
-        boolean night = isSystemNight(body);
-        log("ui mode changed -> " + (night ? "night" : "day") + ", refreshing panel");
-        if (!sBlurPanel) {
-            log("theme refresh skipped: panel currently solid");
+        // body 已是实时定位的活 body；但 refreshPhraseTheme 可能让 phrase 重建面板内容，
+        // 故刷新前再取一次，确保操作的是重建后的活视图。
+        View live = getLiveBody();
+        if (live == null) {
+            log("onThemeChanged: live body gone, skip");
             return;
         }
+        boolean night = isSystemNight(live);
+        log("ui mode changed -> " + (night ? "night" : "day") + ", refreshing panel");
+        // 先固定最新明暗：过去只在模糊分支才写 sBlurNight，若切换瞬间面板恰为实色瞬态
+        // （输入法重发 setBottomColor）会早退、sBlurNight 失新；等回模糊态时轮询已无变化，
+        // 徽标圆底与磨砂卡停在旧主题，需关面板重开才恢复（用户 2026-10-25 反馈）。
+        sBlurNight = night;
+        sLastNight = night;
         refreshPhraseTheme(night);
-        // 先按新主题把前景（磨砂卡片 / 文字 / 图标）翻过来，再重施面板背景：
-        // 即便底栏色此刻丢失（barColor==-1，applyPanelBackground 会 skip），前景也已刷新。
-        applyBlurForeground(body, night);
-        applyPanelBackground(body, barColor(sBarBgColor));
+        // refreshPhraseTheme 之后面板可能已被重建，重取一次活 body 再刷新前景：
+        // 模糊态 => applyBlurForeground（内部 contrastWalk->blurWalk 已用最新 sBlurNight 重涂徽标）；
+        // 实色态 => 重涂底色 + 文字纠偏。两条路都跟随新主题，不再依赖面板重开。
+        View after = getLiveBody();
+        if (after != null) {
+            live = after;
+        }
+        applyPanelBackground(live, barColor(sBarBgColor));
     }
 
     /**
@@ -887,6 +944,35 @@ public final class PanelColorHook {
             log("body by scan");
         }
         return scanned;
+    }
+
+    /**
+     * 取当前<b>活着的</b>面板根容器，而非开面板时缓存的那个。
+     *
+     * <p><b>为什么需要</b>：主题切换时 phrase 常重建面板内容（{@code setPhraseBackgroundDarkTheme}
+     * 触发 {@code notifyDataSetChanged} / 重充气），开面板时记到 {@link #sPanelBodyRef} 的 {@code body}
+     * 会被卸下（detached）。原先主题轮询只认这个缓存 {@code body}，一旦它 detached 就判定「面板不可见」
+     * 而停掉轮询（{@code sThemeWatch=false}），之后直到重新开面板都不会再刷新——表现就是
+     * 「切换主题后链接图标不变、必须重开面板才生效」（用户 2026-10-25 复现）。这里改为从当前
+     * PopupWindow 的 {@code getContentView()} 重新定位活 body，使轮询与刷新都能穿透 phrase 的重建。
+     */
+    private static View getLiveBody() {
+        PopupWindow pw = (PopupWindow) sPopupRef.get();
+        if (pw != null) {
+            try {
+                View content = pw.getContentView();
+                if (content != null) {
+                    View b = findBody(content);
+                    if (b != null && b.isAttachedToWindow()) {
+                        return b;
+                    }
+                }
+            } catch (Throwable ignored) {
+                // 取不到就用回退
+            }
+        }
+        View b = sPanelBodyRef.get();
+        return (b != null && b.isAttachedToWindow()) ? b : null;
     }
 
     private static View findFirstWithBg(View root) {
@@ -1122,6 +1208,10 @@ public final class PanelColorHook {
         if (!dark) {
             guardCardBackground(v, RGB_CARD_ON_LIGHT, true);
         }
+        // 实色面板：浅色保持 phrase 原生观感（target=0 还原）；深色下原生近灰圆 {@code #3B3E43}
+        // 比卡片还暗（用户 2026-10-25 反馈「深色下太深」），改涂更亮的 {@link #RGB_BADGE_ON_DARK}，
+        // 使其可见且不死黑。若此前在模糊态涂过，这里按当前明暗重涂/还原。
+        guardTypeBadgeBackground(v, dark ? RGB_BADGE_ON_DARK : 0);
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
             for (int i = 0; i < g.getChildCount(); i++) {
@@ -1146,6 +1236,9 @@ public final class PanelColorHook {
         // （深 14% 白 / 浅 60% 白，即 phrase 原生 -night 两个值；保持半透明，不补实色）。
         guardCardBackground(v, night ? RGB_CARD_ON_DARK_FROSTED : RGB_CARD_ON_LIGHT_FROSTED,
                 false);
+        // 类型徽标圆底是「不透明近灰圆」，白系判据覆盖不到，单独按 id 涂成磨砂值；
+        // 深色用更亮一档的 {@link #RGB_BADGE_ON_DARK}，避免原生近灰圆在深色卡片上太暗。
+        guardTypeBadgeBackground(v, night ? RGB_BADGE_ON_DARK : RGB_CARD_ON_LIGHT_FROSTED);
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
             for (int i = 0; i < g.getChildCount(); i++) {
@@ -1231,6 +1324,86 @@ public final class PanelColorHook {
                 log("card bg " + viewName(v) + " -> " + hex(target));
             }
         }
+    }
+
+    /**
+     * 类型徽标（链接 / 淘宝条目右侧的圆形底）重涂 —— 仅模糊态接管。
+     *
+     * <p><b>为什么不走 {@link #guardCardBackground}</b>：见 {@link #ID_TYPE_BADGE}。圆底是
+     * 不透明近灰圆，「白系 + 半透明」两层判据都不满足，故磨砂面板上它一直是实色贴片、
+     * 与磨砂卡片割裂（用户 2026-10-25 反馈）。此处按 id 精确接管，用 {@code SRC_IN} 把它
+     * 染成与条目卡片<b>相同</b>的磨砂值：圆底于是变成「叠在卡片上的半透明圆」，因为多叠了
+     * 一层与卡片同色的磨砂，观感上只比卡片略亮一点的柔和圆，与磨砂面板一致。
+     *
+     * <p><b>为什么不伤字形</b>：字形是容器的子 ImageView（{@code type_icon}），由
+     * {@link #contrastIcon} 单独按明暗翻转；这里只给容器的 <b>background</b> 挂 tint，
+     * 子视图完全不受影响。
+     *
+     * <p><b>为什么用 View 级 background tint 而非 Drawable.setColorFilter</b>：圆底背景
+     * {@code input_method_press_shape} 是 shape / selector 类 drawable，实测
+     * {@code Drawable.setColorFilter(SRC_IN)} 对它常不动（ColorDrawable / StateListDrawable 的
+     * colorFilter 在渲染期被忽略），导致徽标停在原生近灰圆、调亮也无效（用户 2026-10-25 反馈
+     * 「深色下太深、改值没反应」）。改用 {@code View.setBackgroundTintList + setBackgroundTintMode}
+     * 走框架级 tint，对所有 drawable 类型一视同仁；phrase 替换/重建圆底 drawable 后，该 tint 由
+     * View 自动重施加到新 drawable 上，自愈更稳。
+     *
+     * @param target 磨砂目标色；{@code 0} 表示还原（切回实色面板时调用）
+     */
+    private static void guardTypeBadgeBackground(View v, int target) {
+        if (v.getId() != resolveBadgeId(v)) {
+            return;
+        }
+        Drawable bg = v.getBackground();
+        if (bg == null) {
+            return;
+        }
+        // 自愈式重涂：按<b>视图</b>记账上次写入的磨砂目标色，每帧比对「View 级 background tint
+        // 是否还在」。phrase 主题切换/列表回收时替换圆底 drawable（新实例），tint 由 View 自动
+        // 施加到新 drawable 上，故 getBackgroundTintList() 仍非 null；若 phrase 直接抹掉 tint
+        // （极少见），下一帧 null 即触发重涂，无需关面板重开（用户 2026-10-25 反馈）。
+        ColorStateList cur = v.getBackgroundTintList();
+        Integer prev = sBadgeTarget.get(v);
+        if (target == 0) {
+            if (prev != null) {
+                v.setBackgroundTintList(null);
+                sBadgeTarget.remove(v);
+                v.invalidate();
+                if (sContrastLogLeft > 0) {
+                    sContrastLogLeft--;
+                    log("type badge bg restored");
+                }
+            }
+            return;
+        }
+        // 已涂过且 tint 仍在 → 跳过；tint 被 phrase 抹掉或主题切换目标变了 → 重涂。
+        if (prev != null && prev.intValue() == target && cur != null) {
+            return;
+        }
+        v.setBackgroundTintMode(PorterDuff.Mode.SRC_IN);
+        v.setBackgroundTintList(ColorStateList.valueOf(target));
+        sBadgeTarget.put(v, target);
+        v.invalidate();
+        if (sContrastLogLeft > 0) {
+            sContrastLogLeft--;
+            log("type badge bg -> " + hex(target));
+        }
+    }
+
+    /**
+     * 解析徽标容器 {@code clipboard_type_layout} 的运行时 id。优先按名从 phrase 资源包解析
+     * （跨 phrase 版本稳，避免 id 漂移导致徽标 tint 静默失配），解析失败回退到硬编常量
+     * {@link #ID_TYPE_BADGE}（来源 5.7.4/10274）。结果按名缓存，仅首次解析有开销。
+     */
+    private static int resolveBadgeId(View v) {
+        Integer cached = sIdCache.get("clipboard_type_layout");
+        if (cached != null && cached != 0) {
+            return cached;
+        }
+        int id = phraseId(v.getContext(), "clipboard_type_layout");
+        if (id == 0) {
+            id = ID_TYPE_BADGE;
+        }
+        return id;
     }
 
     /**
