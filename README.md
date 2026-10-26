@@ -1,6 +1,8 @@
-·
+<p align="center">
+  <img src="logo.png" width="180">
+</p>
+<br>
 <div align="center">
-<img src="logo.png" width="20%" alt="HyperClipFix - HyperOS剪贴板修复模块">
 <h1>HyperClipFix</h1>
 <p>🛠️ 修复第三方输入法在HyperOS无法使用系统剪贴板及全面屏键盘优化的问题</p>
 
