@@ -1,7 +1,9 @@
 package com.clipboardfix
 
+import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import android.view.View
 import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
 import java.lang.reflect.Method
@@ -176,6 +178,12 @@ object CrossDeviceClipboardHook {
      * 新一次复制的推送 time 会刷新（变大）→ 放行，并解除该键的屏蔽。
      */
     private val sWipedKeys = java.util.LinkedHashMap<String, Long>()
+
+    /**
+     * v4.17：坏缩略图判定结果缓存（键=缩略图 base64 串），避免列表滚动时反复 base64 解码。
+     * 上限 200 条，超出清空重来。
+     */
+    private val sBadThumbCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
 
 
@@ -445,6 +453,9 @@ object CrossDeviceClipboardHook {
                 // loadFiledImage 占位图/不渲染。对「无 thumb 但有 fileUri/canReadFileUri」的
                 // 条目把 across 实参改 false，走本地分支——其内部 canReadFileUri 缺省回退
                 // fileUri，Glide 直接加载本机图片。
+                // v4.17【坏缩略图修复】across 分支的 thumbImage 解码失败或宽高比畸形时，
+                // 塞进方形缩略图区域会显全黑/全白块。若本地原图（fileUri/canReadFileUri）
+                // 在当前输入法进程可读，则同样把 across 改 false 改走本地原图分支，恢复真图。
                 for (m in ad.declaredMethods) {
                     if (m.name == "loadVideoOrImage" && m.parameterTypes.size == 4) {
                         m.isAccessible = true
@@ -456,12 +467,21 @@ object CrossDeviceClipboardHook {
                                     val across = args[2] as? Boolean ?: false
                                     if (across && item != null) {
                                         val thumb = stringField(item, "getThumbImage")
-                                        if (thumb.isNullOrEmpty()) {
-                                            val file = stringField(item, "getFileUri").orEmpty()
-                                            val canR = stringField(item, "getCanReadFileUri").orEmpty()
-                                            if (file.isNotEmpty() || canR.isNotEmpty()) {
-                                                // 无缩略图但有本地文件引用：走本地渲染分支
-                                                // （其内部 canReadFileUri 缺省回退 fileUri，直接加载本机图片）。
+                                        val file = stringField(item, "getFileUri").orEmpty()
+                                        val canR = stringField(item, "getCanReadFileUri").orEmpty()
+                                        val probeUri = if (canR.isNotEmpty()) canR else file
+                                        val hasLocalRef = probeUri.isNotEmpty()
+                                        if (hasLocalRef) {
+                                            val forceLocal = if (thumb.isNullOrEmpty()) {
+                                                // 无缩略图：沿用 v4.9 既有权限无关强制本地（已验证可用）
+                                                true
+                                            } else {
+                                                // 缩略图存在但为坏图，且本地原图在本进程可读 → 改走本地原图分支
+                                                isBadThumbnail(thumb) && ClipboardPinHook.uriReadable(probeUri)
+                                            }
+                                            if (forceLocal) {
+                                                // 走本地渲染分支（其内部 canReadFileUri 缺省回退
+                                                // fileUri，直接加载本机图片）。
                                                 val mod = args.toTypedArray()
                                                 mod[2] = false
                                                 return@hook chain.proceed(mod)
@@ -755,6 +775,97 @@ object CrossDeviceClipboardHook {
         } catch (_: Throwable) {
             null
         }
+    }
+
+    /**
+     * v4.17：判定一个云端缩略图（base64 WebP）是否为「坏图」——即塞进面板方形缩略图区域
+     * 后会显示成全黑/全白块的情形。
+     *
+     * <p>坏图判定（满足任一即判坏）：
+     * <ol>
+     *   <li>base64 解码或整图解码失败（如 VP8X+ICCP 本机 WebP 解码器不支持 → 全黑块）；</li>
+     *   <li>宽高比畸形（横条 {@code w/h > 3} 或竖条 {@code w/h < 1/3}）→ 内容被压成一条，
+     *       正方形区域其余部分显成白/黑块（实测 [0]256x83、[4]256x48 即此类）；</li>
+     *   <li>整图看似正常解出，但内容是一整块<b>单一颜色</b>（全黑/全白）→ 实为渲染失败
+     *       的占位块（如 VP8X+ICCP 被解码成纯色），并非真实图片内容。</li>
+     * </ol>
+     *
+     * <p>注意：仅取 bounds 不够——VP8X 扩展格式 bounds 能解出尺寸，但整图解码会返回 null，
+     * 必须用<b>整图</b>解码确认是否真能解出位图。缩略图都很小（几 KB~十几 KB），开销可忽略；
+     * 结果按 base64 串缓存，避免列表滚动反复解码。
+     *
+     * <p>单一颜色检测只做网格采样（最多 64 点），开销极低；即便误判（真实全色图），
+     * 也只会改走本地原图——而原图同样是全色，视觉无差，不会造成回归。
+     */
+    private fun isBadThumbnail(thumb: String?): Boolean {
+        if (thumb.isNullOrEmpty()) return false
+        sBadThumbCache[thumb]?.let { return it }
+        val bad = try {
+            val raw = Base64.decode(thumb, Base64.DEFAULT)
+            if (raw.isEmpty()) {
+                true
+            } else {
+                val bmp = BitmapFactory.decodeByteArray(raw, 0, raw.size)
+                if (bmp == null) {
+                    // 整图解码失败：VP8X+ICCP 等扩展格式本机不支持 → 全黑块
+                    true
+                } else {
+                    val w = bmp.width
+                    val h = bmp.height
+                    if (w <= 0 || h <= 0) {
+                        bmp.recycle()
+                        true
+                    } else {
+                        val ratio = w.toFloat() / h.toFloat()
+                        // 畸形横条 / 竖条：方形区域其余部分显白/黑块
+                        val uglyRatio = ratio > 3f || ratio < (1f / 3f)
+                        val solid = !uglyRatio && isSolidColor(bmp)
+                        bmp.recycle()
+                        uglyRatio || solid
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+            // 解码异常也视为坏图
+            true
+        }
+        if (sBadThumbCache.size > 200) {
+            sBadThumbCache.clear()
+        }
+        sBadThumbCache[thumb] = bad
+        return bad
+    }
+
+    /**
+     * 网格采样判断位图是否为「近似单一颜色」（渲染失败的占位块常表现为全黑/全白）。
+     * 至多采样 64 点，任一采样点与首点差异超过容差即判为非单一色。
+     */
+    private fun isSolidColor(bmp: android.graphics.Bitmap): Boolean {
+        val w = bmp.width
+        val h = bmp.height
+        val stepX = Math.max(1, w / 8)
+        val stepY = Math.max(1, h / 8)
+        val first = bmp.getPixel(0, 0)
+        var cx = 0
+        var cy = 0
+        var count = 0
+        while (cy < h && count < 64) {
+            cx = 0
+            while (cx < w && count < 64) {
+                val p = bmp.getPixel(cx, cy)
+                // 任一通道差异 > 8 即视为有内容，不是纯色块
+                if (Math.abs((p shr 16 and 0xFF) - (first shr 16 and 0xFF)) > 8
+                    || Math.abs((p shr 8 and 0xFF) - (first shr 8 and 0xFF)) > 8
+                    || Math.abs((p and 0xFF) - (first and 0xFF)) > 8
+                ) {
+                    return false
+                }
+                cx += stepX
+                count++
+            }
+            cy += stepY
+        }
+        return true
     }
 
     /**

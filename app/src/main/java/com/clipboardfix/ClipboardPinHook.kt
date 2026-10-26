@@ -2423,6 +2423,55 @@ object ClipboardPinHook {
         return c?.contentResolver
     }
 
+    /**
+     * v4.17：判断某个 content/file uri 在当前进程（输入法进程）是否真的能打开读到内容。
+     *
+     * <p>用于判断「缩略图坏了、改走本地原图」是否可行：云端图片的 fileUri 指向小米互联
+     * provider（{@code com.xiaomi.continuity.universal.clipboard}），输入法进程持有剪贴板
+     * 访问能力时可以读到原图；读不到就保持缩略图路径，避免把原本能显示的条目录成黑块。
+     * 结果按 uri 做个小缓存，避免列表滚动时反复开流。
+     */
+    private val sUriReadableCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    @JvmStatic
+    fun uriReadable(uri: String): Boolean {
+        if (uri.isEmpty()) {
+            return false
+        }
+        sUriReadableCache[uri]?.let { return it }
+        val ok = try {
+            val ctx = ctxOf()
+            if (ctx == null) {
+                false
+            } else {
+                val input = ctx.contentResolver.openInputStream(android.net.Uri.parse(uri))
+                var readOk = input != null
+                try {
+                    if (input != null) {
+                        val one = ByteArray(1)
+                        readOk = input.read(one) >= 0
+                    }
+                } catch (_: Throwable) {
+                    readOk = false
+                } finally {
+                    try {
+                        input?.close()
+                    } catch (_: Throwable) {
+                        // 关闭失败忽略
+                    }
+                }
+                readOk
+            }
+        } catch (_: Throwable) {
+            false
+        }
+        if (sUriReadableCache.size > 200) {
+            sUriReadableCache.clear()
+        }
+        sUriReadableCache[uri] = ok
+        return ok
+    }
+
     private fun adapterOf(): Any? {
         return sAdapterRef.get()
     }
