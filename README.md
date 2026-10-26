@@ -1,19 +1,26 @@
+<p align="center">
+  <img src="logo.png" width="20%" alt="HyperClipFix - HyperOS剪贴板修复模块">
+</p>
+<br>
 <div align="center">
 <h1>HyperClipFix</h1>
 
-
+<a href="https://github.com/Xposed-Modules-Repo/com.clipboardfix/releases"><img alt="GitHub all releases" src="https://img.shields.io/github/downloads/Xposed-Modules-Repo/com.clipboardfix/total?label=Downloads"></a>
+<a href="https://github.com/Xposed-Modules-Repo/com.clipboardfix/releases/latest"><img alt="GitHub latest release" src="https://img.shields.io/github/v/release/Xposed-Modules-Repo/com.clipboardfix"></a>
 <a href="https://www.android.com/"><img src="https://img.shields.io/badge/Android-16--17-brightgreen?style=flat&logo=android&logoColor=white"></a> 
 <a href="https://hyperos.mi.com/"><img src="https://img.shields.io/badge/HyperOS-OS3--OS4-purple?style=flat&logo=xiaomi&logoColor=white"></a> 
 <a href="https://compose-miuix-ui.github.io/miuix/zh_CN/"><img src="https://img.shields.io/badge/UI框架-MIUIX--Compose-blue?style=flat&logo=jetpackcompose&logoColor=white"></a>
+<a href="https://kotlinlang.org/"><img src="https://img.shields.io/badge/Language-Kotlin-7F52FF?style=flat&logo=kotlin&logoColor=white"></a>
 
 <a href="https://qun.qq.com/universal-share/share?ac=1&authKey=UzK4LAt%2B2Lg3xshN1AF2GY0K8D%2Fqo3wD6Y0Hn1aturx2dhuR3ED3NFCq8s6ZAmrl&busi_data=eyJncm91cENvZGUiOiIxMTI0MTgwNjM1IiwidG9rZW4iOiJOWWE3RE5XcE9tMTI5SGtMRFNrcGF4Wi9hcE9wdlJDbUQ4cHcvU08vYlF4c3ZlUUtxWlhiYmRQdGJNSU1JalBvIiwidWluIjoiOTAzNzU1MzQ1In0%3D&data=e9KDo0FHZWGB_k0pVQfB-guEvu55ZBSomL-ql1Daq8os18WLI_-VppwYWQqbiDvGuwyLx1ol5PLFkx1kOBx4Jw&svctype=4&tempid=h5_group_info"><img src="https://img.shields.io/badge/QQ交流群-blue?style=flat&logo=qq&logoColor=white"></a> 
-<a href="https://github.com/Xposed-Modules-Repo/com.clipboardfix"><img src="https://img.shields.io/badge/LSPosed仓库-orange?style=flat&logo=xdadevelopers&logoColor=white"></a>
+<a href="https://github.com/jiangshangwan/ClipboardFix"><img src="https://img.shields.io/badge/GitHub仓库-black?style=falt&logo=github&logoColor=white"></a> 
+<a href="https://modules.lsposed.org/module/com.clipboardfix/"><img src="https://img.shields.io/badge/LSPosed仓库-orange?style=flat&logo=xdadevelopers&logoColor=white"></a>
 <a href="https://weibo.com/u/3725737792"><img src="https://img.shields.io/badge/微博-李十六的日记本-red?style=flat&logo=sinaweibo&logoColor=white"></a>
 <a href="https://www.coolapk.com/u/3019478"><img src="https://img.shields.io/badge/酷安-江上晚-green?style=flat&logo=fishshell&logoColor=white"></a>
 
 
 
-<p>🛠️ 修复 HyperOS第三方输入法无法使用系统剪贴板历史的问题，并解锁第三方输入法全面屏优化</p>
+<p>🛠️ 修复第三方输入法在HyperOS无法使用系统剪贴板及全面屏键盘优化的问题</p>
 
 
 </div>
@@ -23,7 +30,6 @@
 ## 💻问题描述
 
 自 HyperOS 3.0 起，小米向所有搭载HyperOS 3.0的设备推送了系统组件「剪贴板与常用语 V4.7.7」。从该版本起至目前最新版本均已新增白名单校验机制，**剪贴板读写权限仅系统内置定制输入法、超级小爱输入法，所有第三方输入法均无法读写系统剪贴板**
-
 
 ## ✏支持的输入法 
 
@@ -48,7 +54,7 @@
     <td>讯飞输入法</td>
     <td>15.0.14</td>
   </tr>
-  <tr>
+   <tr>
     <td>QQ输入法</td>
     <td>8.7.15</td>
   </tr>
@@ -60,6 +66,7 @@
     <td>Gboard</td>
     <td>18.2.4</td>
   </tr>
+
 </table>
 
  ✍️测试都是基于以上版本进行测试的，理论可兼容所有版本，为保证完美运行，请关闭手势提示线，后续将可能不会再解决手势提示线导致的问题(太麻烦了，准备放弃了)！
