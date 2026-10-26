@@ -1,10 +1,9 @@
-
+·
 <div align="center">
 <img src="logo.png" width="20%" alt="HyperClipFix - HyperOS剪贴板修复模块">
 <h1>HyperClipFix</h1>
 <p>🛠️ 修复第三方输入法在HyperOS无法使用系统剪贴板及全面屏键盘优化的问题</p>
-<a href="https://github.com/Xposed-Modules-Repo/com.clipboardfix/releases"><img alt="GitHub all releases" src="https://img.shields.io/github/downloads/Xposed-Modules-Repo/com.clipboardfix/total?label=Downloads"></a>
-<a href="https://github.com/Xposed-Modules-Repo/com.clipboardfix/releases/latest"><img alt="GitHub latest release" src="https://img.shields.io/github/v/release/Xposed-Modules-Repo/com.clipboardfix"></a>
+
 <a href="https://www.android.com/"><img src="https://img.shields.io/badge/Android-16--17-brightgreen?style=flat&logo=android&logoColor=white"></a> 
 <a href="https://hyperos.mi.com/"><img src="https://img.shields.io/badge/HyperOS-OS3--OS4-purple?style=flat&logo=xiaomi&logoColor=white"></a> 
 <a href="https://compose-miuix-ui.github.io/miuix/zh_CN/"><img src="https://img.shields.io/badge/UI框架-MIUIX--Compose-blue?style=flat&logo=jetpackcompose&logoColor=white"></a>
