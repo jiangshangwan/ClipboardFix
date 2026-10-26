@@ -1,7 +1,4 @@
-<p align="center">
-  <img src="logo.png" width="20%" alt="HyperClipFix - HyperOS剪贴板修复模块">
-</p>
-<br>
+
 <div align="center">
 <h1>HyperClipFix</h1>
 
