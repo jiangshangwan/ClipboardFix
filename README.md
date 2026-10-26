@@ -103,9 +103,6 @@
 - 酷安：[江上晚](https://www.coolapk.com/u/3019478)
 - 微博：[李十六的日记本](https://weibo.com/u/3725737792)
   
-## 🥂开源致谢
-感谢[MIUI_IME_Unlock(MIT)](https://github.com/RC1844/MIUI_IME_Unlock)开源项目提供的解锁MIUI键盘全面屏优化限制
-
 ## 您的支持就是我最大的动力
 <img width="420" height="420" alt="澎湃OS剪贴板补全_打赏二维码_1778172233017" src="https://github.com/user-attachments/assets/5ace0a63-6575-489c-843e-01c190c22832" />
 
