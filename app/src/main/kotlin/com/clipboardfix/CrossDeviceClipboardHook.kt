@@ -1,5 +1,7 @@
 package com.clipboardfix
 
+import android.content.Context
+import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
@@ -460,8 +462,14 @@ object CrossDeviceClipboardHook {
                     if (m.name == "loadVideoOrImage" && m.parameterTypes.size == 4) {
                         m.isAccessible = true
                         XposedInit.hook(m) { chain ->
+                            var vh: Any? = null
                             try {
                                 val args = chain.getArgs()
+                                if (args.isNotEmpty()) vh = args[0]
+                                // v4.18【主因】：必须在 proceed() 之前清掉 imgItem 的主题 tint。
+                                // 关闭面板再打开时同一图命中 Glide 内存缓存会同步 setImageDrawable，
+                                // 若 proceed() 之后才清，tint 在设图瞬间已生效 → 纯色块。
+                                clearImageTint(vh)
                                 if (args.size == 4) {
                                     val item = args[1]
                                     val across = args[2] as? Boolean ?: false
@@ -484,7 +492,10 @@ object CrossDeviceClipboardHook {
                                                 // fileUri，直接加载本机图片）。
                                                 val mod = args.toTypedArray()
                                                 mod[2] = false
-                                                return@hook chain.proceed(mod)
+                                                val r = chain.proceed(mod)
+                                                // v4.18【次要】：覆盖 phrase 在 proceed 内设的夜间白卡底
+                                                guardImageCardBgInNight(vh)
+                                                return@hook r
                                             }
                                         }
                                     }
@@ -492,7 +503,10 @@ object CrossDeviceClipboardHook {
                             } catch (t: Throwable) {
                                 log("loadVideoOrImage hook error - $t")
                             }
-                            chain.proceed()
+                            val r = chain.proceed()
+                            // v4.18【次要】：覆盖 phrase 在 proceed 内设的夜间白卡底
+                            guardImageCardBgInNight(vh)
+                            return@hook r
                         }
                         log("OK: hooked adapter loadVideoOrImage (local img render)")
                     }
@@ -866,6 +880,102 @@ object CrossDeviceClipboardHook {
             cy += stepY
         }
         return true
+    }
+
+    // ============ v4.18 缩略图纯色块（反色）修复 ============
+    /**
+     * v4.18：图片缩略图在面板内被渲染成「纯色块」——浅色模式显全黑、深色模式显全白。
+     *
+     * <p><b>根因（关键）</b>：phrase 的缩略图 ImageView 是 {@code imgItem} 与「文件/视频图标」
+     * 共用的同一个 View。布局 XML 里为该图标设了主题 tint（{@code ?attr/colorOnSurface} 一类，
+     * 浅色模式=黑、深色模式=白），配合 {@code SRC_IN}/{@code src_in} 模式让单色图标随主题变色。
+     * 该 tint 在 View inflate 时设一次、之后从不清除；当同一个 {@code imgItem} 用来显示<b>真实照片</b>
+     * 时（不透明矩形），SRC_IN 把整张照片染成纯色块——浅色模式=黑块、深色模式=白块。
+     * v4.17「强制走本地原图」之前照片根本没成功加载（显示占位/卡片），此 tint bug 被掩盖；
+     * v4.17 之后照片能加载了，tint 污染才暴露（用户 2026-10-26 复测：浅色白底图变全黑、深色黑底图变全白）。
+     *
+     * <p><b>次要因素</b>：{@code imgItemBg.setCardBackgroundColor(getColor(2131099748))} 该资源带 -night
+     * 限定，深色模式解析为白色；若照片本身是亮色截图，叠在白色卡片上对比度低、看着也像「白块」。
+     * 故修复双管齐下：① 清除 imgItem 的 tint/colorFilter（主因）；② 夜间把卡片底改回深灰（次要）。
+     */
+    private fun isNightMode(ctx: Context): Boolean {
+        return (ctx.resources.configuration.uiMode
+                and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    private fun guardImageCardBgInNight(vh: Any?) {
+        if (vh == null) return
+        try {
+            val card = Reflect.getField(vh, "imgItemBg") ?: return
+            val ctx = (card as? View)?.context ?: return
+            if (!isNightMode(ctx)) return
+            setCardBackgroundDark(card)
+        } catch (t: Throwable) {
+            log("guardImageCardBgInNight error - $t")
+        }
+    }
+
+    private fun setCardBackgroundDark(card: Any) {
+        // 深灰卡片底，与 HyperOS 深色表面一致（A=FF，R=2A，G=2A，B=2E）
+        val dark = 0xFF2A2A2E.toInt()
+        try {
+            val m = card.javaClass.getMethod("setCardBackgroundColor", Int::class.javaPrimitiveType)
+            m.isAccessible = true
+            m.invoke(card, dark)
+        } catch (_: Throwable) {
+            try {
+                (card as? View)?.setBackgroundColor(dark)
+            } catch (_: Throwable) {
+                // 都不可调用则放弃本次校正
+            }
+        }
+    }
+
+    /**
+     * v4.18【主因修复】：清除缩略图 ImageView（imgItem）上由布局 XML 为「图标」预设的主题 tint
+     * 与 colorFilter。imgItem 是图标与真实照片共用的 View（`com.miui.view.MoreIconImage`，继承自
+     * AppCompatImageView），图标靠 tint 随主题变色；显示照片时若不清除，照片会被染成纯色块
+     * （浅色=黑、深色=白）。
+     *
+     * <p><b>关键时序</b>：必须在 Glide 实际 `setImageDrawable` <b>之前</b>清掉 tint——关闭面板再打开时，
+     * 同一图片命中 Glide 内存缓存会<b>同步</b>设图，若 proceed() 之后才清，tint 已在设图瞬间生效。
+     * 首开为异步加载、事后清恰巧生效，故此前表现为「开着正常、重开变黑/白」。
+     *
+     * <p><b>双套 tint</b>：AppCompatImageView 的 tint 由 `AppCompatImageHelper` 持有，XML 可能用
+     * `app:tint` 或 `android:tint`；仅清框架 `setImageTintList` 会被 helper 在下次 setImageDrawable
+     * 时重新施加，故框架与 compat（`setSupportImageTintList`）两套都清。
+     */
+    private fun clearImageTint(vh: Any?) {
+        if (vh == null) return
+        try {
+            val iv = Reflect.getField(vh, "imgItem") ?: return
+            val nullCsl: android.content.res.ColorStateList? = null
+            val nullMode: android.graphics.PorterDuff.Mode? = null
+            for (name in arrayOf("setSupportImageTintList", "setImageTintList")) {
+                try {
+                    val m = iv.javaClass.getMethod(name, android.content.res.ColorStateList::class.java)
+                    m.isAccessible = true
+                    m.invoke(iv, nullCsl)
+                } catch (_: Throwable) {
+                }
+            }
+            for (name in arrayOf("setSupportImageTintMode", "setImageTintMode")) {
+                try {
+                    val m = iv.javaClass.getMethod(name, android.graphics.PorterDuff.Mode::class.java)
+                    m.isAccessible = true
+                    m.invoke(iv, nullMode)
+                } catch (_: Throwable) {
+                }
+            }
+            try {
+                val m = iv.javaClass.getMethod("clearColorFilter")
+                m.isAccessible = true
+                m.invoke(iv)
+            } catch (_: Throwable) {
+            }
+        } catch (t: Throwable) {
+            log("clearImageTint error - $t")
+        }
     }
 
     /**
