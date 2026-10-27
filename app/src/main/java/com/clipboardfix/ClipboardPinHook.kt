@@ -1051,6 +1051,13 @@ object ClipboardPinHook {
                             st.declined = true
                             return@hook chain.proceed()
                         }
+                        // 常用语（非剪贴板）条目不提供置顶功能：右滑直接交还系统，
+                        // 避免置顶门/置顶按钮泄漏到常用语面板
+                        if (!isClipboardRow(sv)) {
+                            st.declined = true
+                            log("pin door skipped: non-clipboard row")
+                            return@hook chain.proceed()
+                        }
                         // 右滑 = 开置顶门
                         st.mode = MODE_OPENING
                         log("pin door opening: dx=" + dx)
@@ -1312,8 +1319,8 @@ object ClipboardPinHook {
                             resetPinDoorIfNeeded(itemView)
                             // 诊断：前 3 次 bind 打一次条目视图树（确认布局 id 映射）
                             dumpTreeOnce(itemView)
-                            // 置顶条目追加「（已置顶）」提醒
-                            markPinnedSource(itemView, rowTimeAt(posArg))
+                            // 置顶条目追加「（已置顶）」提醒（仅剪贴板条目；常用语面板不置顶）
+                            markPinnedSource(itemView, if (isClipboardRow(itemView)) rowTimeAt(posArg) else 0L)
                         }
                     } catch (t: Throwable) {
                         log("bind map record failed - " + t)
@@ -1919,6 +1926,67 @@ object ClipboardPinHook {
             return sRowTimes[pos]
         }
         return 0L
+    }
+
+    /**
+     * 判断给定视图（SwipeRevealLayout 或条目 itemView）对应的行是否为<b>剪贴板</b>行。
+     *
+     * <p>面板「剪贴板 / 常用语」共享同一 {@code InputMethodClipboardAdapter} 与
+     * {@code SwipeRevealLayout}，置顶门/按钮因此会泄漏到常用语条目。以此函数区分：
+     * 只有数据模型为剪贴板条目（含 {@code ClipboardContentModel}）的行才提供置顶功能，
+     * 常用语行一律不提供，避免右滑置顶门与「（已置顶）」标记出现在常用语面板。
+     *
+     * <p>判定：由 {@code sBindMap} 反查适配器位置 → 在当前显示列表
+     * （{@code sDisplayListRef}，即当前标签的数据）取该元素，判断其类或其内部模型
+     * 字段类名是否含 "Clipboard"。常用语数据模型不含该字串，自然判为非剪贴板行。
+     */
+    private fun isClipboardRow(view: View): Boolean {
+        val pos = positionOf(view) ?: return false
+        val list = sDisplayListRef.get() ?: return false
+        if (pos < 0 || pos >= list.size) {
+            return false
+        }
+        return isClipboardModel(list[pos])
+    }
+
+    /** 从视图向上回溯，借 {@code sBindMap} 反查适配器位置（条目根通常就是 SwipeRevealLayout）。 */
+    private fun positionOf(view: View): Int? {
+        var cur: View? = view
+        var i = 0
+        while (i < 6 && cur != null) {
+            synchronized(sBindMap) {
+                val p = sBindMap[cur]
+                if (p != null) {
+                    return p
+                }
+            }
+            val pp = cur.parent
+            cur = pp as? View
+            i++
+        }
+        return null
+    }
+
+    /** 数据模型是否为剪贴板条目（类名或其内部模型字段含 "Clipboard"）。 */
+    private fun isClipboardModel(item: Any?): Boolean {
+        if (item == null) {
+            return false
+        }
+        if (item.javaClass.name.contains("Clipboard")) {
+            return true
+        }
+        for (f in arrayOf("model", "mModel", "clipboardContentModel",
+                "mClipboardContentModel", "data", "mData")) {
+            try {
+                val inner = Reflect.getField(item, f) ?: continue
+                if (inner.javaClass.name.contains("Clipboard")) {
+                    return true
+                }
+            } catch (ignored: Throwable) {
+                // 字段不存在，试下一个
+            }
+        }
+        return false
     }
 
     // ---------------- 置顶状态持久化 ----------------

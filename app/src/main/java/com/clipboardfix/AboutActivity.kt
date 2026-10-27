@@ -904,6 +904,7 @@ class AboutActivity : ComponentActivity() {
     // 折射源是本页内容，故必须画在页面 Compose 覆盖层里而不是独立弹窗。
     private fun showChangelog() {
         val blocks = listOf(
+            "V2.0.5" to getString(R.string.changelog_v205),
             "V2.0.4" to getString(R.string.changelog_v204),
             "V2.0.3" to getString(R.string.changelog_v203),
             "V2.0.2" to getString(R.string.changelog_v202),
