@@ -2159,13 +2159,16 @@ object ClipboardPinHook {
             val content: View
             val icon = PinIcon.get()
             if (icon != null) {
+                // 新图标是圆角方块 tile；用 OVAL 背景提供圆形轮廓，clipToOutline 把
+                // 方块 tile 裁进圆圈内，恢复成原版「正圆按钮」观感（浅蓝/红圆 + 白色字形）
                 val iv = ImageView(sv.context)
-                val pad = (PIN_ICON_PAD_DP * density + 0.5f).toInt()
-                iv.setPadding(pad, pad, pad, pad)
+                iv.setPadding(0, 0, 0, 0)
                 iv.scaleType = ImageView.ScaleType.FIT_CENTER
-                // 原图 #FF272636 深藏青，蓝底圆上对比不足；染白与旧版白色「顶」字一致
-                // （取消置顶图标是 alpha 图 RGB 纯白，同滤色器下无副作用）
-                iv.setColorFilter(0xFFFFFFFF.toInt(), PorterDuff.Mode.SRC_IN)
+                val bg = GradientDrawable()
+                bg.shape = GradientDrawable.OVAL
+                bg.setColor(PIN_BTN_COLOR)
+                iv.background = bg
+                iv.clipToOutline = true
                 content = iv
             } else {
                 val tv = TextView(sv.context)
@@ -2173,15 +2176,16 @@ object ClipboardPinHook {
                 tv.setTextColor(0xFFFFFFFF.toInt())
                 tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15f)
                 tv.gravity = android.view.Gravity.CENTER
+                // 解码失败回退旧版「顶」字，保留蓝圆底衬
+                val bg = GradientDrawable()
+                bg.shape = GradientDrawable.OVAL
+                bg.setColor(PIN_BTN_COLOR)
+                tv.background = bg
                 content = tv
             }
             content.layoutParams = ViewGroup.LayoutParams(size, size)
             content.isClickable = false
             content.isFocusable = false
-            val bg = GradientDrawable()
-            bg.shape = GradientDrawable.OVAL
-            bg.setColor(PIN_BTN_COLOR)
-            content.background = bg
             // 初始位置在「门外」：整体向左移出一个门宽，被父容器左边界裁掉（不可见）。
             // 开门时由 [syncPinBtn] 让它随主视图一起滑进露出区。
             content.translationX = -pinDoorWidth(sv)

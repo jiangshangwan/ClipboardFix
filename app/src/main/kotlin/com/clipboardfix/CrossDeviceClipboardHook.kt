@@ -581,6 +581,15 @@ object CrossDeviceClipboardHook {
                     // 补调 phrase 的空视图状态机令 RecyclerView 重新 VISIBLE（v4.15）。
                     ClipboardPinHook.syncEmptyState(list)
                     log("cloud merged into live list (prepended and/or pinned re-pinned)")
+                    // 实时合入后重建置顶快照（sTimeJson / sRowTimes）。
+                    // 置顶手势依赖 sTimeJson[time] 取短语原始内容；本方法只改了 adapter 列表
+                    // 与 sBindMap、未走 query→reorder，故 sTimeJson 仍缺云端条目——面板开着时
+                    // 给云端条目置顶会因查不到原文（sTimeJson[time]==null）而提前 return，
+                    // 须关面板重开（走完整重拉）才生效。这里借 refreshFromLocal 走完整 query
+                    // 重拉，reorder 会把已落本地库的云端条目原文补进 sTimeJson，置顶即可成功。
+                    // prependMissingCloud 幂等：二次进入返回 false，不会递归重拉；且经
+                    // setClipboardList 钩子仍受 sWipedKeys 约束，不会复活已清空条目（无 v4.14 回归）。
+                    ClipboardPinHook.refreshFromLocal("cloud merge: rebuild pin snapshots")
                 } else if (missingRowCount(list, cache) > 0) {
                     // v4.16：缓存里有显示列表没有的条目却一条都没补进去（被清空屏蔽等），
                     // 云端推送此刻**已经落本地库**（日志实证 setClipBoardDataToLocal），
