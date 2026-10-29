@@ -115,6 +115,9 @@ object CrossDeviceClipboardHook {
     /** 面板列表适配器（setClipboardList 整表替换点，动态 dex）。 */
     private const val CLIP_ADAPTER = "com.miui.inputmethod.InputMethodClipboardAdapter"
 
+    /** v4.21：面板弹出视图（单条删除的真正入口所在类）。 */
+    private const val CLIP_POPUP_VIEW = "com.miui.inputmethod.InputMethodClipboardPhrasePopupView"
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /** v4.16：兜底重拉本地列表的冷却间隔（ms），避免同一条云端推送反复触发重拉。 */
@@ -260,6 +263,8 @@ object CrossDeviceClipboardHook {
         sMerged[self] = true
         // 每次打开都是新会话：重置「已见到云端数据」标志，供重试窗口判断。
         sCloudSeen = false
+        // 面板打开即注册屏蔽表推送接收器 + 向 system_server 拉一次（赶在 setClipboardList 灌列表前就绪）。
+        ensureDeletedKeysLoaded()
         // v4.7：sSeenCloud **不清空**——旧图关面板再开后已不是最新推送，靠本缓存补回。
         // 面板类（动态 dex）此刻已加载：装上云端缓存 + setClipboardList 补回两个 hook，
         // 保证随后 $2$1 灌本地列表时云端条目不被整表替换冲掉（打开即出的关键）。
@@ -440,6 +445,9 @@ object CrossDeviceClipboardHook {
                                     if (cache.isNotEmpty()) {
                                         prependMissingCloud(list, cache)
                                     }
+                                    // v4.21：列表层面再过滤一遍——被删条目可能不是从云端缓存补回的，
+                                    // 而是云端同步写回本地库后由本地查询带回来的（换输入法即此路径）。
+                                    dropBlockedEntries(list)
                                 }
                             } catch (t: Throwable) {
                                 log("prepend error - $t")
@@ -448,6 +456,90 @@ object CrossDeviceClipboardHook {
                         }
                         log("OK: hooked adapter setClipboardList")
                         break
+                    }
+                }
+                // v4.19：单条删除记账——左滑点删除时适配器按位置移除条目
+                // （removeClipboardListItem → mClipboardList.remove(pos)）。此处在移除
+                // 前按位置取到该条目（getAdapterList() 返回的正是 mClipboardList，索引一致），
+                // 记入 sWipedKeys，防止它之后从云端/图片缓存里复活。只记账不改返回值，
+                // 不触碰删除本身的任何行为。
+                for (m in ad.methods) {
+                    if (m.name == "removeClipboardListItem" && m.parameterTypes.size == 1
+                        && (m.parameterTypes[0] == Int::class.java
+                                || m.parameterTypes[0] == Integer::class.java)
+                    ) {
+                        m.isAccessible = true
+                        XposedInit.hook(m) { chain ->
+                            try {
+                                val pos = chain.getArg(0) as? Int ?: -1
+                                if (pos >= 0) {
+                                    val adapter = chain.thisObject
+                                    val list = adapter.javaClass.getMethod("getAdapterList")
+                                        .invoke(adapter) as? List<*>
+                                    if (list != null && pos < list.size) {
+                                        markDeletedEntry(list[pos])
+                                    }
+                                }
+                            } catch (t: Throwable) {
+                                log("single delete capture failed - $t")
+                            }
+                            chain.proceed()
+                        }
+                        log("OK: hooked adapter removeClipboardListItem")
+                        break
+                    }
+                }
+                // v4.21：单条删除的<b>真正入口</b>——反编译实证
+                // InputMethodClipboardPhrasePopupView.deleteClipboardListItemAndTrack
+                // (ClipboardContentModel, int) 直接带着被删的模型对象（另有 deleteSavedFile
+                // 清文件）。比适配器按位置取条目更直接、更可靠（不依赖 getAdapterList 索引）。
+                // 在删除执行前把该条目记入屏蔽表。
+                val pv = Reflect.findClassIfExists(CLIP_POPUP_VIEW, cl)
+                if (pv == null) {
+                    // 诊断：类都没找到就得换定位方式（类名随 phrase 版本可能变）
+                    log("DIAG delete hook: popup class NOT found - $CLIP_POPUP_VIEW")
+                } else {
+                    var hooked = false
+                    for (m in pv.declaredMethods) {
+                        if (m.name == "deleteClipboardListItemAndTrack" && m.parameterTypes.size == 2
+                            && (m.parameterTypes[1] == Int::class.java
+                                    || m.parameterTypes[1] == Integer::class.java)
+                        ) {
+                            m.isAccessible = true
+                            XposedInit.hook(m) { chain ->
+                                try {
+                                    // 第 0 个参数就是要删除的 ClipboardContentModel
+                                    log("DIAG delete called: " + diagEntry(chain.getArg(0)))
+                                    markDeletedEntry(chain.getArg(0))
+                                } catch (t: Throwable) {
+                                    log("delete track capture failed - $t")
+                                }
+                                chain.proceed()
+                            }
+                            hooked = true
+                            log("OK: hooked popup deleteClipboardListItemAndTrack")
+                            break
+                        }
+                    }
+                    if (!hooked) {
+                        log("DIAG delete hook: deleteClipboardListItemAndTrack NOT found on popup")
+                    }
+                    // 补充捕获点：deleteSavedFile(model) 同样带模型对象（图片条目删文件也走它）
+                    for (m in pv.declaredMethods) {
+                        if (m.name == "deleteSavedFile" && m.parameterTypes.size == 1) {
+                            m.isAccessible = true
+                            XposedInit.hook(m) { chain ->
+                                try {
+                                    log("DIAG deleteSavedFile: " + diagEntry(chain.getArg(0)))
+                                    markDeletedEntry(chain.getArg(0))
+                                } catch (t: Throwable) {
+                                    log("deleteSavedFile capture failed - $t")
+                                }
+                                chain.proceed()
+                            }
+                            log("OK: hooked popup deleteSavedFile")
+                            break
+                        }
                     }
                 }
                 // v4.9【本机图片渲染修复】loadVideoOrImage 的 across 分支只认 thumbImage，
@@ -688,6 +780,9 @@ object CrossDeviceClipboardHook {
      * 点击取值按位置索引两边一致，不会错位。
      */
     private fun prependMissingCloud(list: MutableList<Any?>, cache: List<Any?>): Boolean {
+        // v4.20：补回前先载入持久化屏蔽表——换输入法（新进程）后本表为空，
+        // 不载入就会把别的进程里已删除的云端条目又补回来
+        ensureDeletedKeysLoaded()
         val present = HashSet<String>()
         for (e in list) {
             val k = entryKey(e)
@@ -697,7 +792,12 @@ object CrossDeviceClipboardHook {
         }
         var added = 0
         var blocked = 0
+        if (cache.isNotEmpty()) {
+            log("DIAG prepend: cache=" + cache.size + " blockedKeys=" + sWipedKeys.size)
+        }
         for (c in cache) {
+            log("DIAG cache entry: " + diagEntry(c)
+                    + " wt=" + (entryKey(c)?.let { sWipedKeys[it] } ?: "none"))
             // v4.14：精确跳过「已被一键清空」的条目（按 entryKey 屏蔽），防复活。
             // 不再按时间一刀切——正常云端/新条目（entryKey 不同）照常实时显示，
             // 修 v4.13 回归（云端条目面板开着时不显示、关面板重开才有）。
@@ -740,6 +840,58 @@ object CrossDeviceClipboardHook {
             changed = true
         }
         return changed
+    }
+
+    /**
+     * v4.21：从显示列表里剔除已被删除/清空的条目（堵住「本地库」这条复活通道）。
+     *
+     * <p>此前只有 [prependMissingCloud] 会查屏蔽表，而它只管「云端缓存补回」这一条路。
+     * 但云端同步会**把条目写回本地库**（实证 `setAcrossDevicesData →
+     * setClipBoardDataToLocal`）——于是被删的云端条目是**从本地查询结果里**回到显示列表的，
+     * 根本不经过补回路径，屏蔽表完全够不着。换输入法（新进程）开面板时正是这条链路：
+     * 新进程没有内存屏蔽表 → 云端同步写回本地库 → 本地查询把它查出来 → 又显示出来。
+     *
+     * <p>这里在<b>列表层面</b>统一过滤，本地查询与云端补回两个来源一起拦住。
+     * 沿用「一次复制一代」语义：{@code time <=} 记账值 → 剔除；更新鲜的副本
+     * （用户重新复制了同一内容）→ 解除屏蔽并保留。
+     *
+     * @return 是否真的删掉了条目（调用方据此判断列表是否变化）
+     */
+    private fun dropBlockedEntries(list: MutableList<Any?>): Boolean {
+        ensureDeletedKeysLoaded()
+        log("DIAG drop: list=" + list.size + " blockedKeys=" + sWipedKeys.size)
+        for (i in 0 until minOf(list.size, 5)) {
+            log("DIAG list[$i]: " + diagEntry(list[i]))
+        }
+        if (sWipedKeys.isEmpty()) {
+            return false
+        }
+        var removed = 0
+        try {
+            val it = list.iterator()
+            while (it.hasNext()) {
+                val e = it.next()
+                val k = entryKey(e) ?: continue
+                val wt = sWipedKeys[k] ?: continue
+                val t = entryTime(e) ?: 0L
+                if (t <= wt) {
+                    it.remove()
+                    removed++
+                } else {
+                    sWipedKeys.remove(k)
+                    log("wipe block lifted (display): $k (t=$t > wiped t=$wt)")
+                }
+            }
+        } catch (t: Throwable) {
+            // 列表不可写（如 Arrays$ArrayList 定长）时静默跳过，不影响显示
+            log("dropBlockedEntries skipped - $t")
+            return false
+        }
+        if (removed > 0) {
+            log("drop $removed deleted rows from display list")
+            persistDeletedKeys()
+        }
+        return removed > 0
     }
 
     /** 取条目 time（{@code ClipboardContentModel.getTime()}，long）；反射失败返回 null。 */
@@ -1040,6 +1192,206 @@ object CrossDeviceClipboardHook {
     }
 
     /**
+     * 诊断：一条条目的身份摘要（类名 / entryKey / time）。
+     *
+     * <p>用于判定「entryKey 是否取不到」——若 key 为 null，[prependMissingCloud] 会
+     * 无条件把它补回列表、[markDeletedEntry] 也会跳过记账，是复活 bug 的高嫌疑点。
+     */
+    private fun diagEntry(e: Any?): String {
+        val k = entryKey(e)
+        val t = entryTime(e)
+        return (e?.javaClass?.simpleName ?: "null") + "|key=" + k + "|t=" + t
+    }
+
+    /**
+     * v4.28：屏蔽表跨进程共享——system_server 中枢（AMS hook 拦截 + Settings.Global 下发）。
+     *
+     * <p>v4.25–v4.27 的三条通道在真机上逐条被证伪：remote prefs 直写（binder 不交付）、
+     * App 中继广播（MIUI 自启动拦截 + Greezer 冻结）、system_server receiver 收广播
+     * （diag8 实证收不到隐式广播）。v4.28 不再依赖广播投递：
+     * <ul>
+     *   <li>上行：删除后仍发 [SystemRelayHook.ACTION_UPDATE] 广播，由 system_server 的
+     *       {@code ActivityManagerService.broadcastIntent*} hook 在 AMS 入口拦截合并
+     *       （sendBroadcast 必经之路，不靠 receiver）；</li>
+     *   <li>下行：system_server 把表写进 [android.provider.Settings.Global]，本进程在
+     *       面板打开时直接读取（任何 app 可读，无投递环节、无唤醒、无冻结问题）。</li>
+     * </ul>
+     *
+     * <p>存 {@code key -> time} 的 JSON（「一次复制一代」语义：只拦 time <= 记账值的那一代副本，
+     * 用户重新复制同一内容 time 变大即自动解封）。内存上限 400 条，写回时按 time 只保留最大的 200 条。
+     */
+    /** 中枢状态是否已打过诊断日志（每进程一次）。 */
+    private var hubStatusLogged = false
+
+    @Volatile
+    private var sHookCtx: android.content.Context? = null
+
+    @Volatile
+    private var sHookCtxTried = false
+
+    /** 取当前被 hook 进程的 Application context（与 [ClipboardPinHook] 取法一致）。 */
+    private fun deletedCtx(): android.content.Context? {
+        val cached = sHookCtx
+        if (cached != null) {
+            return cached
+        }
+        if (sHookCtxTried) {
+            return null
+        }
+        sHookCtxTried = true
+        val c = try {
+            val at = Class.forName("android.app.ActivityThread")
+            at.getMethod("currentApplication").invoke(null) as? android.content.Context
+        } catch (t: Throwable) {
+            log("deleted keys: no context - $t")
+            null
+        }
+        sHookCtx = c
+        return c
+    }
+
+    /** 合并一份 {@code key -> time} JSON 进内存表（同 key 取 time 更大的一代），返回变动条数。 */
+    private fun mergeIntoWipedKeys(json: String?): Int {
+        if (json.isNullOrEmpty()) {
+            return 0
+        }
+        var n = 0
+        try {
+            val obj = org.json.JSONObject(json)
+            val it = obj.keys()
+            while (it.hasNext()) {
+                val k = it.next()
+                val t = obj.optLong(k, 0L)
+                if (t > 0L) {
+                    val old = sWipedKeys[k]
+                    if (old == null || t > old) {
+                        sWipedKeys[k] = t
+                        n++
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            log("deleted keys merge failed - $t")
+        }
+        return n
+    }
+
+    /**
+     * 确保屏蔽表就绪：直接从 [android.provider.Settings.Global] 读 system_server 中枢落的表。
+     *
+     * <p>v4.28：下行不再走广播推送（diag8 实证 system_server receiver 收不到、推送也无从谈起），
+     * 改由 system_server 把屏蔽表写进 Settings.Global（见 [SystemRelayHook]），这里读回来
+     * 合并进 [sWipedKeys]。任何 app 可读 Global settings，无投递环节、无唤醒、无冻结问题。
+     */
+    private fun ensureDeletedKeysLoaded() {
+        val ctx = deletedCtx() ?: return
+        try {
+            val json = android.provider.Settings.Global.getString(
+                ctx.contentResolver, SystemRelayHook.KEY_BLOCKLIST)
+            val n = mergeIntoWipedKeys(json)
+            if (n > 0) {
+                log("blocklist loaded from settings: +$n -> mem ${sWipedKeys.size}")
+            }
+            if (!hubStatusLogged) {
+                hubStatusLogged = true
+                val st = android.provider.Settings.Global.getString(
+                    ctx.contentResolver, SystemRelayHook.KEY_HUB_STATUS)
+                log("hub status=" + (st ?: "absent") + ", blocklist=" + (json?.length ?: 0) + "B")
+            }
+        } catch (t: Throwable) {
+            log("blocklist load failed - $t")
+        }
+    }
+
+    /** 把内存表发给 system_server 中枢（隐式广播，由 AMS hook 拦截合并后落 Settings.Global）。 */
+    private fun sendUpdateToSystem(json: String) {
+        val ctx = deletedCtx() ?: return
+        try {
+            val i = android.content.Intent(SystemRelayHook.ACTION_UPDATE)
+            i.putExtra(SystemRelayHook.EXTRA_JSON, json)
+            i.addFlags(android.content.Intent.FLAG_RECEIVER_FOREGROUND)
+            ctx.sendBroadcast(i)
+            log("blocklist update sent (mem ${sWipedKeys.size})")
+        } catch (t: Throwable) {
+            log("blocklist update failed - $t")
+        }
+    }
+
+    /** 把内存表写回：发 [SystemRelayHook.ACTION_UPDATE] 给 system_server 中枢，合并后落 Settings.Global。 */
+    private fun persistDeletedKeys() {
+        try {
+            // 只保留 time 最大的 200 条，按 time 升序淘汰
+            val sorted = sWipedKeys.entries.sortedBy { it.value }
+            val drop = sorted.size - 200
+            if (drop > 0) {
+                for (e in sorted.take(drop)) {
+                    sWipedKeys.remove(e.key)
+                }
+            }
+            val obj = org.json.JSONObject()
+            for ((k, t) in sWipedKeys) {
+                obj.put(k, t)
+            }
+            val json = obj.toString()
+            sendUpdateToSystem(json)
+            log("deleted keys persisted: ${sWipedKeys.size} entries")
+        } catch (t: Throwable) {
+            log("deleted keys persist failed - $t")
+        }
+    }
+
+    /**
+     * v4.19：记录「用户单条删除」的条目，精确屏蔽其复活（左滑点删除，非一键清空）。
+     *
+     * <p>与一键清空（[clearRestoreCaches] 整批记账）不同，单条删除此前<b>完全没有记账</b>：
+     * 条目虽从本地库移除，[sCloudCache] / [sSeenCloud] 里仍留着它的对象引用；下次复制新内容
+     * 触发 setClipboardList 时 [prependMissingCloud] 会把它当成「被整表替换冲掉的条目」
+     * 补回头部，表现为「左滑删掉的内容，一复制新内容就又出现」。
+     *
+     * <p>这里在删除动作发生时就按 [entryKey] 记账，复用 [sWipedKeys] 的「一次复制一代」
+     * 语义：只拦 {@code time <=} 删除时 time 的那一代副本；用户再次复制同一内容
+     * （time 更大）自动解封，不会像永久屏蔽那样误杀。
+     *
+     * <p>同时把该条目从两份补回缓存里直接剔除，双重保险——防止缓存对象被反复补回。
+     */
+    fun markDeletedEntry(e: Any?) {
+        // 写之前必须先载入：否则本进程的空表会把别的输入法进程已记的屏蔽项覆盖掉
+        ensureDeletedKeysLoaded()
+        val k = entryKey(e)
+        val t = entryTime(e) ?: 0L
+        if (k == null) {
+            log("single delete: entryKey unresolved, skip - " + diagEntry(e))
+            return
+        }
+        val old = sWipedKeys[k]
+        if (old == null || t > old) {
+            sWipedKeys[k] = t
+        }
+        while (sWipedKeys.size > 400) {
+            val it = sWipedKeys.keys.iterator()
+            if (it.hasNext()) sWipedKeys.remove(it.next())
+        }
+        sSeenCloud.remove(k)
+        val base = sCloudCache
+        if (base != null) {
+            val filtered = ArrayList<Any?>()
+            for (c in base) {
+                val ck = entryKey(c)
+                val ct = entryTime(c) ?: 0L
+                if (ck == k && ct <= t) {
+                    continue
+                }
+                filtered.add(c)
+            }
+            if (filtered.size != base.size) {
+                sCloudCache = filtered
+            }
+        }
+        persistDeletedKeys()
+        log("single delete marked: " + diagEntry(e) + " (blocked ${sWipedKeys.size} keys)")
+    }
+
+    /**
      * v4.12：清空面板（clearClipboardDataMethod）时同步清空补回缓存。
      *
      * <p>sCloudCache / sSeenCloud 本是为「关面板再开图片/云条目被整表替换冲掉时补回」
@@ -1052,6 +1404,8 @@ object CrossDeviceClipboardHook {
      * 再遇「关面板再开被冲掉」仍能从新缓存补回。
      */
     fun clearRestoreCaches() {
+        // v4.20：同样要先载入——清空可能发生在别的输入法进程，本进程内存表未必有
+        ensureDeletedKeysLoaded()
         // v4.14：先把「当前被清空的这些条目」的 entryKey 记入 sWipedKeys，之后任何补回路径
         // 都不得再塞回它们。关键：此时刷新尚未跑，adapter 显示列表仍是清空前内容，正是要屏蔽的集合。
         // v4.16：值记该条目的 time（屏蔽「这一代副本」，不是永久屏蔽同一内容）。
@@ -1096,6 +1450,8 @@ object CrossDeviceClipboardHook {
         }
         sCloudCache = null
         sSeenCloud.clear()
+        // v4.20：一键清空的屏蔽项同样落盘——否则换输入法（新进程）后已清空内容会复活
+        persistDeletedKeys()
         log("panel wiped: caches cleared, blocked " + wiped.size + " keys (total " + sWipedKeys.size + ")")
     }
 

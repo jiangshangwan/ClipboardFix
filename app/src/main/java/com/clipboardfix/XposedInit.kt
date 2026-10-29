@@ -33,6 +33,13 @@ class XposedInit : XposedModule() {
      */
     override fun onSystemServerStarting(param: XposedModuleInterface.SystemServerStartingParam) {
         log("system server starting: v" + BuildConfig.VERSION_NAME)
+        // 注册「删除记账」中枢：hook AMS.broadcastIntent* 拦截上行广播 + Settings.Global 下发。
+        // 开机早期禁止跨进程读远程偏好，这里只装 hook、不读任何配置。
+        try {
+            SystemRelayHook.init(param.getClassLoader())
+        } catch (t: Throwable) {
+            log("system relay init failed - $t")
+        }
         if (imeBottomSupported()) {
             ImePermissionHook.init(param.getClassLoader())
         } else {
