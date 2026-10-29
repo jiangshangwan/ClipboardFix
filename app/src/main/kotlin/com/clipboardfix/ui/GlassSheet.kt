@@ -10,6 +10,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -54,8 +55,11 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.Shadow
 import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -99,6 +103,9 @@ internal sealed interface GlassSheetContent {
 
     /** 纯文本行（捐赠名单）。 */
     class Lines(val lines: List<String>) : GlassSheetContent
+
+    /** 单段纯文本提示（如主开关关闭确认的正文）。 */
+    class Message(val text: String) : GlassSheetContent
 }
 
 /** 一次「打开弹卡」的请求。[onAction] 执行后弹卡自动关闭。 */
@@ -107,32 +114,40 @@ internal class GlassSheetRequest(
     val content: GlassSheetContent,
     val actionText: String? = null,
     val onAction: (() -> Unit)? = null,
+    /** 取消按钮文案（双按钮弹卡时传入，使用 miuiX 文字按钮）。 */
+    val cancelText: String? = null,
+    /** 取消按钮点击回调；执行后弹卡自动关闭。 */
+    val onCancel: (() -> Unit)? = null,
 )
 
 /**
- * 弹卡桥：页面注册槽位，任意处投递请求。与 [SnackbarBridge] 同风格，但只保留最新一条
- * 请求（弹卡是模态的，不需要排队）。
+ * 弹卡桥：页面注册槽位，任意处投递请求。与 [SnackbarBridge] 同风格——
+ * 各页面共享同一份「当前请求」状态（广播到所有已绑定页面），弹卡只由**当前可见页**渲染，
+ * 因此从功能页投递的弹窗也能正确显示在功能页，不再受「单槽位最后绑定者覆盖」影响
+ * （此前 AboutPage 在 FeaturePage 之后绑定，会抢走唯一槽位，导致功能页弹窗发到 AboutPage
+ * 而不可见）。
  */
 internal object GlassSheetBridge {
-    private var host: MutableState<GlassSheetRequest?>? = null
+    private val hosts = mutableSetOf<MutableState<GlassSheetRequest?>>()
+    private val lock = Any()
 
     fun bind(state: MutableState<GlassSheetRequest?>) {
-        host = state
+        synchronized(lock) { hosts.add(state) }
     }
 
     fun unbind(state: MutableState<GlassSheetRequest?>) {
-        if (host === state) host = null
+        synchronized(lock) { hosts.remove(state) }
     }
 
     fun show(request: GlassSheetRequest) {
-        host?.value = request
+        synchronized(lock) { hosts.forEach { it.value = request } }
     }
 
     fun close() {
-        host?.value = null
+        synchronized(lock) { hosts.forEach { it.value = null } }
     }
 
-    fun isOpen(): Boolean = host?.value != null
+    fun isOpen(): Boolean = synchronized(lock) { hosts.any { it.value != null } }
 }
 
 /** 大卡起止缩放：比小下拉卡（0.24）收敛得多——大卡从中心「炸开」会显得夸张。 */
@@ -302,9 +317,36 @@ private fun GlassSheetCard(
                         is GlassSheetContent.Actions -> ActionsBody(c)
                         is GlassSheetContent.Picture -> PictureBody(c)
                         is GlassSheetContent.Lines -> LinesBody(c)
+                        is GlassSheetContent.Message -> MessageBody(c)
                     }
                 }
-                if (request.actionText != null) {
+                if (request.cancelText != null) {
+                    // 双按钮：取消（miuiX 文字按钮）+ 确认（miuiX 实心按钮）
+                    Spacer(Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            text = request.cancelText,
+                            onClick = {
+                                request.onCancel?.invoke()
+                                onDismiss()
+                            },
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                request.onAction?.invoke()
+                                onDismiss()
+                            },
+                            colors = ButtonDefaults.buttonColorsPrimary(),
+                        ) {
+                            Text(request.actionText ?: "")
+                        }
+                    }
+                } else if (request.actionText != null) {
                     Spacer(Modifier.height(14.dp))
                     ActionButton(text = request.actionText) {
                         request.onAction?.invoke()
@@ -453,5 +495,17 @@ private fun SheetDivider() {
             .fillMaxWidth()
             .height(1.dp)
             .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
+    )
+}
+
+/** 单段纯文本提示（无小标题，直接展示正文）。 */
+@Composable
+private fun MessageBody(content: GlassSheetContent.Message) {
+    val colors = MiuixTheme.colorScheme
+    Text(
+        text = content.text,
+        fontSize = 15.sp,
+        lineHeight = 21.sp,
+        color = colors.onSurface,
     )
 }

@@ -40,13 +40,24 @@
     <string name="reboot_reload_title">Reboot or Reload</string>
     <string name="reboot_reload_sub">Requires ROOT</string>
     <string name="sec_feature">Feature Settings</string>
-    <string name="sw_ime_unlock">Enable Fullscreen Optimization</string>
+    <string name="sw_ime_unlock">Enable Fullscreen Keyboard Optimization</string>
     <string name="sw_unlimit">Unlock Clipboard Count Limit</string>
     <string name="sw_unlimit_time">Unlock Clipboard Time Limit</string>
     <string name="sw_unlimit_time_sub">Clipboard entries are no longer auto-cleared after 72 hours and are kept long-term</string>
     <string name="sw_panel">Optimize Clipboard Panel BG</string>
     <string name="sw_clipboard_pin">Enable Clipboard Entry Pinning</string>
     <string name="sw_clipboard_pin_sub">Swipe an entry right slightly to reveal the pin button, then tap it to pin. Only one pinned entry at a time; the pinned entry survives clipboard clearing.</string>
+
+    <!-- Main switch off confirm dialog -->
+    <string name="dialog_ime_unlock_title">Fullscreen Keyboard Optimization</string>
+    <string name="dialog_ime_unlock_body">Fullscreen Keyboard Optimization is a core feature. After disabling it, you will not be able to use other features. Confirm to disable?</string>
+    <string name="dialog_cancel">Cancel</string>
+    <string name="dialog_confirm_close">Confirm Disable</string>
+
+    <!-- Feature switch related toasts -->
+    <string name="toast_reboot_effect">Restart device to take effect</string>
+    <string name="toast_enable_first">Please enable Fullscreen Keyboard Optimization first</string>
+    <string name="toast_enabled_reboot">Enabled, please restart device</string>
 
     <!-- Settings page -->
     <string name="settings_title">Settings</string>
@@ -172,7 +183,10 @@
     <!-- ============ First-run welcome (3 pages) ============ -->
     <string name="welcome_title">Welcome to</string>
     <string name="welcome_brand">HyperClipFix</string>
-    <string name="welcome_desc">An LSPosed module that fixes\nthird-party IME access to the\nsystem clipboard</string>
+    <string name="welcome_desc">Fixes the problem that third-party\ninput methods cannot use the\nsystem clipboard on HyperOS</string>
+    <string name="welcome_done_title">Setup Complete!</string>
+    <string name="welcome_done_welcome">Welcome to</string>
+    <string name="welcome_start">Get Started</string>
 
     <!-- Page 2: preparation -->
     <string name="prep_title">Preparation</string>
@@ -180,7 +194,7 @@
     <string name="prep_android">Android version</string>
     <string name="prep_activate">Enable the module in LSPosed</string>
     <string name="prep_root">Grant superuser permission</string>
-    <string name="prep_gesture_line">Disable gesture hint bar</string>
+    <string name="prep_gesture_line">Disable gesture hint bar (Recommended)</string>
     <string name="prep_gesture_line_sub">Prevents the IME keyboard from being raised with a bottom gap</string>
     <string name="prep_language">Language</string>
     <string name="prep_unknown">Not detected</string>

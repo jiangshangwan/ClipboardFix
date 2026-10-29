@@ -40,13 +40,24 @@
     <string name="reboot_reload_title">重启或者重载</string>
     <string name="reboot_reload_sub">需要 ROOT 权限</string>
     <string name="sec_feature">功能设置</string>
-    <string name="sw_ime_unlock">启用全面屏优化功能</string>
+    <string name="sw_ime_unlock">启用全面屏键盘优化</string>
     <string name="sw_unlimit">解锁剪贴板数量上限</string>
     <string name="sw_unlimit_time">解锁剪贴板时间限制</string>
     <string name="sw_unlimit_time_sub">剪贴板条目不再被 72 小时自动清除，可长期保留</string>
     <string name="sw_panel">优化剪贴板面板背景</string>
     <string name="sw_clipboard_pin">开启剪贴板条目置顶</string>
     <string name="sw_clipboard_pin_sub">右滑条目轻轻一划露出置顶按钮，点击即可置顶；最多置顶一条，清空剪贴板时置顶条目保留</string>
+
+    <!-- 主开关关闭确认弹窗 -->
+    <string name="dialog_ime_unlock_title">全面屏键盘优化</string>
+    <string name="dialog_ime_unlock_body">全面屏键盘优化为核心功能，关闭后您将无法使用其他功能，确认关闭？</string>
+    <string name="dialog_cancel">取消</string>
+    <string name="dialog_confirm_close">确认关闭</string>
+
+    <!-- 功能开关相关提示 -->
+    <string name="toast_reboot_effect">重启设备生效</string>
+    <string name="toast_enable_first">请启用全面屏键盘优化后尝试</string>
+    <string name="toast_enabled_reboot">已启用，请重启设备</string>
 
     <!-- 设置页 -->
     <string name="settings_title">设置</string>
@@ -173,7 +184,10 @@
     <!-- ============ 首次进入欢迎引导（三页） ============ -->
     <string name="welcome_title">欢迎使用</string>
     <string name="welcome_brand">HyperClipFix</string>
-    <string name="welcome_desc">旨在解决第三方输入法\n无法使用系统剪贴板的\nLSPosed 模块</string>
+    <string name="welcome_desc">主要解决第三方输入法\n无法在HyperOS\n使用系统剪贴板的问题</string>
+    <string name="welcome_done_title">设置完成！</string>
+    <string name="welcome_done_welcome">欢迎使用</string>
+    <string name="welcome_start">开始使用</string>
 
     <!-- 第二页：模块准备工作 -->
     <string name="prep_title">模块准备工作</string>
@@ -181,7 +195,7 @@
     <string name="prep_android">Android 版本</string>
     <string name="prep_activate">在 LSPosed 管理器中激活模块</string>
     <string name="prep_root">给予模块超级用户权限</string>
-    <string name="prep_gesture_line">关闭手势提示线</string>
+    <string name="prep_gesture_line">关闭手势提示线(建议)</string>
     <string name="prep_gesture_line_sub">避免输入法键盘被异常抬高、底部留白</string>
     <string name="prep_language">语言</string>
     <string name="prep_unknown">未检测到</string>

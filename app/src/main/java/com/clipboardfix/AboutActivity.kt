@@ -511,7 +511,8 @@ class AboutActivity : ComponentActivity() {
 
     private fun onToggleImeUnlock(checked: Boolean) {
         uiSwImeUnlock.value = checked
-        saveFeaturePrefs()
+        // 主开关由功能页按新设计弹「已启用，请重启设备 / 重启设备生效」，此处不重复弹旧提示
+        saveFeaturePrefs(showReloadToast = false)
     }
 
     private fun onToggleUnlimitCount(checked: Boolean) {
@@ -534,7 +535,12 @@ class AboutActivity : ComponentActivity() {
         saveFeaturePrefs()
     }
 
-    private fun saveFeaturePrefs() {
+    /**
+     * 保存功能开关并推送到远程偏好。[showReloadToast] 控制是否弹「已更改，重载进程后生效」——
+     * 主开关（启用全面屏键盘优化）由功能页按新设计弹「已启用，请重启设备 / 重启设备生效」，
+     * 此处跳过以免重复；其余子开关仍沿用该提示（重载进程即可生效）。
+     */
+    private fun saveFeaturePrefs(showReloadToast: Boolean = true) {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putBoolean(ModulePrefs.KEY_IME_UNLOCK, uiSwImeUnlock.value)
             .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, uiSwUnlimitCount.value)
@@ -545,8 +551,10 @@ class AboutActivity : ComponentActivity() {
         pushFeaturePrefs()
         // 四个功能开关的 hook 全部装在 com.miui.phrase / 输入法进程内（进程启动时读开关），
         // 故重载进程即可生效，无需整机重启
+        if (showReloadToast) {
+            showSnack(getString(R.string.snack_changed_reload))
+        }
         refreshEnabledFeatures()
-        showSnack(getString(R.string.snack_changed_reload))
     }
 
     /**

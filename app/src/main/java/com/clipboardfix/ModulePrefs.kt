@@ -13,8 +13,8 @@ import android.content.SharedPreferences
  * <p>默认值即「还原到加开关之前的行为」：
  * 全面屏优化解锁默认开启，数量上限解锁默认关闭；
  * 剪贴板面板背景优化属于新特性，默认关闭，由用户按需开启。
- * 剪贴板时间限制解锁默认开启——72 小时自动清除属于待修复缺陷，
- * 开关仅用于在需要时恢复原生行为。
+ * 剪贴板时间限制解锁默认关闭——72 小时自动清除属于待修复缺陷，
+ * 开关仅用于在需要时恢复原生行为（默认即恢复原生 72 小时自动清除）。
  */
 object ModulePrefs {
 
@@ -27,7 +27,7 @@ object ModulePrefs {
     /** 解锁剪贴板/常用语数量上限，默认关闭。 */
     const val KEY_UNLIMIT_COUNT = "clipboard_unlimit_count"
 
-    /** 解锁剪贴板时间限制（72 小时自动清除），默认开启。 */
+    /** 解锁剪贴板时间限制（72 小时自动清除），默认关闭。 */
     const val KEY_UNLIMIT_TIME = "clipboard_unlimit_time"
 
     /** 剪贴板/常用语面板背景跟随底部功能栏取色，默认关闭。 */
@@ -38,7 +38,7 @@ object ModulePrefs {
 
     const val DEFAULT_IME_UNLOCK = true
     const val DEFAULT_UNLIMIT_COUNT = false
-    const val DEFAULT_UNLIMIT_TIME = true
+    const val DEFAULT_UNLIMIT_TIME = false
     const val DEFAULT_PANEL_COLOR = false
     const val DEFAULT_CLIPBOARD_PIN = false
 
@@ -75,7 +75,7 @@ object ModulePrefs {
         return p != null && p.getBoolean(KEY_UNLIMIT_COUNT, DEFAULT_UNLIMIT_COUNT)
     }
 
-    /** 时间限制解锁是否启用（hook 侧）。默认开启。 */
+    /** 时间限制解锁是否启用（hook 侧）。默认关闭。 */
     @JvmStatic
     fun isUnlimitTimeEnabled(): Boolean {
         val p = hookPrefs()

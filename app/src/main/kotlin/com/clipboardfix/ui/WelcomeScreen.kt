@@ -2,7 +2,9 @@ package com.clipboardfix.ui
 
 import android.os.Build
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -43,6 +45,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -50,7 +55,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -58,6 +66,7 @@ import androidx.compose.ui.unit.sp
 import com.clipboardfix.R
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import kotlin.math.sin
 import kotlin.random.Random
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
@@ -67,11 +76,12 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 首次进入的欢迎引导（三页）：
+ * 首次进入的欢迎引导（四页）：
  *
- * 1. 欢迎页 —— 品牌 + 一句话定位 + 圆形「下一步」按钮；
- * 2. 模块准备工作 —— 环境自检清单（HyperOS / Android / LSPosed 激活 / 超级用户 / 关闭手势提示线）+ 语言；
- * 3. 协议与声明 —— 用户协议 / 免责声明 / 隐私政策 + 动态验证码闸门 + 同意勾选。
+ * 1. 欢迎页 —— 品牌 + 一句话定位（HyperOS 高亮）+ 圆形「下一步」按钮；
+ * 2. 模块准备工作 —— 环境自检清单（HyperOS / Android / LSPosed 激活 / 超级用户 / 关闭手势提示线(建议)）+ 语言；
+ * 3. 协议与声明 —— 用户协议 / 免责声明 / 隐私政策 + 动态验证码闸门 + 同意勾选；
+ * 4. 设置完成 —— 黑底彩带 + 品牌名（蓝）+「开始使用」按钮收尾。
  *
  * 页面状态由外部（Activity）持有并传入，使系统返回键与「语言切换触发 recreate」都能正确落页；
  * 语言行复用设置页的液体玻璃下拉弹卡（同一 Compose 树内做实时折射）。
@@ -156,7 +166,7 @@ fun WelcomeFlow(
                         },
                     )
 
-                    else -> AgreementPage(
+                    2 -> AgreementPage(
                         codeVerified = codeVerified,
                         agreed = agreed,
                         onAgreedChange = { agreed = it },
@@ -166,8 +176,10 @@ fun WelcomeFlow(
                         },
                         onOpenDoc = { readerDoc = it },
                         onBack = { page.value = 1 },
-                        onFinish = onFinish,
+                        onNext = { page.value = 3 },
                     )
+
+                    else -> DonePage(playKey = page.value, onFinish = onFinish)
                 }
             }
         }
@@ -227,9 +239,21 @@ private fun IntroPage(onNext: () -> Unit) {
             color = accent,
             modifier = Modifier.padding(top = 2.dp),
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(48.dp))
+        val descText = stringResource(R.string.welcome_desc)
         Text(
-            text = stringResource(R.string.welcome_desc),
+            text = remember(descText) {
+                buildAnnotatedString {
+                    val idx = descText.indexOf("HyperOS")
+                    if (idx >= 0) {
+                        append(descText.substring(0, idx))
+                        withStyle(SpanStyle(color = accent)) { append("HyperOS") }
+                        append(descText.substring(idx + "HyperOS".length))
+                    } else {
+                        append(descText)
+                    }
+                }
+            },
             fontSize = 25.sp,
             fontWeight = FontWeight.Bold,
             color = colors.onSurface,
@@ -360,7 +384,7 @@ private fun AgreementPage(
     onOpenCode: () -> Unit,
     onOpenDoc: (Int) -> Unit,
     onBack: () -> Unit,
-    onFinish: () -> Unit,
+    onNext: () -> Unit,
 ) {
     val accent = colorResource(R.color.accent)
     val colors = MiuixTheme.colorScheme
@@ -467,9 +491,167 @@ private fun AgreementPage(
         BottomButton(
             text = stringResource(R.string.welcome_next),
             enabled = agreed && codeVerified,
-            onClick = onFinish,
+            onClick = onNext,
         )
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 第四页：设置完成（彩条动效一比一还原自 HyperChanger Oobe.kt）
+// ---------------------------------------------------------------------------
+
+private data class ConfettiPiece(
+    val xFraction: Float,
+    val delay: Float,
+    val drift: Float,
+    val frequency: Float,
+    val phase: Float,
+    val width: Float,
+    val height: Float,
+    val rotation: Float,
+    val rotationTurns: Float,
+    val color: Color,
+    val round: Boolean,
+    val restingProgress: Float?,
+)
+
+@Composable
+private fun DonePage(playKey: Int, onFinish: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .statusBarsPadding()
+            .navigationBarsPadding(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 28.dp),
+            horizontalAlignment = Alignment.Start,
+        ) {
+            Spacer(Modifier.weight(.32f))
+            Text(
+                text = stringResource(R.string.welcome_done_title),
+                fontSize = 36.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                textAlign = TextAlign.Start,
+            )
+            Spacer(Modifier.height(54.dp))
+            Text(
+                text = stringResource(R.string.welcome_done_welcome),
+                fontSize = 36.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                textAlign = TextAlign.Start,
+            )
+            Text(
+                text = stringResource(R.string.welcome_brand),
+                fontSize = 39.sp,
+                fontWeight = FontWeight.Bold,
+                color = colorResource(R.color.accent),
+                textAlign = TextAlign.Start,
+            )
+            Spacer(Modifier.weight(.68f))
+            BottomButton(
+                text = stringResource(R.string.welcome_start),
+                enabled = true,
+                onClick = onFinish,
+            )
+            Spacer(Modifier.height(24.dp))
+        }
+        CompletionConfetti(playKey, Modifier.fillMaxSize())
+    }
+}
+
+/**
+ * 彩条下落动画，移植自 HyperChanger 的 CompletionConfetti。
+ * playKey 变化（进入本页）时重新随机并播放一次 3800ms 线性下落；
+ * 每条带 delay / 正弦漂移 / 自转，首尾淡入淡出，少量条带中途停在屏内。
+ */
+@Composable
+private fun CompletionConfetti(
+    playKey: Int,
+    modifier: Modifier = Modifier,
+    pieceCount: Int = 54,
+    restingCountRange: IntRange = 1..3,
+    durationMillis: Int = 3_800,
+) {
+    val progress = remember { Animatable(0f) }
+    val pieces = remember(playKey) {
+        val random = Random(System.nanoTime())
+        val count = pieceCount.coerceAtLeast(1)
+        val restingCount = random.nextInt(
+            restingCountRange.first.coerceAtLeast(0),
+            restingCountRange.last.coerceAtLeast(restingCountRange.first) + 1,
+        ).coerceAtMost(count)
+        val palette = listOf(
+            Color(0xFFFF3B30),
+            Color(0xFFFFCC00),
+            Color(0xFF34C759),
+            Color(0xFF00A7FF),
+            Color(0xFF5856D6),
+            Color(0xFFFF2D8D),
+        )
+        List(count) { index ->
+            ConfettiPiece(
+                xFraction = random.nextFloat(),
+                delay = random.nextFloat() * .3f,
+                drift = 18f + random.nextFloat() * 54f,
+                frequency = 1.5f + random.nextFloat() * 2.5f,
+                phase = random.nextFloat() * 6.28318f,
+                width = 5f + random.nextFloat() * 6f,
+                height = 9f + random.nextFloat() * 9f,
+                rotation = random.nextFloat() * 360f,
+                rotationTurns = 1.5f + random.nextFloat() * 3.5f,
+                color = palette[random.nextInt(palette.size)],
+                round = random.nextInt(5) == 0,
+                restingProgress = if (index < restingCount) .52f + random.nextFloat() * .2f else null,
+            )
+        }
+    }
+    LaunchedEffect(playKey) {
+        progress.snapTo(0f)
+        progress.animateTo(1f, tween(durationMillis, easing = LinearEasing))
+    }
+    Canvas(modifier) {
+        val timeline = progress.value
+        val overlayAlpha = when {
+            timeline < .08f -> timeline / .08f
+            timeline > .82f -> ((1f - timeline) / .18f).coerceIn(0f, 1f)
+            else -> 1f
+        }
+        pieces.forEach { piece ->
+            val localProgress = ((timeline - piece.delay) / (1f - piece.delay)).coerceIn(0f, 1f)
+            if (localProgress <= 0f || overlayAlpha <= 0f) return@forEach
+            val fallProgress = piece.restingProgress?.let { localProgress.coerceAtMost(it) } ?: localProgress
+            val x = size.width * piece.xFraction +
+                sin(fallProgress * piece.frequency * 6.28318f + piece.phase) * piece.drift.dp.toPx()
+            val pieceHeight = piece.height.dp.toPx()
+            val y = -pieceHeight + (size.height + pieceHeight * 2f) * fallProgress
+            val alpha = overlayAlpha * (localProgress * 9f).coerceAtMost(1f)
+            rotate(
+                degrees = piece.rotation + localProgress * 360f * piece.rotationTurns,
+                pivot = Offset(x, y),
+            ) {
+                if (piece.round) {
+                    drawCircle(
+                        piece.color.copy(alpha = alpha),
+                        radius = piece.width.dp.toPx() * .58f,
+                        center = Offset(x, y),
+                    )
+                } else {
+                    val width = piece.width.dp.toPx()
+                    drawRect(
+                        color = piece.color.copy(alpha = alpha),
+                        topLeft = Offset(x - width / 2f, y - pieceHeight / 2f),
+                        size = Size(width, pieceHeight),
+                    )
+                }
+            }
+        }
     }
 }
 
