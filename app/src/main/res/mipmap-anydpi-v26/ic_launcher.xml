@@ -1,14 +1,1 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!--
-  自适应启动器图标：浅蓝渐变底板 + 居中的白色圆角卡片。
-  background 是一条 45° 线性渐变（填满系统形状遮罩），foreground 是白色卡片与投影。
-  foreground 按密度归档（108dp 对应 mdpi 108px / xxxhdpi 432px），卡片宽占图层画布
-  50%：启动器会把图层整体放大后再按形状遮罩，图层内 50% 在典型设备上约合可见宽 75%，
-  与同屏其他方形+居中图形的图标观感一致。
-  roundIcon 与普通 icon 指向同一份图层，由系统按设备形状裁切，避免圆形遮罩设备出现空白。
--->
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
-</adaptive-icon>
+PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPCEtLQogIOiHqumAguW6lOWQr+WKqOWZqOWbvuagh++8mmZvcmVncm91bmQg5Li655So5oi36YeN5paw5Lqk5LuY55qE5a6M5pW05Zu+5qCH5Zu+77yI5bey5ZCr5bqV5p2/5LiO5Zu+5b2i77yJ77yMCiAg5oyJ5a+G5bqm5b2S5qGj77yIMTA4ZHAg5a+55bqUIG1kcGkgMTA4cHggLyB4eHhoZHBpIDQzMnB477yJ77ybYmFja2dyb3VuZCDkv53nlZnmtYXok53muJDlj5jkvZzkuLoKICDpgI/mmI7ljLrln5/lhZzlupXvvIzkvYbooqvliY3mma/mlbTlm77opobnm5bkuI3lj6/op4HjgILkuI3lo7DmmI4gbW9ub2Nocm9tZe+8jOmBv+WFjeW9qeiJsiBsb2dvIOiiq+ezu+e7n+WNleiJsuWMluOAggogIHJvdW5kSWNvbiDkuI7mma7pgJogaWNvbiDmjIflkJHlkIzkuIDku73lm77lsYLvvIznlLHns7vnu5/mjInorr7lpIflvaLnirboo4HliIfjgIIKLS0+CjxhZGFwdGl2ZS1pY29uIHhtbG5zOmFuZHJvaWQ9Imh0dHA6Ly9zY2hlbWFzLmFuZHJvaWQuY29tL2Fway9yZXMvYW5kcm9pZCI+CiAgICA8YmFja2dyb3VuZCBhbmRyb2lkOmRyYXdhYmxlPSJAZHJhd2FibGUvaWNfbGF1bmNoZXJfYmFja2dyb3VuZCIgLz4KICAgIDxmb3JlZ3JvdW5kIGFuZHJvaWQ6ZHJhd2FibGU9IkBkcmF3YWJsZS9pY19sYXVuY2hlcl9mb3JlZ3JvdW5kIiAvPgo8L2FkYXB0aXZlLWljb24+Cg==

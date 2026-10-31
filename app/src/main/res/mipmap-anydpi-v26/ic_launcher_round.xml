@@ -1,11 +1,1 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!--
-  roundIcon：与 ic_launcher 完全同款（同一自适应图标）。
-  旧版 res/mipmap-*/ic_launcher_round.png 曾是一张全透明空图（273 字节），
-  导致圆形遮罩的设备上图标显示为空 —— 已改为复用同一自适应图标，由系统按形状裁切。
--->
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
-</adaptive-icon>
+PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPCEtLQogIHJvdW5kSWNvbu+8muS4jiBpY19sYXVuY2hlciDlrozlhajlkIzmrL7vvIjlkIzkuIDoh6rpgILlupTlm77moIfvvIxmb3JlZ3JvdW5kIOS4uuWujOaVtOWbvuagh+Wbvu+8ieOAggogIOaXp+eJiCByZXMvbWlwbWFwLSovaWNfbGF1bmNoZXJfcm91bmQucG5nIOabvuaYr+S4gOW8oOWFqOmAj+aYjuepuuWbvu+8iDI3MyDlrZfoioLvvInvvIwKICDlr7zoh7TlnIblvaLpga7nvannmoTorr7lpIfkuIrlm77moIfmmL7npLrkuLrnqbog4oCU4oCUIOW3suaUueS4uuWkjeeUqOWQjOS4gOiHqumAguW6lOWbvuagh++8jOeUseezu+e7n+aMieW9oueKtuijgeWIh+OAggotLT4KPGFkYXB0aXZlLWljb24geG1sbnM6YW5kcm9pZD0iaHR0cDovL3NjaGVtYXMuYW5kcm9pZC5jb20vYXBrL3Jlcy9hbmRyb2lkIj4KICAgIDxiYWNrZ3JvdW5kIGFuZHJvaWQ6ZHJhd2FibGU9IkBkcmF3YWJsZS9pY19sYXVuY2hlcl9iYWNrZ3JvdW5kIiAvPgogICAgPGZvcmVncm91bmQgYW5kcm9pZDpkcmF3YWJsZT0iQGRyYXdhYmxlL2ljX2xhdW5jaGVyX2ZvcmVncm91bmQiIC8+CjwvYWRhcHRpdmUtaWNvbj4K
