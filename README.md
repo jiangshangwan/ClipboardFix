@@ -1,7 +1,4 @@
-<p align="center">
-  <img src="logo.png" width="180">
-</p>
-<br>
+
 <div align="center">
 <h1>HyperClipFix</h1>
 <p>🛠️ 修复第三方输入法在HyperOS无法使用系统剪贴板及全面屏键盘优化的问题</p>
