@@ -1,4 +1,6 @@
-
+<p align="center">
+  <img src="logo.png" width="180">
+</p>
 <br>
 <div align="center">
 <h1>HyperClipFix</h1>
