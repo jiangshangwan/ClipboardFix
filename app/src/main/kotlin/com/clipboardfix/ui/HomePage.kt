@@ -1,6 +1,9 @@
 package com.clipboardfix.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +23,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -38,10 +43,28 @@ import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
 private val StatusGreen = androidx.compose.ui.graphics.Color(0xFF36D167)
 private val StatusRed = androidx.compose.ui.graphics.Color(0xFFFF5A52)
+private val StatusOrange = Color(0xFFFF9500)
 private val StatusBgEnabledLight = androidx.compose.ui.graphics.Color(0xFFDFFAE4)
 private val StatusBgDisabledLight = androidx.compose.ui.graphics.Color(0xFFFFE5E3)
 private val StatusBgEnabledDark = androidx.compose.ui.graphics.Color(0xFF16321F)
 private val StatusBgDisabledDark = androidx.compose.ui.graphics.Color(0xFF35191A)
+
+/** 剪贴板版本低于此值时显示「非最新」标识并可点击跳转 QQ 群。 */
+private const val MIN_PHRASE_VERSION = "5.7.4"
+private const val QQ_GROUP_URL = "https://qun.qq.com/universal-share/share?ac=1&authKey=D6%2Bsr8ESnWMpidmOM9sPD%2B5C3rEgsv0fJzrW%2BxckjZsKXHyqa6CUZN23Pxh4Qcrk&busi_data=eyJncm91cENvZGUiOiIxMTI0MTgwNjM1IiwidG9rZW4iOiJ6bFVRTHlxbWZ2aVF4dm9TbzFydnVWSlJNcXlhZnp5OXNwVU9NWWpCMS9EYS9DNUhOYUdnN3AwaVNUZnVHakNiIiwidWluIjoiOTAzNzU1MzQ1In0%3D&data=KKf7DI6zD10IEIYHGyj5J84Kbi-Fq8wH1n1m0yE0MHq4Ij_Koe2YsfBVzWAae7Njw5FAllnZpy0gwA499nT1Lg&svctype=4&tempid=h5_group_info"
+
+/** 判断版本号（如 "5.7.3"）是否低于 [MIN_PHRASE_VERSION]。非数字段按 0 处理。 */
+private fun isVersionOutdated(version: String): Boolean {
+    val parts = version.trim().split(".").map { seg -> seg.takeWhile { it.isDigit() }.toIntOrNull() ?: 0 }
+    val target = MIN_PHRASE_VERSION.split(".").map { it.toInt() }
+    for (i in 0 until maxOf(parts.size, target.size)) {
+        val v = parts.getOrElse(i) { 0 }
+        val t = target.getOrElse(i) { 0 }
+        if (v < t) return true
+        if (v > t) return false
+    }
+    return false // 等于最低版本 → 不算过时
+}
 
 @Composable
 fun HomePage(
@@ -112,7 +135,7 @@ fun HomePage(
                     InfoRow(stringResource(R.string.info_device), deviceModel)
                     InfoRow(stringResource(R.string.info_android), androidVersion)
                     InfoRow(stringResource(R.string.info_system), systemVersion)
-                    InfoRow(stringResource(R.string.info_clipboard_version), clipboardVersion)
+                    ClipboardVersionRow(clipboardVersion)
                     InfoRow(stringResource(R.string.info_arch), abiInfo)
                     InfoRow(stringResource(R.string.info_lsposed), "API 102")
                     InfoRow(stringResource(R.string.info_build), buildDate, bottomPad = 22.dp)
@@ -228,5 +251,31 @@ private fun InfoRow(title: String, value: String, topPad: Dp = 12.dp, bottomPad:
     Column(modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = topPad, bottom = bottomPad)) {
         Text(text = title, fontSize = 17.sp, color = colors.onSurface)
         Text(text = value, fontSize = 15.sp, color = colors.onSurfaceVariantSummary, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+/** 剪贴板版本行：版本号低于 5.7.4 时后面显示「非最新」小标签，整行可点击跳转 QQ 群；否则无标签、不可点击。 */
+@Composable
+private fun ClipboardVersionRow(version: String) {
+    val outdated = isVersionOutdated(version)
+    val context = LocalContext.current
+    val colors = MiuixTheme.colorScheme
+    // clickable 必须在 padding 之前——这样按压高亮才填满整行（padding 仅做视觉内边距）
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .let { if (outdated) it.clickable { try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(QQ_GROUP_URL))) } catch (_: Throwable) {} } else it }
+        .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 12.dp)
+    Column(modifier = rowModifier) {
+        Text(text = stringResource(R.string.info_clipboard_version), fontSize = 17.sp, color = colors.onSurface)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 4.dp),
+        ) {
+            Text(text = version, fontSize = 15.sp, color = colors.onSurfaceVariantSummary)
+            if (outdated) {
+                Spacer(Modifier.width(6.dp))
+                RootBadge(text = stringResource(R.string.info_outdated), accent = StatusOrange)
+            }
+        }
     }
 }

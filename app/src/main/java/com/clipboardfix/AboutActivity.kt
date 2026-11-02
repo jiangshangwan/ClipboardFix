@@ -83,6 +83,7 @@ class AboutActivity : ComponentActivity() {
     val uiSwUnlimitTime: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_UNLIMIT_TIME)
     val uiSwPanelColor: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_PANEL_COLOR)
     val uiSwClipboardPin: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_PIN)
+    val uiSwClipboardGroup: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
     val uiIconHidden: MutableState<Boolean> = stateOf(false)
     val uiUpdateDisabled: MutableState<Boolean> = stateOf(false)
     /** 主题模式（跟随系统/浅色/深色）。 */
@@ -181,7 +182,7 @@ class AboutActivity : ComponentActivity() {
             BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE,
             DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
             Build.VERSION.INCREMENTAL, phraseVersion(), abiInfo(),
-            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiIconHidden,
+            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiSwClipboardGroup, uiIconHidden,
             Runnable { doCheckUpdate() },
             Runnable { onStatusCardTap() },
             BoolAction { onToggleImeUnlock(it) },
@@ -189,6 +190,7 @@ class AboutActivity : ComponentActivity() {
             BoolAction { onToggleUnlimitTime(it) },
             BoolAction { onTogglePanelColor(it) },
             BoolAction { onToggleClipboardPin(it) },
+            BoolAction { onToggleClipboardGroup(it) },
             BoolAction { onToggleHideIcon(it) },
             IntAction { onRebootOrReload(it) },
             Runnable { openUrl("https://www.coolapk.com/u/3019478") },
@@ -266,6 +268,9 @@ class AboutActivity : ComponentActivity() {
         mTabInitialized = true
         currentTab = idx
         sLastTab = idx
+
+        // 切页时关闭可能残留的弹卡（弹卡状态广播到所有页面槽位，不关会跟着显示到新页面）
+        if (idx != prev) GlassSheetBridge.close()
 
         val pages = arrayOf<View?>(pageHome, pageFeature, pageSettings, pageAbout)
         // 方向：目标在右侧（idx 更大）时新页自右滑入、旧页向左滑出；反之相反
@@ -373,6 +378,7 @@ class AboutActivity : ComponentActivity() {
         if (prefs.getBoolean(ModulePrefs.KEY_UNLIMIT_TIME, ModulePrefs.DEFAULT_UNLIMIT_TIME)) n++
         if (prefs.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)) n++
         if (prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)) n++
+        if (prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)) n++
         uiEnabledFeatures.value = n
     }
 
@@ -505,6 +511,7 @@ class AboutActivity : ComponentActivity() {
         uiSwUnlimitTime.value = prefs.getBoolean(ModulePrefs.KEY_UNLIMIT_TIME, ModulePrefs.DEFAULT_UNLIMIT_TIME)
         uiSwPanelColor.value = prefs.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)
         uiSwClipboardPin.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
+        uiSwClipboardGroup.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
         uiUpdateDisabled.value = prefs.getBoolean(AppConfig.KEY_DISABLE_UPDATE, false)
         uiThemeMode.value = AppConfig.getThemeMode(this)
     }
@@ -535,6 +542,11 @@ class AboutActivity : ComponentActivity() {
         saveFeaturePrefs()
     }
 
+    private fun onToggleClipboardGroup(checked: Boolean) {
+        uiSwClipboardGroup.value = checked
+        saveFeaturePrefs()
+    }
+
     /**
      * 保存功能开关并推送到远程偏好。[showReloadToast] 控制是否弹「已更改，重载进程后生效」——
      * 主开关（启用全面屏键盘优化）由功能页按新设计弹「已启用，请重启设备 / 重启设备生效」，
@@ -547,6 +559,7 @@ class AboutActivity : ComponentActivity() {
             .putBoolean(ModulePrefs.KEY_UNLIMIT_TIME, uiSwUnlimitTime.value)
             .putBoolean(ModulePrefs.KEY_PANEL_COLOR, uiSwPanelColor.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, uiSwClipboardPin.value)
+            .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, uiSwClipboardGroup.value)
             .apply()
         pushFeaturePrefs()
         // 四个功能开关的 hook 全部装在 com.miui.phrase / 输入法进程内（进程启动时读开关），
@@ -570,6 +583,7 @@ class AboutActivity : ComponentActivity() {
         val unlimitTime = local.getBoolean(ModulePrefs.KEY_UNLIMIT_TIME, ModulePrefs.DEFAULT_UNLIMIT_TIME)
         val panelColor = local.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)
         val clipboardPin = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
+        val clipboardGroup = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
         Thread({
             try {
                 svc.getRemotePreferences(ModulePrefs.GROUP).edit()
@@ -578,6 +592,7 @@ class AboutActivity : ComponentActivity() {
                     .putBoolean(ModulePrefs.KEY_UNLIMIT_TIME, unlimitTime)
                     .putBoolean(ModulePrefs.KEY_PANEL_COLOR, panelColor)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, clipboardPin)
+                    .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, clipboardGroup)
                     .apply()
             } catch (t: Throwable) {
                 // 远程写失败不影响本地开关状态

@@ -3,10 +3,18 @@ package com.clipboardfix
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
+import android.view.GestureDetector
+import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.view.ViewParent
+import android.widget.PopupWindow
+import android.widget.TextView
 import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
 import java.lang.reflect.Method
 
@@ -240,8 +248,18 @@ object CrossDeviceClipboardHook {
             }
             showAtLocation.isAccessible = true
             XposedInit.hook(showAtLocation) { chain ->
-                chain.proceed()
                 val self = chain.thisObject
+                // v2.0.5：每次面板显示都先回到「全部」分组（用户要求：关闭面板再打开
+                // 默认展示全部分组）。必须排在 proceed 之前——面板显示后会立刻灌列表，
+                // 此时分组已是「全部」，快照/可见下标一次算对，不会先闪一下旧分组。
+                if (isOurPanel(self) && ModulePrefs.isClipboardGroupEnabled()) {
+                    try {
+                        resetGroupToAll((self as? PopupWindow)?.contentView?.context)
+                    } catch (t: Throwable) {
+                        log("reset group on show failed - $t")
+                    }
+                }
+                chain.proceed()
                 if (isOurPanel(self)) {
                     scheduleMerge(self)
                 }
@@ -269,11 +287,37 @@ object CrossDeviceClipboardHook {
         // 面板类（动态 dex）此刻已加载：装上云端缓存 + setClipboardList 补回两个 hook，
         // 保证随后 $2$1 灌本地列表时云端条目不被整表替换冲掉（打开即出的关键）。
         ensurePanelClassHooks(self.javaClass.classLoader)
+        // v2.0.5：分组筛选 UI 注入（面板 PopupWindow 实例即 self）
+        // 受「开启剪贴板分组功能」开关控制：关闭时不注入芯片、不加载分类选择，行为与旧版一致。
+        val grpEnabled = ModulePrefs.isClipboardGroupEnabled()
+        log("group gate = $grpEnabled (panel ${self.javaClass.name})")
+        if (grpEnabled) {
+            sPopupRef = java.lang.ref.WeakReference(self)
+            // v2.0.5：不再恢复上次分组——每次打开都从「全部」开始
+            // （主要重置在 showAtLocation 钩子内先于列表灌入执行，这里再兜一次保险）
+            resetGroupToAll((self as? PopupWindow)?.contentView?.context)
+            mainHandler.post {
+                try {
+                    injectGroupChip(self)
+                    log("group chip inject posted & ran")
+                } catch (t: Throwable) {
+                    log("group chip inject failed - $t")
+                }
+            }
+        }
         invokeMerge(self)
         mainHandler.postDelayed({
             try {
                 invokeMerge(self)
             } catch (_: Throwable) {
+            }
+            // 二次合并后视图层级可能已被重建（芯片若在旧视图树上会被丢弃），重新注入一次。
+            if (grpEnabled) {
+                try {
+                    injectGroupChip(self)
+                } catch (t: Throwable) {
+                    log("group chip re-inject failed - $t")
+                }
             }
         }, MERGE_DELAY_MS)
         startCloudRetry(self)
@@ -414,6 +458,18 @@ object CrossDeviceClipboardHook {
                             // 却落成纯文本类型（10/2/3）的条目改为图文(12)/纯图(11)，
                             // 否则图片行永远不出现。仅改显示列表副本类型，不影响落库。
                             if (r is List<*>) fixImageType(r)
+                            // v2.0.5：从「全量构建产物」捕获 master。buildRecyclerViewDisplayList 是
+                            // 由本地库构建、再流入 setClipboardList 的全量列表（我们刻意不在本 hook 过滤，
+                            // 否则会把 master 误存成已过滤列表）。分组激活时 phrase 重开面板可能直接复用
+                            // 已过滤的显示列表、不再全量查库，导致 setClipboardList 只拿到分组列表、
+                            // master 永远收不到全量（进程重启 + 上次分组被持久化时首开即如此）。
+                            // 故这里直接以全量产物并集 master，保证切到其它分组时其它内容不丢。
+                            if (r is List<*> && ModulePrefs.isClipboardGroupEnabled()) {
+                                @Suppress("UNCHECKED_CAST")
+                                val full = ArrayList(r as List<Any?>)
+                                sMasterList = unionMaster(sMasterList, full)
+                                log("DIAGGRP buildCapture: full=${full.size} activeCat=$sActiveCat master=${sMasterList?.size}")
+                            }
                             r
                         }
                         log("OK: hooked buildRecyclerViewDisplayList (type fix)")
@@ -428,9 +484,11 @@ object CrossDeviceClipboardHook {
                         && java.util.List::class.java.isAssignableFrom(m.parameterTypes[0])
                     ) {
                         m.isAccessible = true
+                        sSetClipboardListMethod = m
                         XposedInit.hook(m) { chain ->
                             // 记录 adapter 实例（v4.5 增量合入用；弱引用不碍回收）
                             sAdapterRef = java.lang.ref.WeakReference(chain.thisObject)
+                            var display: Any? = null
                             try {
                                 val arg = chain.getArg(0)
                                 // 用 MutableList 而非 ArrayList：phrase 各版本灌入的列表
@@ -438,31 +496,47 @@ object CrossDeviceClipboardHook {
                                 // 只要可写就补，不可写静默跳过（下同）。
                                 if (arg is MutableList<*>) {
                                     @Suppress("UNCHECKED_CAST")
-                                    val list = arg as MutableList<Any?>
-                                    // 先记下显示列表里出现过的图片条目（下次被 strip 整表替换冲掉时补回）。
-                                    recordSeenCloud(list)
+                                    val phraseList = arg as MutableList<Any?>
+                                    // 记下显示列表里出现过的图片条目（下次被 strip 整表替换冲掉时补回）。
+                                    recordSeenCloud(phraseList)
+                                    // 构造「完整展示快照」（含云端补回、剔除已删），但【不按分组裁短】——
+                                    // 分组过滤只发生在适配器展示层（getItemCount/getItem），phrase 始终
+                                    // 持有完整列表，避免「按分组 retainAll 后的短列表被写回存储 →
+                                    // 关面板重开丢内容」（v2.0.5 分组丢内容根因）。
+                                    val d = ArrayList<Any?>(phraseList)
                                     val cache = mergedCloudCache()
-                                    if (cache.isNotEmpty()) {
-                                        prependMissingCloud(list, cache)
+                                    // 一次性清空路径：跳过云端缓存补回，快照严格等于 keep，避免与 mAll 分叉。
+                                    if (cache.isNotEmpty() && !sSuppressCloudPrepend) {
+                                        prependMissingCloud(d, cache)
                                     }
-                                    // v4.21：列表层面再过滤一遍——被删条目可能不是从云端缓存补回的，
-                                    // 而是云端同步写回本地库后由本地查询带回来的（换输入法即此路径）。
-                                    dropBlockedEntries(list)
+                                    // 已删条目在展示快照层剔除（不碰 phrase 底层列表）。
+                                    dropBlockedEntries(d)
+                                    if (ModulePrefs.isClipboardGroupEnabled()) {
+                                        hookGroupAdapterMethods(chain.thisObject)
+                                        synchronized(sGroupFullSnapshot) {
+                                            sGroupFullSnapshot.clear()
+                                            sGroupFullSnapshot.addAll(d)
+                                            recomputeGroupVisible()
+                                        }
+                                        log("DIAGGRP groupSnap: phrase=${phraseList.size} display=${d.size} visible=${sGroupVisibleIdx.size} cat=$sActiveCat")
+                                    }
+                                    display = d
                                 }
                             } catch (t: Throwable) {
                                 log("prepend error - $t")
                             }
-                            chain.proceed()
+                            if (display != null) chain.proceed(arrayOf<Any?>(display)) else chain.proceed()
                         }
                         log("OK: hooked adapter setClipboardList")
                         break
                     }
                 }
-                // v4.19：单条删除记账——左滑点删除时适配器按位置移除条目
-                // （removeClipboardListItem → mClipboardList.remove(pos)）。此处在移除
-                // 前按位置取到该条目（getAdapterList() 返回的正是 mClipboardList，索引一致），
-                // 记入 sWipedKeys，防止它之后从云端/图片缓存里复活。只记账不改返回值，
-                // 不触碰删除本身的任何行为。
+                // v4.19/v4.21：单条删除记账改由「真实被删模型」钩子承担
+                // （deleteClipboardListItemAndTrack / deleteSavedFile，直接拿到 ClipboardContentModel，
+                //  见下方 v4.21 段）。本适配器方法只能拿到位置 pos，而分组态下
+                //  getAdapterList() 返回的是【全量】列表、传入的 pos 却是【过滤后】显示位置，
+                //  索引错位会误标其它条目进屏蔽表（实测：删图片却把文本条目标进 blocklist，
+                //  持久化后跨会话持续「吞掉」其它内容）。故这里只透传、绝不按位置记账。
                 for (m in ad.methods) {
                     if (m.name == "removeClipboardListItem" && m.parameterTypes.size == 1
                         && (m.parameterTypes[0] == Int::class.java
@@ -470,22 +544,10 @@ object CrossDeviceClipboardHook {
                     ) {
                         m.isAccessible = true
                         XposedInit.hook(m) { chain ->
-                            try {
-                                val pos = chain.getArg(0) as? Int ?: -1
-                                if (pos >= 0) {
-                                    val adapter = chain.thisObject
-                                    val list = adapter.javaClass.getMethod("getAdapterList")
-                                        .invoke(adapter) as? List<*>
-                                    if (list != null && pos < list.size) {
-                                        markDeletedEntry(list[pos])
-                                    }
-                                }
-                            } catch (t: Throwable) {
-                                log("single delete capture failed - $t")
-                            }
+                            // 仅保留诊断，不做任何记账；真正记账在 deleteClipboardListItemAndTrack。
                             chain.proceed()
                         }
-                        log("OK: hooked adapter removeClipboardListItem")
+                        log("OK: hooked adapter removeClipboardListItem (pass-through, no mark)")
                         break
                     }
                 }
@@ -508,13 +570,120 @@ object CrossDeviceClipboardHook {
                             m.isAccessible = true
                             XposedInit.hook(m) { chain ->
                                 try {
-                                    // 第 0 个参数就是要删除的 ClipboardContentModel
-                                    log("DIAG delete called: " + diagEntry(chain.getArg(0)))
-                                    markDeletedEntry(chain.getArg(0))
+                                    val model = chain.getArg(0)
+                                    val pos = chain.getArg(1) as? Int ?: 0
+                                    log("DIAG delete called: pos=$pos " + diagEntry(model) + " | activeCat=$sActiveCat visibleSize=${sGroupVisibleIdx.size}")
+                                    // v2.0.5：分组视图下「单条删除」已重新启用，但必须走位置映射——
+                                    // phrase 的 ViewHolder 给的是「显示位置」p，其原生删除按 p 在完整列表里取模型
+                                    // （mClipboardList.get(p)），分组态下显示位置≠完整下标 → 会删错条目/删到别的分组。
+                                    // 下方 sActiveCat!=CAT_ALL 分支把 p 经 sGroupVisibleIdx 映射回完整下标、用真实模型调原生删除，
+                                    // 并用「删除前后差集」兜底纠错；删除后重建快照 + 本地库持久化，杜绝复活/其它分组丢失。
+                                    if (ModulePrefs.isClipboardGroupEnabled()) {
+                                        val adapter = chain.thisObject
+                                        // 删除前留存「适配器实际列表」的条目快照：删除后再比对，
+                                        // 谁真的消失了就以事实为准记账。pos→下标映射可能失准，
+                                        // 但「从列表里消失的那一条」不会骗人（见 v2.0.5 复活根因）。
+                                        val before = ArrayList<Any?>()
+                                        adapterDataList(adapter)?.let { for (e in it) before.add(e) }
+                                        var marked: Any? = null
+                                        var modArgs: Array<Any?>? = null
+                                        if (sActiveCat != CAT_ALL) {
+                                            // phrase 点击→删除的链路：ViewHolder 拿到的是「显示位置」p，phrase 用它直接
+                                            // mClipboardList.get(p) 取模型。但我们的适配器在展示层按分组过滤（显示≠完整
+                                            // 列表），get(p) 取到的是过滤前的条目（多为图片/置顶项）→ 删错。必须把「显示
+                                            // 位置」经 sGroupVisibleIdx 映射回完整列表下标，并用该下标对应的真实模型。
+                                            // 防御：删除前用当前快照+当前分组重算一次，避免 sGroupVisibleIdx 因时序变陈旧。
+                                            synchronized(sGroupFullSnapshot) { recomputeGroupVisible() }
+                                            val correctIdx = if (pos in 0 until sGroupVisibleIdx.size) sGroupVisibleIdx[pos] else pos
+                                            val correctModel = if (correctIdx in 0 until sGroupFullSnapshot.size) sGroupFullSnapshot[correctIdx] else model
+                                            log("DIAG delete remap: pos=$pos -> idx=$correctIdx " + diagEntry(correctModel) + " | visible=$sGroupVisibleIdx")
+                                            marked = correctModel
+                                            modArgs = arrayOf<Any?>(correctModel, correctIdx)
+                                        } else {
+                                            // 全部分组：显示位置==完整下标，直接用 phrase 给的模型
+                                            marked = model
+                                        }
+                                        // 先按映射记账：删除执行期间不能被云端补回路径捞回来
+                                        markDeletedEntry(marked)
+                                        if (modArgs != null) chain.proceed(modArgs) else chain.proceed()
+                                        // ===== 删除后校准（顺序很关键：先纠正记账，再重建快照）=====
+                                        // 1) 用「删除前后列表差集」确认真正被删的那条并补记账，
+                                        //    顺带纠正可能存在的误标（误标会把无辜条目永久吞掉）。
+                                        //    必须排在重建快照之前：快照重建会按屏蔽表剔条目，若记账还是错的，
+                                        //    就会把没被删的条目从快照里剔掉 → 快照比真实列表少一条 →
+                                        //    展示层换位整体错位（实测「删文字后链接内容跑进文字分组」）。
+                                        val after = adapterDataList(adapter)
+                                        var purgeKey: String? = entryKey(marked)
+                                        if (before.isNotEmpty() && after != null) {
+                                            val afterKeys = HashSet<String?>()
+                                            for (e in after) afterKeys.add(entryKey(e))
+                                            val vanished = before.filter { e ->
+                                                val k = entryKey(e)
+                                                k != null && !afterKeys.contains(k)
+                                            }
+                                            if (vanished.size == 1) {
+                                                val truth = vanished[0]
+                                                markDeletedEntry(truth)
+                                                log("DIAG delete truth: " + diagEntry(truth))
+                                                val tk = entryKey(truth)
+                                                purgeKey = tk
+                                                val mk = entryKey(marked)
+                                                if (mk != null && mk != tk && afterKeys.contains(mk)) {
+                                                    // 刚按映射标的条目其实还在列表里 → 误标，撤销，
+                                                    // 否则这条内容此后会被当成「已删」持续吞掉。
+                                                    sWipedKeys.remove(mk)
+                                                    persistDeletedKeys()
+                                                    log("DIAG delete unmark wrong: $mk")
+                                                }
+                                            } else {
+                                                log("DIAG delete truth: vanished=${vanished.size} (skip truth-mark)")
+                                            }
+                                        }
+                                        // 2) 再按适配器真实列表重建快照（严格等长同序，见函数注释）；
+                                        //    顺带把本次确认被删的条目从真实列表里清掉 —— phrase 有时没能
+                                        //    删到（映射偏差/对象不同实例），残留下来就会在重开面板时复活。
+                                        resyncGroupSnapshotFromAdapter(
+                                            adapter,
+                                            if (purgeKey == null) null else setOf(purgeKey)
+                                        )
+                                        notifyAdapter()
+                                        log("DIAGGRP delete rebind: visible=${sGroupVisibleIdx.size}")
+                                        // 本地库持久化：phrase 原生删除往往只改内存列表、不落本地库，
+                                        // 下次查库（切分组/周期同步/关面板重开）会把已删条目从库里捞回 → 复活。
+                                        // 这里把「当前列表去掉所有已屏蔽条目」覆盖式写回本地库（与一键清空同机制），
+                                        // 让删除真正落库、无法复活。mData 此时已是删后的干净列表。
+                                        try {
+                                            val ctxDel = objField(chain.thisObject, "mContext") as? Context
+                                            val mgrDel = Reflect.findClassIfExists(MIUI_CLIPBOARD_MANAGER, chain.thisObject.javaClass.classLoader)
+                                            if (mgrDel != null && ctxDel != null) {
+                                                val cur = adapterDataList(adapter)
+                                                if (cur != null) {
+                                                    val cleaned = ArrayList<Any?>()
+                                                    for (e in cur) {
+                                                        val k = entryKey(e)
+                                                        if (k != null && sWipedKeys.containsKey(k)) continue
+                                                        cleaned.add(e)
+                                                    }
+                                                    for (sm in mgrDel.methods) {
+                                                        if (sm.name == "setClipboardModelList" && sm.parameterTypes.size == 2) {
+                                                            sm.isAccessible = true
+                                                            sm.invoke(null, ctxDel, cleaned)
+                                                            break
+                                                        }
+                                                    }
+                                                    log("DIAGGRP delete persist: dbList=${cleaned.size} mData=${cur.size} (removed=${cur.size - cleaned.size})")
+                                                }
+                                            }
+                                        } catch (t: Throwable) { log("delete persist failed - $t") }
+                                    } else {
+                                        markDeletedEntry(model)
+                                        removeFromGroupSnapshot(model)
+                                        chain.proceed()
+                                    }
                                 } catch (t: Throwable) {
                                     log("delete track capture failed - $t")
+                                    chain.proceed()
                                 }
-                                chain.proceed()
                             }
                             hooked = true
                             log("OK: hooked popup deleteClipboardListItemAndTrack")
@@ -538,6 +707,119 @@ object CrossDeviceClipboardHook {
                                 chain.proceed()
                             }
                             log("OK: hooked popup deleteSavedFile")
+                            break
+                        }
+                    }
+                    // v2.0.5：一键清空改为「只清当前分组」。原生确认回调（lambda$clearClipBoardData$* 无参的那个，
+                    // 即确认按钮真正执行清空的方法）会 mAll/mCur.clear + adapter.clear +
+                    // MiuiClipboardManager.clearClipBoardData 本地库全清，不满足「分组内清分组」需求。
+                    // 改为：先让原生全清执行（本地库已空），再把「非当前分组」的条目写回本地库与内存，
+                    // 并对被删条目记账屏蔽（防云端/缓存补回复活）。
+                    for (m in pv.declaredMethods) {
+                        if (m.name.startsWith("lambda\$clearClipBoardData\$") && m.parameterTypes.isEmpty()) {
+                            m.isAccessible = true
+                            XposedInit.hook(m) { chain ->
+                                try {
+                                    val self = chain.thisObject
+                                    if (ModulePrefs.isClipboardGroupEnabled() && sActiveCat != CAT_ALL) {
+                                        val cat = sActiveCat
+                                        val mAll = objField(self, "mAllClipboardList") as? MutableList<Any?>
+                                        // 反射取不到内存列表：降级为原生全清（与原行为一致，避免误清本地库）
+                                        if (mAll == null) {
+                                            chain.proceed()
+                                            return@hook null
+                                        }
+                                        val mCur = objField(self, "mCurrentImeClipboardList") as? MutableList<Any?>
+                                        // 拦截原生全清：不执行 lambda$clearClipBoardData$14。原生会
+                                        // MiuiClipboardManager.clearClipBoardData 整体清空本地库，导致切到其它
+                                        // 分组时重新加载拿到空库、内容消失，需重开面板才从云端缓存补回
+                                        // （即「切到其它分组内容没了、重开才恢复」的根因）。改为只删当前分组：
+                                        // 本地库从不被整体清空，只把『非当前分组』覆盖式写回。
+                                        // v2.0.5 修复「清空某分组导致其它分组/全部真实丢失」：
+                                        // keep 必须以【本地库全量】为唯一权威源，绝不依赖任何 phrase 内存列表
+                                        // （mAllClipboardList、sGroupFullSnapshot 在分组视图下都可能已被数据层
+                                        //  按当前分组过滤，导致 keep 漏算其它分组 → setClipboardModelList
+                                        //  覆盖写库把其它分组/全部抹掉，需重开面板靠云端缓存补回）。
+                                        // 本地库是唯一全量真相：getClipboardData(ctx) 返回所有分组条目，
+                                        // keep = 全量去掉当前分组（及已屏蔽条目），覆盖写回 → 其它分组原样保留。
+                                        val dbMgr = Reflect.findClassIfExists(MIUI_CLIPBOARD_MANAGER, self.javaClass.classLoader)
+                                        val dbCtx = objField(self, "mContext") as? Context
+                                        var dbOk = false
+                                        val dbList: List<Any?> = if (dbMgr != null && dbCtx != null) {
+                                            try {
+                                                val raw = Reflect.callStaticMethod(dbMgr, "getClipboardData", dbCtx)
+                                                if (raw is List<*>) { dbOk = true; raw as List<Any?> } else emptyList()
+                                            } catch (t: Throwable) {
+                                                log("partial clear: getClipboardData failed - $t"); emptyList()
+                                            }
+                                        } else emptyList()
+                                        if (!dbOk) {
+                                            // 读不到本地库全量就不敢覆盖写库（会误清），降级为原生全清（与无模块一致）。
+                                            log("DIAGGRP partialClear: db unreadable, fall back to native clear")
+                                            chain.proceed()
+                                            return@hook null
+                                        }
+                                        val removed = ArrayList<Any?>()
+                                        val keep = ArrayList<Any?>()
+                                        for (e in dbList) {
+                                            if (isEntryBlocked(e)) continue
+                                            if (classifyItem(e) == cat) removed.add(e) else keep.add(e)
+                                        }
+                                        // 云端分类条目不随本地库，单独屏蔽，使清空后当前分组彻底为空（防云端缓存补回）。
+                                        try {
+                                            for (c in mergedCloudCache()) {
+                                                if (classifyItem(c) == cat) markDeletedEntry(c)
+                                            }
+                                        } catch (_: Throwable) {}
+                                        // 1) 本地库：覆盖式写回非当前分组内容（等价于删除当前分组，其它分组不动）
+                                        try {
+                                            val ctx = objField(self, "mContext") as? Context
+                                            val mgr = Reflect.findClassIfExists(MIUI_CLIPBOARD_MANAGER, self.javaClass.classLoader)
+                                            if (mgr != null && ctx != null) {
+                                                for (sm in mgr.methods) {
+                                                    if (sm.name == "setClipboardModelList" && sm.parameterTypes.size == 2) {
+                                                        sm.isAccessible = true
+                                                        sm.invoke(null, ctx, ArrayList<Any?>(keep))
+                                                        break
+                                                    }
+                                                }
+                                            }
+                                        } catch (t: Throwable) { log("partial clear: restore local failed - $t") }
+                                        // 2) 内存列表：mAll 保留 keep；停留当前分组 → 该组已空，mCur 清空
+                                        mAll.clear(); mAll.addAll(keep)
+                                        mCur?.let { mc -> mc.clear() }
+                                        // 3) 记账屏蔽被删条目，防云端/缓存补回复活
+                                        ensureDeletedKeysLoaded()
+                                        for (e in removed) markDeletedEntry(e)
+                                        // 4) 重建展示快照 + 刷新：借 adapter.setClipboardList 重灌 keep，
+                                        //    当前分组过滤后为空 → 停留在已清空的分组。
+                                        //    期间抑制云端缓存补回（sSuppressCloudPrepend），使重建的快照
+                                        //    严格等于 keep（其它分组内容），杜绝快照与内存主列表分叉。
+                                        val adapter = sAdapterRef?.get()
+                                        val setM = sSetClipboardListMethod
+                                        if (adapter != null && setM != null) {
+                                            try {
+                                                sSuppressCloudPrepend = true
+                                                setM.invoke(adapter, ArrayList<Any?>(keep))
+                                            } catch (t: Throwable) { log("partial clear: rebind failed - $t") }
+                                            finally { sSuppressCloudPrepend = false }
+                                        }
+                                        // 5) 不再强制同步 phrase 空视图：原生 $14 的空视图切换是【全局 NoItemsView】，
+                                        //    强制调用会把整面板切到空视图，而 switchGroupCategory 为规避「手动刷新触发面板
+                                        //    重建→输入法闪退」故意不重算空视图，于是切到其它分组也关不掉它——
+                                        //    表现为「清空后所有分组空白、需重开才恢复」。当前分组已空由 RecyclerView
+                                        //    0 行呈现即可，其它分组切过去 getItemCount 返回正确数量即显示内容，
+                                        //    与重开面板行为一致，且不会触发闪退。
+                                        log("DIAGGRP partialClear: skip global emptyView sync (would stick across groups)")
+                                        log("DIAGGRP partialClear: cat=$cat dbList=${dbList.size} removed=${removed.size} keep=${keep.size} (intercepted)")
+                                        return@hook null
+                                    }
+                                } catch (t: Throwable) {
+                                    log("partial clear hook error - $t")
+                                }
+                                chain.proceed()
+                            }
+                            log("OK: hooked popup clearClipBoardData confirm (partial-clear)")
                             break
                         }
                     }
@@ -667,8 +949,20 @@ object CrossDeviceClipboardHook {
                     fallbackReloadLocal()
                     return@post
                 }
-                if (prependMissingCloud(list, cache)) {
-                    adapter.javaClass.getMethod("notifyDataSetChanged").invoke(adapter)
+                    if (prependMissingCloud(list, cache)) {
+                        // 已删条目在展示层剔除（不按分组裁短 phrase 底层列表）。
+                        dropBlockedEntries(list)
+                        // v2.0.5 修复：云端条目补进后【不】再按分组 retainAll 裁短 phrase 列表
+                        // （那会把短列表写回存储 → 关面板重开丢内容）。分组过滤改由适配器展示层完成，
+                        // 这里仅同步完整快照并重绘。
+                        if (ModulePrefs.isClipboardGroupEnabled()) {
+                            synchronized(sGroupFullSnapshot) {
+                                sGroupFullSnapshot.clear()
+                                sGroupFullSnapshot.addAll(list)
+                                recomputeGroupVisible()
+                            }
+                        }
+                        adapter.javaClass.getMethod("notifyDataSetChanged").invoke(adapter)
                     // 空面板时 RecyclerView 被 phrase 置 GONE，仅 notify 不会切换可见性，
                     // 补调 phrase 的空视图状态机令 RecyclerView 重新 VISIBLE（v4.15）。
                     ClipboardPinHook.syncEmptyState(list)
@@ -807,6 +1101,11 @@ object CrossDeviceClipboardHook {
             if (k != null) {
                 val wt = sWipedKeys[k]
                 if (wt != null) {
+                    if (k.startsWith("c:")) {
+                        // 云端内容指纹键：记过即永久拦，云端重复推送同内容不复活
+                        blocked++
+                        continue
+                    }
                     val t = entryTime(c) ?: 0L
                     if (t <= wt) {
                         blocked++
@@ -873,10 +1172,17 @@ object CrossDeviceClipboardHook {
                 val e = it.next()
                 val k = entryKey(e) ?: continue
                 val wt = sWipedKeys[k] ?: continue
+                if (k.startsWith("c:")) {
+                    it.remove()
+                    removed++
+                    log("DIAGGRP dropBlocked: cloud content blocked key=$k")
+                    continue
+                }
                 val t = entryTime(e) ?: 0L
                 if (t <= wt) {
                     it.remove()
                     removed++
+                    log("DIAGGRP dropBlocked: key=$k time=$t wiped=$wt")
                 } else {
                     sWipedKeys.remove(k)
                     log("wipe block lifted (display): $k (t=$t > wiped t=$wt)")
@@ -939,14 +1245,76 @@ object CrossDeviceClipboardHook {
             } catch (_: Throwable) {
                 // 解析失败回退 time
             }
+            // v4.22：文本/链接的云端条目（isAcrossDevices）会被云端以【新 time 重复推送同内容】
+            // 重新合入面板。若仍用 time 作键，重推副本 time 不同 → 不在屏蔽表 → 复活
+            // （实证：删文字分组后切分组复活、重开消失）。故云端文本/链接改用「内容指纹键」
+            // c:<deviceId>:<contentHash>：云端重推同内容命中同一键 → 永久拦住；
+            // 用户本地手动复制（isAcrossDevices=false）仍走 time 键，复制即解封（保留 v4.16 语义）。
+            if (isCloudEntry(e)) {
+                val fp = contentFingerprint(e)
+                if (!fp.isNullOrEmpty()) {
+                    val dev = stringField(e, "getDeviceId") ?: ""
+                    log("DIAGGRP entryKey: cloud text -> c-key dev=$dev len=${fp.length}")
+                    return "c:" + dev + ":" + if (fp.length <= 256) fp else (fp.length.toString(36) + ":" + fp.hashCode().toString(36))
+                }
+            }
         }
         return entryTime(e)?.toString()
+    }
+
+    /**
+     * 该条目是否云端/跨设备来源（isAcrossDevices）。
+     * 云端条目会被以【新 time 重复推送同内容】重新合入面板，屏蔽必须按内容指纹而非 time。
+     * 反射失败回退 deviceId 非空判定（云端条目 deviceId 非空，本机条目为空）。
+     */
+    private fun isCloudEntry(e: Any?): Boolean {
+        if (e == null) return false
+        return try {
+            val m = e.javaClass.getMethod("isAcrossDevices")
+            (m.invoke(e) as? Boolean) ?: false
+        } catch (_: Throwable) {
+            !(stringField(e, "getDeviceId")?.isEmpty() ?: true)
+        }
+    }
+
+    /**
+     * 文本/链接条目的内容指纹（不含 time）：优先取模型自身 getContent() 文本，
+     * 兜底解析 determineContent 的 ClipDataItemModel JSON 取 text/uriType。
+     * 用于云端条目的稳定屏蔽键——云端重推同内容时指纹一致，命中同一屏蔽键。
+     */
+    private fun contentFingerprint(e: Any?): String? {
+        if (e == null) return null
+        val raw = stringField(e, "getContent")
+        if (!raw.isNullOrEmpty()) return raw
+        val dc = determineContent(e) ?: return null
+        return try {
+            val arr = org.json.JSONArray(dc)
+            val sb = StringBuilder()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val txt = o.optString("text").ifEmpty { o.optString("textItemData") }
+                val uri = o.optString("uriType").ifEmpty { o.optString("uriItemType") }
+                sb.append(txt).append('#').append(uri).append(';')
+            }
+            if (sb.isEmpty()) null else sb.toString()
+        } catch (_: Throwable) { null }
     }
 
     /** 反射取字符串字段/无参 getter；失败返回 null。 */
     private fun stringField(e: Any, name: String): String? {
         return try {
             e.javaClass.getMethod(name).invoke(e) as? String
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** 反射取任意对象字段（含私有），失败返回 null。用于读 phrase 私有列表/Context 字段。 */
+    private fun objField(self: Any, name: String): Any? {
+        return try {
+            val f = self.javaClass.getDeclaredField(name)
+            f.isAccessible = true
+            f.get(self)
         } catch (_: Throwable) {
             null
         }
@@ -1359,6 +1727,7 @@ object CrossDeviceClipboardHook {
         ensureDeletedKeysLoaded()
         val k = entryKey(e)
         val t = entryTime(e) ?: 0L
+        log("DIAGGRP markDeleted: key=$k time=$t")
         if (k == null) {
             log("single delete: entryKey unresolved, skip - " + diagEntry(e))
             return
@@ -1378,7 +1747,8 @@ object CrossDeviceClipboardHook {
             for (c in base) {
                 val ck = entryKey(c)
                 val ct = entryTime(c) ?: 0L
-                if (ck == k && ct <= t) {
+                // v4.22：内容指纹键（c:）记过即剔除该内容所有副本，不再限 time 代际
+                if (ck == k && (ck.startsWith("c:") || ct <= t)) {
                     continue
                 }
                 filtered.add(c)
@@ -1555,6 +1925,865 @@ object CrossDeviceClipboardHook {
             mergeMethodCache[cls] = m
             return m
         }
+    }
+
+    // ===================== 分组筛选（v2.0.6）=====================
+
+    internal const val CAT_ALL = 0
+    private const val CAT_LINK = 1
+    private const val CAT_IMAGE = 2
+    private const val CAT_TEXT = 3
+    private const val GROUP_FILE = "clipboardfix_group_v2.txt"
+
+    @Volatile
+    private var sActiveCat = CAT_ALL
+    /** 跨类读取当前分组（ClipboardPinHook 用于判断置顶是否应在分组视图下禁用）。 */
+    internal fun currentGroupCat(): Int = sActiveCat
+    /**
+     * 取当前分组下适配器位置 [adapterPos] 对应的完整列表条目，供 ClipboardPinHook 标「已置顶」用。
+     * 分组态下适配器位置 ≠ 完整列表下标（过滤发生在展示层 sGroupVisibleIdx），必须映射，
+     * 否则分组第一条会被误标已置顶（实际未置顶）。返回 null 表示取不到。
+     */
+    internal fun currentDisplayItem(adapterPos: Int): Any? {
+        val full = synchronized(sGroupFullSnapshot) { ArrayList<Any?>(sGroupFullSnapshot) }
+        if (full.isEmpty() || adapterPos < 0) return null
+        val idx: Int = if (sActiveCat == CAT_ALL) {
+            adapterPos
+        } else {
+            synchronized(sGroupVisibleIdx) {
+                if (adapterPos in 0 until sGroupVisibleIdx.size) sGroupVisibleIdx[adapterPos] else -1
+            }
+        }
+        if (idx < 0 || idx >= full.size) return null
+        return full[idx]
+    }
+    @Volatile
+    private var sMasterList: MutableList<Any?>? = null
+
+    /** v2.0.5 分组「展示层过滤」快照：始终保存 phrase 传入的完整列表（含云端/已剔已删），不按分组裁短。
+     *  这是修复「分组态删除/切换后关面板重开丢内容」的关键——phrase 始终持有完整列表，
+     *  分组过滤只发生在适配器 getItemCount/getItem 展示层，不把裁短列表写回存储。 */
+    private val sGroupFullSnapshot = java.util.ArrayList<Any?>()
+    /** 当前分组下可见条目在 [sGroupFullSnapshot] 中的下标（展示顺序）。 */
+    private val sGroupVisibleIdx = java.util.ArrayList<Int>()
+    /** 已挂上「展示层分组过滤」钩子的适配器类（按类名去重，避免重复 hook）。 */
+    private val sGroupHookedClasses = java.util.HashSet<String>()
+    /** 换位防重入：onBindViewHolder 两个重载互相委托（3 参→2 参）时，内层收到的位置
+     *  已是换过的完整下标——绝不能再映射一次（二次换位会把行 0 错绑到别的条目，
+     *  实测「两条数字+一条英文」+ 删错条目的根因）。嵌套调用一律原样放行。 */
+    private val sBindRemapGuard = object : java.lang.ThreadLocal<Boolean>() {
+        override fun initialValue(): Boolean = false
+    }
+    @Volatile
+    private var sPopupRef: java.lang.ref.WeakReference<Any>? = null
+    private var sTabRef: java.lang.ref.WeakReference<TextView>? = null
+    private var sPhraseTabRef: java.lang.ref.WeakReference<TextView>? = null
+    private var sContentRef: java.lang.ref.WeakReference<View>? = null
+    private var sConfirmedPanel: java.lang.ref.WeakReference<Any>? = null
+    private var sTabOverlayRef: java.lang.ref.WeakReference<View>? = null
+    private var sTabOverlayBusy = false
+    /** 当前是否处于「剪贴板」页面：切到「常用语」等其它页时置 false，禁用分组切换（避免误改其它页）。 */
+    @Volatile
+    private var sClipboardPageActive = true
+    /** 捕获的 phrase adapter.setClipboardList 原方法，用于分组切换时借 phrase 原生路径重灌列表（避免手动 notify 触发面板重建）。 */
+    private var sSetClipboardListMethod: java.lang.reflect.Method? = null
+    /** 一次性清空路径专用：置 true 时 setClipboardList 钩子跳过云端缓存补回，
+     *  使清空后重建的快照严格等于「保留列表（keep）」，杜绝快照(含缓存补回)与内存主列表(mAll=keep)
+     *  分叉导致的分组显示错乱（实测：清空文字组后快照比 keep 多 2 条缓存文本）。同步 invoke 用完即清。 */
+    @Volatile
+    private var sSuppressCloudPrepend = false
+
+    private fun labelFor(cat: Int): String = when (cat) {
+        CAT_ALL -> "剪贴板"
+        CAT_LINK -> "链接"
+        CAT_IMAGE -> "图片"
+        CAT_TEXT -> "文字"
+        else -> "剪贴板"
+    }
+
+    /** 每次打开面板都回到「全部」分组（v2.0.5 需求：关闭面板再打开，默认展示全部内容）。
+     *
+     *  <p>同时把偏好文件写回「全部」——否则进程重启后若还有别处读偏好，又会把上次的分组复原。
+     *  重置发生在 showAtLocation 钩子里、先于列表灌入执行，因此随后的
+     *  recompute（setClipboardList 钩子内）天然按「全部」计算可见下标，不会闪一下旧分组。
+     */
+    private fun resetGroupToAll(ctx: Context?) {
+        val changed = sActiveCat != CAT_ALL
+        sActiveCat = CAT_ALL
+        saveGroupPref(ctx)
+        if (!changed) return
+        try {
+            synchronized(sGroupFullSnapshot) { recomputeGroupVisible() }
+            applyTabLabel()
+        } catch (t: Throwable) {
+            log("resetGroupToAll ui failed - $t")
+        }
+        log("group reset -> ALL on panel show")
+    }
+
+    private fun saveGroupPref(ctx: Context?) {
+        try {
+            ctx?.openFileOutput(GROUP_FILE, Context.MODE_PRIVATE)?.use { it.write(sActiveCat.toString().toByteArray()) }
+        } catch (t: Throwable) {
+            log("group pref save failed - $t")
+        }
+    }
+
+    private fun itemHasImage(item: Any?): Boolean {
+        if (item == null) return false
+        val dc = determineContent(item) ?: return false
+        return try {
+            val arr = org.json.JSONArray(dc)
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                if (o.optString("uriType").contains("image", true) || o.optString("thumbImage").isNotEmpty()) return true
+            }
+            false
+        } catch (_: Throwable) { false }
+    }
+
+    private fun itemText(item: Any?): String? {
+        if (item == null) return null
+        val dc = determineContent(item) ?: return null
+        return try {
+            val arr = org.json.JSONArray(dc)
+            val sb = StringBuilder()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val t = o.optString("text").ifEmpty { o.optString("textItemData") }
+                if (t.isNotEmpty()) sb.append(t).append("\n")
+            }
+            sb.toString().trim().ifEmpty { null }
+        } catch (_: Throwable) { null }
+    }
+
+    /** 诊断用：取条目文本前若干字符（去空白），便于在日志里看清分类依据。 */
+    private fun shortText(item: Any?): String {
+        val t = itemText(item) ?: return "∅"
+        val s = t.replace("\\s+".toRegex(), " ").trim()
+        return if (s.length > 16) s.substring(0, 16) + "…" else s
+    }
+
+    // v2.0.5：链接判定从「整段必须纯 URL」放宽为「文本中包含 URL 即归链接」，
+    // 解决带标题/描述的链接条目（如「点击查看 https://...」）被误判为文字、跑到文字分组的问题。
+    private val URL_RE = java.util.regex.Pattern.compile("https?://[^\\s]+|www\\.[^\\s]+")
+
+    private fun hasUrl(s: String): Boolean = URL_RE.matcher(s).find()
+
+    private fun classifyItem(item: Any?): Int {
+        // 图文混排（含图）归入图片；纯文字再判断是否包含 URL
+        if (itemHasImage(item)) return CAT_IMAGE
+        val t = itemText(item)
+        if (t != null && hasUrl(t)) return CAT_LINK
+        return CAT_TEXT
+    }
+
+    /** setClipboardList 钩子里调用：把 master 合并为全量集合（含云端/置顶/屏蔽已处理），再按当前分组原地过滤。 */
+    private fun applyGroupFilter(list: MutableList<Any?>) {
+        try {
+            // v2.0.5：master 必须是「全量」集合。分组态下 phrase 可能把已被我们原地过滤过的
+            // 显示列表（仅当前分组条目）原样回灌给 setClipboardList（如分组内删除条目后重开面板），
+            // 若直接 sMasterList = list 会把 master 误存成「仅当前分组」，切到其它分组时其它内容丢失。
+            // 故改为并集：master 只增不减，永远保留其它分组曾出现过的条目；被删条目由 sWipedKeys
+            // 在显示层拦截，不会误显示，cycleGroupCategory 也按 sWipedKeys 排除已删项。
+            sMasterList = unionMaster(sMasterList, list)
+            val mm = sMasterList
+            val mT = mm?.count { classifyItem(it) == CAT_TEXT } ?: 0
+            val mL = mm?.count { classifyItem(it) == CAT_LINK } ?: 0
+            val mI = mm?.count { classifyItem(it) == CAT_IMAGE } ?: 0
+            log("DIAGGRP applyGroupFilter: incoming=${list.size} master=${mm?.size} activeCat=$sActiveCat master(T/L/I)=$mT/$mL/$mI")
+            filterListByGroup(list)
+        } catch (t: Throwable) {
+            // 不可写列表（如 Arrays$ArrayList）：过滤静默跳过，列表保持全量，不影响面板显示。
+            log("applyGroupFilter error (list likely immutable) - $t")
+        }
+    }
+
+    /** master 并集：保留 existing 全部条目，把 incoming 中 entryKey 不在 existing 的条目追加到末尾。
+     *  不移除任何条目——删除项由 [sWipedKeys] 在显示层处理，避免分组切换时其它内容丢失。 */
+    private fun unionMaster(existing: MutableList<Any?>?, incoming: MutableList<Any?>): MutableList<Any?> {
+        if (existing == null) return ArrayList(incoming)
+        val result = ArrayList(existing)
+        val seen = java.util.HashSet<String?>()
+        for (e in existing) seen.add(entryKey(e))
+        for (e in incoming) {
+            val k = entryKey(e)
+            if (!seen.contains(k)) {
+                seen.add(k)
+                result.add(e)
+            }
+        }
+        return result
+    }
+
+    /** 该条目是否已被单条删除/清空记账屏蔽（沿用 sWipedKeys 的「一次复制一代」语义）。 */
+    private fun isEntryBlocked(e: Any?): Boolean {
+        val k = entryKey(e) ?: return false
+        val wt = sWipedKeys[k] ?: return false
+        if (k.startsWith("c:")) {
+            // 云端内容指纹键：记过即永久拦（云端会重复推送同内容，time 已不可用）
+            log("DIAGGRP isEntryBlocked: cloud content blocked key=$k")
+            return true
+        }
+        val t = entryTime(e) ?: 0L
+        return t <= wt
+    }
+
+    /** 纯过滤（不回写 master）：按当前分组原地剔除非本组条目。用于云端合并等「已显示列表」路径。
+     *  关键：mergeCloudIntoDisplay 补进云端条目后必须过一遍本过滤，否则分组开着时重开会先闪出未过滤条目。 */
+    private fun filterListByGroup(list: MutableList<Any?>) {
+        if (sActiveCat == CAT_ALL) return
+        val cat = sActiveCat
+        try {
+            list.retainAll { classifyItem(it) == cat }
+        } catch (t: Throwable) {
+            log("filterListByGroup error (list likely immutable) - $t")
+        }
+    }
+
+    /**
+     * 重新计算当前分组下可见条目的下标映射。
+     * 直接用 [sGroupFullSnapshot]（完整列表），不修改 phrase 底层列表——这是修复
+     * 「分组态删除/切换后关面板重开丢内容」的根治点：phrase 始终持有完整列表，
+     * 过滤只发生在适配器展示层（getItemCount/getItem），不再把裁短后的列表写回存储。
+     */
+    private fun recomputeGroupVisible() {
+        sGroupVisibleIdx.clear()
+        val full = sGroupFullSnapshot
+        if (sActiveCat == CAT_ALL) {
+            for (i in full.indices) sGroupVisibleIdx.add(i)
+            log("DIAGGRP recompute: cat=ALL snap=${full.size} visible=${full.size}")
+            return
+        }
+        val sb = StringBuilder()
+        for (i in full.indices) {
+            val e = full[i] ?: continue
+            if (isEntryBlocked(e)) continue
+            val c = classifyItem(e)
+            val cc = when (c) { CAT_LINK -> "L"; CAT_IMAGE -> "I"; CAT_TEXT -> "T"; else -> "?" }
+            val k = entryKey(e) ?: "?"
+            sb.append("[$i$cc=$k=${shortText(e)}]")
+            if (c == sActiveCat) sGroupVisibleIdx.add(i)
+        }
+        log("DIAGGRP recompute: cat=$sActiveCat snap=${full.size} visible=${sGroupVisibleIdx.size} $sb")
+    }
+
+    /**
+     * 删除后同步展示快照：按 entryKey 从完整快照移除被删条目并重算可见下标，
+     * 使 getItemCount/getItem 与 phrase 删除后的实际列表保持一致，避免
+     * RecyclerView 因「数量不一致」抛出 Inconsistency/IndexOutOfBounds 闪退。
+     * 按 key 而非下标移除，与 phrase 内部列表顺序无关，安全。
+     */
+    private fun removeFromGroupSnapshot(model: Any?) {
+        val k = entryKey(model) ?: return
+        synchronized(sGroupFullSnapshot) {
+            val it = sGroupFullSnapshot.iterator()
+            while (it.hasNext()) {
+                if (entryKey(it.next()) == k) { it.remove(); break }
+            }
+            recomputeGroupVisible()
+        }
+        log("DIAGGRP afterDelete: snapshot=${sGroupFullSnapshot.size} visible=${sGroupVisibleIdx.size}")
+    }
+
+    /** 通知适配器重绘（分组切换后刷新展示层过滤结果）。 */
+    private fun notifyAdapter() {
+        val a = sAdapterRef?.get() ?: return
+        try {
+            a.javaClass.getMethod("notifyDataSetChanged").invoke(a)
+        } catch (t: Throwable) {
+            log("group notifyDataSetChanged failed - $t")
+        }
+    }
+
+    /** 诊断用：反射取适配器持有的列表在 pos 处的元素，用于对比 phrase 实际绑定的条目。 */
+    private fun adapterElementAt(adapter: Any, pos: Int): Any? {
+        return try {
+            for (f in adapter.javaClass.declaredFields) {
+                if (!java.util.List::class.java.isAssignableFrom(f.type)) continue
+                f.isAccessible = true
+                val v = f.get(adapter) as? java.util.List<*> ?: continue
+                if (pos in 0 until v.size) return v[pos]
+            }
+            null
+        } catch (_: Throwable) { null }
+    }
+
+    /** 反射取适配器实际数据列表（getAdapterList 优先，退回首个 List 字段）；找不到返回 null。 */
+    private fun adapterDataList(adapter: Any): java.util.List<*>? {
+        return try {
+            try {
+                val gm = adapter.javaClass.getMethod("getAdapterList")
+                gm.isAccessible = true
+                val v = gm.invoke(adapter) as? java.util.List<*>
+                if (v != null) return v
+            } catch (_: Throwable) {}
+            for (f in adapter.javaClass.declaredFields) {
+                if (!java.util.List::class.java.isAssignableFrom(f.type)) continue
+                f.isAccessible = true
+                val v = f.get(adapter) as? java.util.List<*> ?: continue
+                return v
+            }
+            null
+        } catch (_: Throwable) { null }
+    }
+
+    /** 适配器实际数据长度（phrase mData）；-1 表示拿不到（跳过失同步钳制）。 */
+    private fun adapterDataListSize(adapter: Any): Int = adapterDataList(adapter)?.size ?: -1
+
+    /** 从适配器实际列表重建展示快照（phrase 自改 mData 后调用），消除快照-列表失同步。
+     *
+     *  <p><b>不变量（本函数的存在意义）</b>：快照必须与 phrase 的 mClipboardList
+     *  <b>严格等长、同序</b>。展示层换位是「显示位置 pos → 快照下标 idx」，phrase 随后
+     *  用 idx 去 mData 里取条目；两者错一位就会整体串行（实测：全部分组删掉一条纯文字后，
+     *  链接内容跑进文字分组 —— 就是快照比 mData 少一条导致的错位）。
+     *
+     *  <p>因此这里<b>绝不</b>在快照里单方面剔除条目；相反，若 phrase 列表里仍残留
+     *  「已删条目」（屏蔽表命中，说明删除没落到真实列表上：映射偏差 / 对象不同实例），
+     *  就直接从真实列表里物理移除——保证「删了就是删了」，同时两者天然等长同序。
+     */
+    private fun resyncGroupSnapshotFromAdapter(adapter: Any, purgeKeys: Set<String?>? = null) {
+        val actual = adapterDataList(adapter)
+        var purged = 0
+        if (actual is MutableList<*> && !purgeKeys.isNullOrEmpty()) {
+            try {
+                @Suppress("UNCHECKED_CAST")
+                val m = actual as MutableList<Any?>
+                val it = m.iterator()
+                while (it.hasNext()) {
+                    val k = entryKey(it.next())
+                    // 只清理「本次确认被删」的 key：屏蔽表里可能有历史误标，拿整张表删列表风险太大
+                    if (k != null && purgeKeys.contains(k)) {
+                        it.remove()
+                        purged++
+                    }
+                }
+            } catch (t: Throwable) {
+                log("resync purge skipped - $t")
+            }
+        }
+        synchronized(sGroupFullSnapshot) {
+            sGroupFullSnapshot.clear()
+            if (actual != null) sGroupFullSnapshot.addAll(actual)
+            recomputeGroupVisible()
+        }
+        log("DIAGGRP resync: snap=${sGroupFullSnapshot.size} actual=${actual?.size} purged=$purged visible=${sGroupVisibleIdx.size}")
+    }
+
+    /**
+     * 在适配器实例上挂「展示层分组过滤」钩子（getItemCount/getItem/getItemViewType/getItemId），
+     * 使 RecyclerView 只渲染当前分组条目，而 phrase 持有的列表保持完整。
+     * 每次 setClipboardList 拿到适配器实例时按需挂载（按类名去重，避免重复 hook）。
+     */
+    private fun hookGroupAdapterMethods(adapter: Any) {
+        val cls = adapter.javaClass
+        if (!sGroupHookedClasses.add(cls.name)) return
+        try {
+            val mCount = cls.getMethod("getItemCount")
+            XposedInit.hook(mCount) { chain ->
+                if (ModulePrefs.isClipboardGroupEnabled() && sActiveCat != CAT_ALL) {
+                    // 失同步防御：快照比 phrase 实际列表长时（清空/面板重建把 mData 清掉但快照未同步），
+                    // 按快照报数量会让 phrase 内部 mData.get 越界闪退。取两者较小值兜底。
+                    val actual = adapterDataListSize(chain.thisObject)
+                    val n = sGroupVisibleIdx.size
+                    val out = if (actual in 0 until n) actual else n
+                    log("DIAGGRP getItemCount -> $out (visible=$n actual=$actual)")
+                    return@hook out
+                }
+                chain.proceed()
+            }
+            try {
+                val mItem = cls.getMethod("getItem", Int::class.javaPrimitiveType ?: Int::class.java)
+                XposedInit.hook(mItem) { chain ->
+                    if (sBindRemapGuard.get()) {
+                        // 嵌套委托：位置已是完整下标，禁止二次换位
+                        return@hook chain.proceed()
+                    }
+                    if (ModulePrefs.isClipboardGroupEnabled() && sActiveCat != CAT_ALL) {
+                        val pos = chain.getArg(0) as? Int ?: 0
+                        val idx = if (pos in 0 until sGroupVisibleIdx.size) sGroupVisibleIdx[pos] else -1
+                        if (idx >= 0 && idx < sGroupFullSnapshot.size) {
+                            log("DIAGGRP getItem($pos) -> snap[$idx]")
+                            return@hook sGroupFullSnapshot[idx]
+                        }
+                    }
+                    chain.proceed()
+                }
+            } catch (_: Throwable) {}
+            try {
+                val mType = cls.getMethod("getItemViewType", Int::class.javaPrimitiveType ?: Int::class.java)
+                XposedInit.hook(mType) { chain ->
+                    if (sBindRemapGuard.get()) {
+                        // 嵌套委托：位置已是完整下标，禁止二次换位
+                        return@hook chain.proceed()
+                    }
+                    if (ModulePrefs.isClipboardGroupEnabled() && sActiveCat != CAT_ALL) {
+                        val pos = chain.getArg(0) as? Int ?: 0
+                        val idx = if (pos in 0 until sGroupVisibleIdx.size) sGroupVisibleIdx[pos] else -1
+                        // 失同步防御：换位下标必须落在 phrase 实际列表内，否则 phrase 内部
+                        // mData.get(下标) 越界闪退（实测 FATAL IndexOutOfBounds）。
+                        val actual = adapterDataListSize(chain.thisObject)
+                        if (idx in 0 until sGroupFullSnapshot.size && (actual < 0 || idx < actual)) {
+                            sBindRemapGuard.set(true)
+                            try {
+                                return@hook chain.proceed(arrayOf<Any?>(idx))
+                            } finally {
+                                sBindRemapGuard.remove()
+                            }
+                        }
+                        log("DIAGGRP getItemViewType fallback pos=$pos idx=$idx actual=$actual")
+                    }
+                    chain.proceed()
+                }
+            } catch (_: Throwable) {}
+            try {
+                val mId = cls.getMethod("getItemId", Int::class.javaPrimitiveType ?: Int::class.java)
+                XposedInit.hook(mId) { chain ->
+                    if (sBindRemapGuard.get()) {
+                        // 嵌套委托：位置已是完整下标，禁止二次换位
+                        return@hook chain.proceed()
+                    }
+                    if (ModulePrefs.isClipboardGroupEnabled() && sActiveCat != CAT_ALL) {
+                        val pos = chain.getArg(0) as? Int ?: 0
+                        val idx = if (pos in 0 until sGroupVisibleIdx.size) sGroupVisibleIdx[pos] else -1
+                        val actual = adapterDataListSize(chain.thisObject)
+                        if (idx in 0 until sGroupFullSnapshot.size && (actual < 0 || idx < actual)) {
+                            sBindRemapGuard.set(true)
+                            try {
+                                return@hook chain.proceed(arrayOf<Any?>(idx))
+                            } finally {
+                                sBindRemapGuard.remove()
+                            }
+                        }
+                    }
+                    chain.proceed()
+                }
+            } catch (_: Throwable) {}
+            // 诊断 + 渲染修复：实测（onBind expected vs phrase）证明 phrase 的 onBindViewHolder
+            // 内部用 mData.get(显示位置) 取条目，而 mData 是完整列表 → 取到过滤前的条目（文字组
+            // 显示 123456 却绑到中文）。这里把「显示位置」换成完整列表下标，让 phrase 取
+            // mData.get(完整下标) = 正确条目。getItemViewType/getItemId 也走同一映射保持一致。
+            // 点击删除仍走 getAdapterPosition（显示位置），由 delete 钩子的 sGroupVisibleIdx 映射处理。
+            try {
+                log("DIAGGRP adapter methods: " + cls.declaredMethods.joinToString(",") { it.name })
+            } catch (_: Throwable) {}
+            for (m in cls.declaredMethods) {
+                if (m.name == "onBindViewHolder" && m.parameterCount >= 2) {
+                    m.isAccessible = true
+                    XposedInit.hook(m) { chain ->
+                        // 两个 onBindViewHolder 重载互相委托（3 参→2 参）：内层收到的位置
+                        // 已是换过的完整下标，必须原样放行——否则二次换位把行 0 错绑到
+                        // 别的条目（实测「两条数字+一条英文」+ 删错条目的根因）。
+                        if (sBindRemapGuard.get()) {
+                            return@hook chain.proceed()
+                        }
+                        var mod: Array<Any?>? = null
+                        try {
+                            if (ModulePrefs.isClipboardGroupEnabled() && sActiveCat != CAT_ALL) {
+                                val args = chain.getArgs()
+                                val pos = args.getOrNull(1) as? Int ?: -1
+                                val idx = if (pos in 0 until sGroupVisibleIdx.size) sGroupVisibleIdx[pos] else -1
+                                // 失同步防御：换位下标必须落在 phrase 实际列表内，否则 mData.get 越界。
+                                val actual = adapterDataListSize(chain.thisObject)
+                                if (idx in 0 until sGroupFullSnapshot.size && (actual < 0 || idx < actual)) {
+                                    log("DIAGGRP onBind pos=$pos -> idx=$idx bind=${diagEntry(adapterElementAt(chain.thisObject, idx))}")
+                                    // chain.getArgs() 是不可变 List，直接改下标会抛
+                                    // UnsupportedOperationException（换位静默失败的根因）——
+                                    // 必须复制成数组再改（同 loadVideoOrImage 钩子范式）。
+                                    val arr = args.toTypedArray()
+                                    arr[1] = idx
+                                    mod = arr
+                                } else {
+                                    log("DIAGGRP onBind fallback pos=$pos idx=$idx actual=$actual")
+                                }
+                            }
+                        } catch (t: Throwable) { log("onBind swap failed - $t") }
+                        if (mod != null) {
+                            sBindRemapGuard.set(true)
+                            try {
+                                return@hook chain.proceed(mod)
+                            } finally {
+                                sBindRemapGuard.remove()
+                            }
+                        }
+                        chain.proceed()
+                    }
+                }
+            }
+            // 失同步根源防御：清空/关闭面板等路径会清空 phrase mData，但我们的展示快照
+            // 不会自动跟着清 → getItemCount 报旧数量、换位下标越界（实测 FATAL
+            // IndexOutOfBoundsException at getItemViewType）。在这两个方法执行后
+            // 按适配器实际列表重建快照，保持两者同步。
+            for (clearName in arrayOf("clearClipboardListItem", "closeAll")) {
+                for (m in cls.declaredMethods) {
+                    if (m.name == clearName && m.parameterCount == 0) {
+                        m.isAccessible = true
+                        XposedInit.hook(m) { chain ->
+                            val r = chain.proceed()
+                            try {
+                                if (ModulePrefs.isClipboardGroupEnabled()) {
+                                    resyncGroupSnapshotFromAdapter(chain.thisObject)
+                                    log("DIAGGRP resync after $clearName")
+                                }
+                            } catch (t: Throwable) { log("clear resync failed - $t") }
+                            r
+                        }
+                    }
+                }
+            }
+            log("OK: hooked adapter group-display methods on ${cls.name}")
+        } catch (t: Throwable) {
+            log("group adapter hook failed on ${cls.name} - $t")
+        }
+    }
+
+    /**
+     * 切分组：更新当前分类后，借 phrase 自身的 setClipboardList 重新灌列表。
+     * 钩子内 applyGroupFilter 会按新 sActiveCat 过滤，走 phrase 原生填充路径，
+     * 不手动 notifyDataSetChanged、不碰 maybeChangeEmptyViewAndClearButtonState，
+     * 从根上规避「手动刷新触发面板重建 → 输入法退/重拉键盘闪退」。
+     */
+    private fun switchGroupCategory(cat: Int, ctx: Context?) {
+        try {
+            sActiveCat = cat
+            saveGroupPref(ctx)
+            // 自愈：目标分组在 master 里仍有条目、但输入法内部列表已被重建丢掉（整组消失）时
+            // 才补回，否则切过去一片空白（实测分组内删一条后图片组整组消失）。
+            // 只判「整组为 0」而不做逐条补齐：避免把列表裁剪/过期掉的零散旧条目又捞回来。
+            if (cat != CAT_ALL) {
+                val inSnapshot = synchronized(sGroupFullSnapshot) {
+                    sGroupFullSnapshot.count { classifyItem(it) == cat }
+                }
+                if (inSnapshot == 0) restoreMissingRows(cat)
+            }
+            // v2.0.5 修复：不再把「按分组裁短后的列表」回灌给 phrase（那会把短列表写回存储造成丢内容）。
+            // 改为只在适配器展示层切换过滤：重算可见下标并通知重绘，phrase 持有的完整列表不动。
+            // 切分组前先从 phrase 当前 mData 重建快照，消除「快照与内存列表分叉」（已删条目被本地库
+            // 复活进 mData 后未重建快照导致的 onBind 错位）。recompute 内部已 isEntryBlocked 跳过屏蔽条目。
+            val adapterForSwitch = sAdapterRef?.get()
+            if (adapterForSwitch != null) {
+                resyncGroupSnapshotFromAdapter(adapterForSwitch)
+            } else {
+                synchronized(sGroupFullSnapshot) { recomputeGroupVisible() }
+            }
+            notifyAdapter()
+            applyTabLabel()
+            log("switched group to $cat (adapter filter), visible=${sGroupVisibleIdx.size}")
+        } catch (t: Throwable) {
+            log("switchGroupCategory error - $t")
+        }
+    }
+
+    /** 分组切换自愈：把 master 里「属于该分组、但适配器实际列表已丢」的条目补回内部列表。
+     *
+     *  实测（分组内删除一条后双击轮询）：输入法会重建自己的剪贴板列表，重建产物有时
+     *  不再带上其它分组的条目（图片组整组消失）——只影响内存列表，关面板重开（重新全量
+     *  查库）即恢复。分组态下若不补回，切到该组就是一片空白、双击轮询也会把它当空组跳过。
+     *
+     *  按 [entryKey] 判缺失、追加到尾部（不打乱现有渲染位置），再借输入法自身的
+     *  setClipboardList 重灌——走我们自己的钩子，快照与可见下标会同步重建。
+     *
+     *  @return 实际补回的条数；0 表示无缺失或补不回去（不影响后续流程）
+     */
+    private fun restoreMissingRows(cat: Int): Int {
+        try {
+            val adapter = sAdapterRef?.get() ?: return 0
+            val master = sMasterList ?: return 0
+            val method = sSetClipboardListMethod ?: return 0
+            val current = adapterDataList(adapter) ?: return 0
+            // 屏蔽表必须先载入：否则本进程的空表会把「已删条目」当成缺失又补回来（复活）。
+            ensureDeletedKeysLoaded()
+            val have = java.util.HashSet<String?>()
+            for (e in current) have.add(entryKey(e))
+            val missing = ArrayList<Any?>()
+            for (e in master) {
+                if (e == null || isEntryBlocked(e)) continue
+                if (classifyItem(e) != cat) continue
+                val k = entryKey(e) ?: continue
+                if (!have.add(k)) continue
+                missing.add(e)
+            }
+            if (missing.isEmpty()) return 0
+            val merged = ArrayList<Any?>(current)
+            merged.addAll(missing)
+            method.isAccessible = true
+            method.invoke(adapter, merged)
+            log("DIAGGRP restoreMissing: cat=$cat rows=${missing.size} adapter=${merged.size}")
+            return missing.size
+        } catch (t: Throwable) {
+            log("restoreMissingRows failed - $t")
+            return 0
+        }
+    }
+
+    /** 把「剪贴板」标签文字改成分组名（全部→剪贴板），让标签本身就充当分组指示，无需额外小标签。
+     *  始终显示当前分组名，与所处页面无关——切到常用语页也保留分组名，用户回来时一眼可见。
+     *  写字前校验标签是否仍挂在当前面板下（面板重建后旧引用会指向已隐藏 View），失效则重找。 */
+    private fun applyTabLabel() {
+        val text = labelFor(sActiveCat)
+        // 自愈：标签引用若已脱离当前面板（如面板关闭重建），改字会改到旧 View 上导致看不到刷新，故先重找。
+        val content = sContentRef?.get()
+        var tab = sTabRef?.get()
+        if (content != null && (tab == null || !isDescendantOf(content, tab))) {
+            tab = findClipboardTab(content)
+            if (tab != null) sTabRef = java.lang.ref.WeakReference(tab)
+        }
+        try { tab?.text = text } catch (_: Throwable) {}
+    }
+
+    /** 内容树里是否真的是剪贴板面板（含「剪贴板/常用语」标签），避免把芯片注入到键盘窗口。 */
+    private fun isClipboardPanel(content: View): Boolean {
+        var found = false
+        fun walk(v: View?) {
+            if (found || v == null) return
+            if (v is ViewGroup) {
+                for (i in 0 until v.childCount) {
+                    val c = v.getChildAt(i)
+                    if (c is TextView) {
+                        val tx = c.text?.toString() ?: ""
+                        if (tx.contains("剪贴板") || tx.contains("常用语")) { found = true; return }
+                    }
+                    walk(c)
+                }
+            }
+        }
+        walk(content)
+        return found
+    }
+
+    /** 分组 UI：把「剪贴板」标签文字直接改成当前分组名（全部→剪贴板），并盖一层透明覆盖层实现双击循环切换
+     *  （文字→链接→图片→全部）。不再需要右上角额外小芯片。 */
+    private fun injectGroupChip(popup: Any) {
+        val pw = popup as? PopupWindow ?: return
+        val content = pw.contentView as? ViewGroup ?: return
+        val ctx = content.context ?: return
+        // 仅在剪贴板面板内注入：面板与键盘可能复用同一 PopupWindow 类，按类名判定会误命中键盘，
+        // 故用「是否含剪贴板/常用语标签」二次确认；命中后缓存面板实例，避免后续因标签被改名导致二次确认失败。
+        if (sConfirmedPanel?.get() !== popup) {
+            if (!isClipboardPanel(content)) {
+                log("group inject skipped: not clipboard panel (likely keyboard), content=${content.javaClass.name}")
+                return
+            }
+            sConfirmedPanel = java.lang.ref.WeakReference(popup)
+        }
+        sContentRef = java.lang.ref.WeakReference(content)
+        // 找到「剪贴板」标签（优先可点击候选）。
+        // 注意：面板关闭再打开会新建 content，旧标签的 parent 仍指向旧面板（非 null），仅判 parent==null 发现不了失效，
+        // 故用「标签是否仍挂在当前 content 下」判断；失效则重找，避免改字改到已隐藏的旧 View 上。
+        var tab = sTabRef?.get()
+        if (tab == null || !isDescendantOf(content, tab)) {
+            tab = findClipboardTab(content)
+            if (tab != null) sTabRef = java.lang.ref.WeakReference(tab)
+        }
+        if (tab == null) {
+            log("group inject: clipboard tab TextView not found")
+            return
+        }
+        // 找「常用语」标签；切到该页时分组切换应被禁止。
+        val phraseTab = findPhraseTab(content)
+        if (phraseTab != null) sPhraseTabRef = java.lang.ref.WeakReference(phraseTab)
+        // 按选中态判断当前所处页面（部分 ROM 用 isSelected 标记激活标签；取不到信号则保持默认）。
+        phraseTab?.let { pt ->
+            val phraseActive = pt.isSelected || (clickableAncestor(pt)?.isSelected ?: false)
+            val clipActive = tab.isSelected || (clickableAncestor(tab)?.isSelected ?: false)
+            if (phraseActive) sClipboardPageActive = false
+            else if (clipActive) sClipboardPageActive = true
+        }
+        // 把标签文字改成分组名（始终显示，与所处页面无关）。
+        applyTabLabel()
+        log("group inject: content=${content.javaClass.name} tab=${tab.javaClass.name} phraseTab=${phraseTab?.javaClass?.name} activeClipboard=${isClipboardPageActive()}")
+        // 双击「剪贴板」标签循环切换分组（仅剪贴板页生效）：在标签上方盖透明覆盖层，单击透传原生、双击循环。
+        attachDoubleTapOverlay(content, tab, ctx)
+    }
+
+    /** 实时判断是否处于「剪贴板」页：优先看两个标签的选中态，取不到信号则回退到缓存标志 sClipboardPageActive。 */
+    private fun isClipboardPageActive(): Boolean {
+        val clip = sTabRef?.get()
+        val phrase = sPhraseTabRef?.get()
+        val clipSel = clip != null && (clip.isSelected || (clickableAncestor(clip)?.isSelected ?: false))
+        val phraseSel = phrase != null && (phrase.isSelected || (clickableAncestor(phrase)?.isSelected ?: false))
+        return when {
+            clipSel -> true
+            phraseSel -> false
+            else -> sClipboardPageActive
+        }
+    }
+
+    /** 在内容树中查找匹配任一给定文字的标签 TextView（中英文都匹配；按文字比按类名稳）。
+     *  返回最可能是「可点击标签」的候选：优先本身就是 clickable / 有 onClick 监听 / 存在可点击祖先的；
+     *  否则取文字最短的（标签通常比面板标题短），避免误选标题导致覆盖层盖错位置。 */
+    private fun findTabByTexts(root: View, texts: List<String>): TextView? {
+        val matches = mutableListOf<TextView>()
+        fun walk(v: View?) {
+            if (v == null) return
+            if (v is ViewGroup) {
+                for (i in 0 until v.childCount) walk(v.getChildAt(i))
+            } else if (v is TextView) {
+                val tx = v.text?.toString() ?: ""
+                if (texts.any { tx.contains(it) }) matches.add(v)
+            }
+        }
+        walk(root)
+        if (matches.isEmpty()) return null
+        matches.firstOrNull { it.isClickable || it.hasOnClickListeners() || clickableAncestor(it) != null }
+            ?.let { return it }
+        return matches.minByOrNull { it.text?.length ?: 0 }
+    }
+
+    /** 查找「剪贴板」标签（中英文都匹配）。 */
+    private fun findClipboardTab(root: View): TextView? =
+        findTabByTexts(root, listOf("剪贴板", "Clipboard"))
+
+    /** 查找「常用语」标签（切到该页时禁用分组切换）。 */
+    private fun findPhraseTab(root: View): TextView? =
+        findTabByTexts(root, listOf("常用语", "常用"))
+
+    /** 向上找最近的「可点击」祖先（不含自身；含自身请用调用处判断），找不到返回 null。 */
+    private fun clickableAncestor(v: View): View? {
+        var p = v.parent
+        while (p is View) {
+            if (p.isClickable || p.hasOnClickListeners()) return p
+            p = p.parent
+        }
+        return null
+    }
+
+    /** 取标签真正的「点击目标」：内层文字 TextView 通常不可点击，切页由外层可点击按钮处理，
+     *  故优先返回可点击祖先（标签按钮本体），自身可点击才返回自身。切页监听必须挂在这里，
+     *  否则 setOnClickListener 会把控件变可点击、抢走父容器的切页点击。 */
+    private fun clickTarget(tab: View): View = clickableAncestor(tab) ?: tab
+
+    /** 判断 v 是否仍挂在 root 子树下（用于识别面板重建后旧标签失效）。 */
+    private fun isDescendantOf(root: View, v: View): Boolean {
+        var p: ViewParent? = v.parent
+        while (p != null) {
+            if (p === root) return true
+            p = p.parent
+        }
+        return false
+    }
+
+    /** 在「剪贴板」标签区域盖透明覆盖层，独占该区域触摸：单击透传原生标签切换，双击循环切换分组。
+     *  覆盖层方案可彻底绕开「标签触摸目标不确定 / phrase 自行消费事件」导致的双击收不到问题。 */
+    private fun attachDoubleTapOverlay(content: ViewGroup, tab: TextView, ctx: Context) {
+        if (sTabOverlayBusy) return
+        val old = sTabOverlayRef?.get()
+        if (old != null && old.parent === content) return
+        if (old != null && old.parent != null) (old.parent as? ViewGroup)?.removeView(old)
+        sTabOverlayBusy = true
+        // 等布局完成再量坐标，否则 getGlobalVisibleRect 可能为零或偏差
+        content.post {
+            sTabOverlayBusy = false
+            // 覆盖层盖「可点击祖先」（标签按钮本体）而非内层文字，双击在整个按钮区域都有效。
+            val clickBtn = clickTarget(tab)
+            val tabRect = android.graphics.Rect()
+            val contentRect = android.graphics.Rect()
+            if (!clickBtn.getGlobalVisibleRect(tabRect) || !content.getGlobalVisibleRect(contentRect)) {
+                log("group double-tap overlay: layout not ready, skip")
+                return@post
+            }
+            val w = tabRect.width()
+            val h = tabRect.height()
+            if (w <= 0 || h <= 0) { log("group double-tap overlay: zero size, skip"); return@post }
+            val left = tabRect.left - contentRect.left - content.paddingLeft
+            val top = tabRect.top - contentRect.top - content.paddingTop
+            val overlay = View(ctx).apply {
+                setBackgroundColor(0x00000000)
+                isClickable = true
+            }
+            val lp = android.widget.FrameLayout.LayoutParams(w, h).apply {
+                gravity = android.view.Gravity.NO_GRAVITY
+                leftMargin = left
+                topMargin = top
+            }
+            overlay.setOnTouchListener(object : View.OnTouchListener {
+                var lastDown = 0L
+                override fun onTouch(v: View?, ev: MotionEvent?): Boolean {
+                    if (ev?.action == MotionEvent.ACTION_DOWN) {
+                        val now = System.currentTimeMillis()
+                        if (lastDown > 0 && now - lastDown < 320) {
+                            // 双击：循环切换分组，并清掉单击计时避免三连击误判。
+                            // 非剪贴板页（常用语等）时不循环，只透传单击切回剪贴板页。
+                            lastDown = 0
+                            if (isClipboardPageActive()) {
+                                cycleGroupCategory(ctx)
+                            } else {
+                                try { clickBtn.performClick() } catch (_: Throwable) {}
+                            }
+                        } else {
+                            lastDown = now
+                            // 单击：透传原生标签切换（performClick 打到可点击祖先，触发 phrase 的切页 onClick）
+                            try { clickBtn.performClick() } catch (_: Throwable) {}
+                        }
+                    }
+                    return true
+                }
+            })
+            content.addView(overlay, lp)
+            content.requestLayout()
+            sTabOverlayRef = java.lang.ref.WeakReference(overlay)
+            log("group double-tap overlay attached: left=$left top=$top w=$w h=$h tab=${tab.javaClass.name}")
+        }
+    }
+
+    /** 双击循环：只在「有条目」的分组间切换——没图片不轮到图片、没链接不轮到链接、没文字不轮到文字；
+     *  剪贴板无任何内容时不允许切换。顺序：文字 → 链接 → 图片 → 全部 → 文字（跳过空分组）。
+     *  CAT_ALL（全部）在有内容时始终可回。 */
+    private fun cycleGroupCategory(ctx: Context?) {
+        if (!isClipboardPageActive()) { log("group cycle blocked: not in clipboard page"); return }
+        // v2.0.5 修复（「分组内删除后轮询丢图片组」根因）：
+        // 可用性判定不能只看 master(DIAGGRP buildCapture)。实测在文字/链接分组里删掉一条后，
+        // 输入法重建内部列表，重建产物往往不再带图片条目；master 只在全量查库路径并集更新，
+        // 于是图片组被判定为空、双击直接跳过 —— 只能在文字/链接/全部之间轮询，关面板重开
+        // （重新全量捕获）才恢复。改为「展示快照 ∪ master」双源判定：任一源认为有内容
+        // 就允许切过去，切过去后再用实际渲染结果校验（见下方 blank 回滚）。
+        val keys = java.util.HashSet<String?>()
+        var hasText = false
+        var hasLink = false
+        var hasImage = false
+        fun tally(e: Any?) {
+            if (e == null) return
+            if (isEntryBlocked(e)) return     // 已删条目（屏蔽表拦截）不计入分类
+            val k = entryKey(e) ?: return
+            if (!keys.add(k)) return          // 同一内容在快照/master 各存一份，只算一次
+            when (classifyItem(e)) {
+                CAT_TEXT -> hasText = true
+                CAT_LINK -> hasLink = true
+                CAT_IMAGE -> hasImage = true
+            }
+        }
+        synchronized(sGroupFullSnapshot) { for (e in sGroupFullSnapshot) tally(e) }
+        sMasterList?.let { for (e in it) tally(e) }
+        if (!hasText && !hasLink && !hasImage) {
+            log("group cycle blocked: clipboard empty")
+            return
+        }
+        // 固定轮询顺序，跳过空分组
+        val order = intArrayOf(CAT_TEXT, CAT_LINK, CAT_IMAGE, CAT_ALL)
+        fun available(cat: Int): Boolean = when (cat) {
+            CAT_TEXT -> hasText
+            CAT_LINK -> hasLink
+            CAT_IMAGE -> hasImage
+            else -> true // CAT_ALL 有内容时始终可回
+        }
+        val curIdx = order.indexOf(sActiveCat).let { if (it < 0) order.size - 1 else it }
+        val prev = sActiveCat
+        for (step in 1..order.size) {
+            val next = order[(curIdx + step) % order.size]
+            if (!available(next)) continue
+            switchGroupCategory(next, ctx)
+            // 判定有内容却一行都渲染不出来（快照里确实没有该组条目）——别停在这个空白组，
+            // 回滚后继续找下一个可用分组。
+            if (next == CAT_ALL || sGroupVisibleIdx.isNotEmpty()) {
+                log("group cycle: $prev -> $next (text=$hasText link=$hasLink image=$hasImage) visible=${sGroupVisibleIdx.size}")
+                return
+            }
+            log("group cycle skip blank render: $next (snapshot has no such row)")
+            sActiveCat = prev
+        }
+        // 全部落空：回到原分组，保持 sActiveCat 与已保存偏好一致
+        switchGroupCategory(prev, ctx)
+        log("group cycle blocked: no available group")
     }
 
     private fun log(msg: String) {

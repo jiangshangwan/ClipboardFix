@@ -1209,6 +1209,11 @@ object ClipboardPinHook {
 
     /** 置顶 / 取消置顶当前手势所在条目，然后刷新面板。 */
     private fun togglePinAt(swipe: Any) {
+        // v2.0.5：分组视图下禁用置顶（删除/置顶只允许在「全部」分组使用），避免分组态置顶的排序/快照复杂度。
+        if (ModulePrefs.isClipboardGroupEnabled() && CrossDeviceClipboardHook.currentGroupCat() != CrossDeviceClipboardHook.CAT_ALL) {
+            log("pin disabled in category view (cat=" + CrossDeviceClipboardHook.currentGroupCat() + ")")
+            return
+        }
         val time = timeOfRow(swipe)
         if (time == 0L) {
             log("toggle pin: row time unresolved (swipe="
@@ -1319,8 +1324,11 @@ object ClipboardPinHook {
                             resetPinDoorIfNeeded(itemView)
                             // 诊断：前 3 次 bind 打一次条目视图树（确认布局 id 映射）
                             dumpTreeOnce(itemView)
-                            // 置顶条目追加「（已置顶）」提醒（仅剪贴板条目；常用语面板不置顶）
-                            markPinnedSource(itemView, if (isClipboardRow(itemView)) rowTimeAt(posArg) else 0L)
+                            // 置顶条目追加「（已置顶）」提醒（仅剪贴板条目；常用语面板不置顶）。
+                            // 分组态下适配器位置≠完整列表下标，必须走分组感知的条目映射取时间，
+                            // 否则会误把分组第一条标成已置顶（实际未置顶）。
+                            val pinItem = CrossDeviceClipboardHook.currentDisplayItem(posArg)
+                            markPinnedSource(itemView, if (isClipboardRow(itemView) && pinItem != null) timeOfItem(pinItem) else 0L)
                         }
                     } catch (t: Throwable) {
                         log("bind map record failed - " + t)

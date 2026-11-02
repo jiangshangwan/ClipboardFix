@@ -41,11 +41,13 @@ fun FeaturePage(
     swUnlimitTime: Boolean,
     swPanelColor: Boolean,
     swClipboardPin: Boolean,
+    swClipboardGroup: Boolean,
     onToggleImeUnlock: (Boolean) -> Unit,
     onToggleUnlimitCount: (Boolean) -> Unit,
     onToggleUnlimitTime: (Boolean) -> Unit,
     onTogglePanelColor: (Boolean) -> Unit,
     onToggleClipboardPin: (Boolean) -> Unit,
+    onToggleClipboardGroup: (Boolean) -> Unit,
 ) {
     val colors = MiuixTheme.colorScheme
     // 玻璃折射源：整页内容登记进 layerBackdrop，供 Snackbar 的柔光玻璃面板实时折射
@@ -113,11 +115,13 @@ fun FeaturePage(
                         checked = swImeUnlock,
                         onCheckedChange = handleImeUnlock,
                         title = stringResource(R.string.sw_ime_unlock),
+                        summary = stringResource(R.string.sw_ime_unlock_sub),
                     )
                     FeatureSwitch(
                         checked = swImeUnlock && swUnlimitCount,
                         onCheckedChange = onToggleUnlimitCount,
                         title = stringResource(R.string.sw_unlimit),
+                        summary = stringResource(R.string.sw_unlimit_sub),
                         enabled = swImeUnlock,
                         onClickWhenDisabled = { showSnack(strEnableFirst) },
                     )
@@ -125,6 +129,7 @@ fun FeaturePage(
                         checked = swImeUnlock && swUnlimitTime,
                         onCheckedChange = onToggleUnlimitTime,
                         title = stringResource(R.string.sw_unlimit_time),
+                        summary = stringResource(R.string.sw_unlimit_time_sub),
                         enabled = swImeUnlock,
                         onClickWhenDisabled = { showSnack(strEnableFirst) },
                     )
@@ -132,6 +137,7 @@ fun FeaturePage(
                         checked = swImeUnlock && swPanelColor,
                         onCheckedChange = onTogglePanelColor,
                         title = stringResource(R.string.sw_panel),
+                        summary = stringResource(R.string.sw_panel_sub),
                         enabled = swImeUnlock,
                         onClickWhenDisabled = { showSnack(strEnableFirst) },
                     )
@@ -139,6 +145,15 @@ fun FeaturePage(
                         checked = swImeUnlock && swClipboardPin,
                         onCheckedChange = onToggleClipboardPin,
                         title = stringResource(R.string.sw_clipboard_pin),
+                        summary = stringResource(R.string.sw_clipboard_pin_sub),
+                        enabled = swImeUnlock,
+                        onClickWhenDisabled = { showSnack(strEnableFirst) },
+                    )
+                    FeatureSwitch(
+                        checked = swImeUnlock && swClipboardGroup,
+                        onCheckedChange = onToggleClipboardGroup,
+                        title = stringResource(R.string.sw_clipboard_group),
+                        summary = stringResource(R.string.sw_clipboard_group_sub),
                         enabled = swImeUnlock,
                         onClickWhenDisabled = { showSnack(strEnableFirst) },
                     )
@@ -167,6 +182,7 @@ private fun FeatureSwitch(
     onCheckedChange: (Boolean) -> Unit,
     title: String,
     enabled: Boolean,
+    summary: String? = null,
     onClickWhenDisabled: (() -> Unit)? = null,
 ) {
     Box(
@@ -184,6 +200,7 @@ private fun FeatureSwitch(
             checked = checked,
             onCheckedChange = onCheckedChange,
             title = title,
+            summary = summary,
             enabled = enabled,
         )
     }

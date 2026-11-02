@@ -26,6 +26,7 @@
     <string name="info_android">Android Version</string>
     <string name="info_system">System Version</string>
     <string name="info_clipboard_version">Clipboard Version</string>
+    <string name="info_outdated">Outdated</string>
     <string name="info_arch">Architecture</string>
     <string name="info_lsposed">LSPosed API</string>
     <string name="info_build">Build Date</string>
@@ -41,12 +42,17 @@
     <string name="reboot_reload_sub">Requires ROOT</string>
     <string name="sec_feature">Feature Settings</string>
     <string name="sw_ime_unlock">Enable Fullscreen Keyboard Optimization</string>
+    <string name="sw_ime_unlock_sub">Integrate third-party IMEs into the system keyboard function bar</string>
     <string name="sw_unlimit">Unlock Clipboard Count Limit</string>
+    <string name="sw_unlimit_sub">Remove the official 20-entry limit</string>
     <string name="sw_unlimit_time">Unlock Clipboard Time Limit</string>
-    <string name="sw_unlimit_time_sub">Clipboard entries are no longer auto-cleared after 72 hours and are kept long-term</string>
+    <string name="sw_unlimit_time_sub">Remove the official 72-hour retention limit</string>
     <string name="sw_panel">Optimize Clipboard Panel BG</string>
+    <string name="sw_panel_sub">Unify the clipboard panel tone with the function bar below</string>
     <string name="sw_clipboard_pin">Enable Clipboard Entry Pinning</string>
-    <string name="sw_clipboard_pin_sub">Swipe an entry right slightly to reveal the pin button, then tap it to pin. Only one pinned entry at a time; the pinned entry survives clipboard clearing.</string>
+    <string name="sw_clipboard_pin_sub">Swipe right on an entry to pin it</string>
+    <string name="sw_clipboard_group">Enable Clipboard Grouping</string>
+    <string name="sw_clipboard_group_sub">Double-tap the ⌈Clipboard⌋ tab to enable grouping</string>
 
     <!-- Main switch off confirm dialog -->
     <string name="dialog_ime_unlock_title">Fullscreen Keyboard Optimization</string>
@@ -66,7 +72,7 @@
     <string name="theme">Theme</string>
     <string name="disable_update">Disable Update Check</string>
     <string name="disable_update_sub">When enabled, the module cannot check for updates</string>
-    <string name="opt_default">Default</string>
+    <string name="opt_default">Follow system</string>
     <string name="opt_zh">简体中文</string>
     <string name="opt_en">English</string>
     <string name="opt_light">Light</string>
@@ -107,7 +113,7 @@
     <string name="changelog_v20">1. Fully rebuilt the module UI: cleaner and more refreshing, upgraded visuals\n2. Added liquid-glass navigation for smoother swipes and more responsive touch\n3. Continuously fixing third-party input methods failing to use the system clipboard\n4. Added the Optimize Clipboard Panel Background toggle: unifies clipboard and keyboard function-area colors when enabled\n5. Added the Pin Clipboard Entry feature: swipe an entry right in the clipboard panel to pin it (one at most)\n6. Added the Disable Update Check feature: module runs fully offline when enabled (you will no longer receive update pushes)\n7. Added the Reload Processes feature: load the latest hooks by reloading processes after a module update (reboot on first install)\n8. Added a Settings page: module settings and feature settings shown separately\n9. Expanded the home info panel: device info and module status at a glance\n10. Brand-new About page: richer content, easier to use</string>
     <string name="changelog_v203">1. Fixed an issue where clipboard text was hard to read in certain scenarios\n2. Added the clipboard and quick phrases (com.miui.phrase) version to the home page info panel\n3. Fixed an issue where clipboard panel text could match the background color when the keyboard theme differs from the system theme</string>
     <string name="changelog_v204">1. Fixed images synced from other devices not persisting locally after sync\n2. Fixed local copied image entries not showing in the clipboard panel\n3. Fixed some icons not refreshing promptly after switching theme\n4. Refactored code structure, unified code style, simplified boilerplate; migrated all code from Java to Kotlin</string>
-    <string name="changelog_v205">1. Fixed the pin-to-top feature incorrectly appearing in the quick phrase panel\n2. Optimized the pin and unpin icons\n3. Fixed other hidden issues</string>
+    <string name="changelog_v205">1. Fixed the pin-to-top feature incorrectly appearing in the quick phrase panel and other hidden issues\n2. Optimized the pin and unpin icons\n3. Optimized descriptions for some setting titles\n4. Added clipboard grouping (off by default, enable in Feature Settings)\n5. Added a clipboard version update hint on the home page\n6. Adjusted feature logic (from this version, turning off the fullscreen keyboard optimization also disables all features by default; compatibility with other fullscreen keyboard optimization modules is no longer supported — in practice it caused severe bugs that seriously affected normal use)</string>
     <string name="changelog_v201">1. Fixed clipboard entries being cleared after 72 hours; added a toggle in the module feature page so you can choose freely\n2. Fixed the pin button margin being too large</string>
     <string name="changelog_v1413">Added clipboard panel background optimization; fixed clipboard and phrase panel color issues with the function area</string>
     <string name="changelog_v1412">Optimized display; fixed some errors</string>
