@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix.ui
 
 import android.graphics.RuntimeShader
@@ -294,8 +299,10 @@ fun AboutPage(
             item {
                 Column {
                     Spacer(Modifier.height(12.dp))
+                    // 版权声明行（2026-11-03 用户批准的文案冻结破例；旧短版权行已按用户要求移除，
+                    // 样式沿用旧行）：ModulePrefs.AUTHOR_SIGNATURE 的精简版（同源同属，全串含指纹版见该常量）。
                     Text(
-                        text = stringResource(R.string.copyright),
+                        text = "Copyright © 2026 江上晚 (jiangshangwan) · GPL-3.0",
                         fontSize = 13.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         modifier = Modifier

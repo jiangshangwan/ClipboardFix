@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix
 
 import android.content.Context
@@ -58,6 +63,7 @@ object SystemRelayHook {
      * （由 [XposedInit.onSystemServerStarting] 调用）。
      */
     fun init(cl: ClassLoader) {
+        // [jsW·1102]
         if (sHooked) return
         var hooked = 0
         try {

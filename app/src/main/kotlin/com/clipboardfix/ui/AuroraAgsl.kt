@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix.ui
 
 import kotlin.math.abs
@@ -21,6 +26,7 @@ import kotlin.math.sqrt
 
 // ---- uniform 头（与 AboutBgView.java AGSL_HEADER 一致）----
 internal const val AGSL_UNIFORMS = """
+// 2611jsW
 uniform vec2 uResolution;
 uniform float uAnimTime;
 uniform vec4 uBound;

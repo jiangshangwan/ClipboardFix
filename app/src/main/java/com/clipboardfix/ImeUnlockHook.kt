@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix
 
 import android.content.Context
@@ -152,6 +157,7 @@ object ImeUnlockHook {
      */
     @JvmStatic
     fun init(pkg: String, cl: ClassLoader, imeUnlock: Boolean, timeUnlock: Boolean) {
+        // cf/jsW/26
         // 按输入法包名解析下沉量并固化成像素；未校准的包不改动，避免覆盖已解析的值
         val sinkDp = KEYBOARD_SINK_DP[pkg]
         if (sinkDp != null && sinkDp > 0) {

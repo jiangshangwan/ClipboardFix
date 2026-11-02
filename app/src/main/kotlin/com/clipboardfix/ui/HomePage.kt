@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix.ui
 
 import android.content.Intent

@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix
 
 import java.lang.reflect.Constructor
@@ -13,6 +18,7 @@ import java.lang.reflect.Modifier
  * 所有查找均沿父类链向上搜索，调用方按需 try/catch。
  */
 object Reflect {
+    // jsW-261102
 
     // ---------------- 类 ----------------
 

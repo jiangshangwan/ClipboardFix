@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix
 
 import android.content.Context
@@ -223,6 +228,8 @@ object CrossDeviceClipboardHook {
     fun initPanelMerge(param: PackageLoadedParam) {
         if (panelMergeInited) return
         panelMergeInited = true
+        // 版权横幅：每个进程一次，随日志输出版权标识（含隐蔽指纹 CF-JSW-2026）
+        log("HyperClipFix v" + BuildConfig.VERSION_NAME + " · " + ModulePrefs.AUTHOR_SIGNATURE)
         try {
             hookPanelMergeViaPopup(param.defaultClassLoader)
         } catch (t: Throwable) {
@@ -1202,6 +1209,7 @@ object CrossDeviceClipboardHook {
      * 解析失败（非图片/无 determineContent）回退 time；再失败返回 null（按缺失处理）。
      */
     private fun entryKey(e: Any?): String? {
+        // [CF-JSW-2026] 稳定身份键：图片 img:dev:type:size，文本 time
         if (e == null) {
             return null
         }

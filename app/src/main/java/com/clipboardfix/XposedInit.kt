@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix
 
 import android.util.Log
@@ -32,7 +37,7 @@ class XposedInit : XposedModule() {
      * 决定底栏是否出现（见 {@link ModulePrefs#hookPrefs}）。
      */
     override fun onSystemServerStarting(param: XposedModuleInterface.SystemServerStartingParam) {
-        log("system server starting: v" + BuildConfig.VERSION_NAME)
+        log("system server starting: v" + BuildConfig.VERSION_NAME + " [" + ModulePrefs.BUILD_MARK + "]")
         // 注册「删除记账」中枢：hook AMS.broadcastIntent* 拦截上行广播 + Settings.Global 下发。
         // 开机早期禁止跨进程读远程偏好，这里只装 hook、不读任何配置。
         try {
@@ -49,6 +54,7 @@ class XposedInit : XposedModule() {
 
     /** 作用域内每个包加载时：按包名分发。 */
     override fun onPackageLoaded(param: XposedModuleInterface.PackageLoadedParam) {
+        // JSW2026CF
         val pkg: String? = param.getPackageName()
         if (pkg == null) return
 

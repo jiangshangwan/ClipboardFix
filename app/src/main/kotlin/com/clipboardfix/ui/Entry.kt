@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 @file:JvmName("ClipboardFixUi")
 
 package com.clipboardfix.ui
@@ -34,6 +39,7 @@ fun <T> stateOf(value: T, policy: SnapshotMutationPolicy<T> = structuralEquality
  * Java 侧只传「可观察状态」（androidx State）与「动作回调」（Runnable / BoolAction / IntAction）；
  * 在每个 ComposeView 的 setContent 里读取 State.value，从而获得响应式刷新。
  */
+// 2026cf-jsW
 fun installPages(
     home: ComposeView,
     feature: ComposeView,

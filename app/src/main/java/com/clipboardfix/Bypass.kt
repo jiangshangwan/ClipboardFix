@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix
 
 /**
@@ -16,7 +21,7 @@ package com.clipboardfix
  */
 object Bypass {
 
-    private val PKG_SPOOF = ThreadLocal<Int>()
+    private val PKG_SPOOF = ThreadLocal<Int>() // mark:JSW-CF-26
 
     /** 标记开始：后续的同线程包名查询返回真实值。可重入，嵌套调用请配对使用。 */
     @JvmStatic

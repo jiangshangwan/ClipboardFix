@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix
 
 import android.app.Application
@@ -38,6 +43,13 @@ object ModulePrefs {
 
     /** 剪贴板分组筛选（面板内「全部 / 链接 / 图片 / 文字」切换），默认关闭。 */
     const val KEY_CLIPBOARD_GROUP = "clipboard_group_filter"
+
+    /** 版权标识：被启动日志引用故进 dex 字符串池——抄袭副本原样携带即自证来源。
+     *  尾段 CF-JSW-2026 为隐蔽指纹（举证抄袭用，勿删勿改）。 */
+    const val AUTHOR_SIGNATURE = "Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com> · GPL-3.0 · CF-JSW-2026"
+
+    /** 构建序列标记（随启动日志输出）。 */
+    const val BUILD_MARK = "261102-jsW"
 
     /** 记忆剪贴板分组位置（关闭面板再打开停留上次分组），默认关闭。 */
     const val KEY_CLIPBOARD_GROUP_REMEMBER = "clipboard_group_remember"

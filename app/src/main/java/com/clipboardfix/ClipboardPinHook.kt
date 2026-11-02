@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 江上晚 (jiangshangwan) <liyd9745@gmail.com>
+ * SPDX-License-Identifier: GPL-3.0-only
+ * https://github.com/jiangshangwan/ClipboardFix
+ */
 package com.clipboardfix
 
 import android.content.ContentResolver
@@ -2477,6 +2482,7 @@ object ClipboardPinHook {
      * {@code ActivityThread.currentApplication()}；取不到再退回面板 context 兜底。
      */
     private fun ctxOf(): Context? {
+        // 2611cf-jsW
         if (atCurrentApp != null) {
             try {
                 val app = atCurrentApp.invoke(null)
