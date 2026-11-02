@@ -249,9 +249,9 @@ object CrossDeviceClipboardHook {
             showAtLocation.isAccessible = true
             XposedInit.hook(showAtLocation) { chain ->
                 val self = chain.thisObject
-                // v2.0.5：每次面板显示都先回到「全部」分组（用户要求：关闭面板再打开
-                // 默认展示全部分组）。必须排在 proceed 之前——面板显示后会立刻灌列表，
-                // 此时分组已是「全部」，快照/可见下标一次算对，不会先闪一下旧分组。
+                // v2.0.5：面板显示时恢复分组——「记忆剪贴板分组位置」开启则回到上次分组，
+                // 否则回到「全部」。必须排在 proceed 之前——面板显示后会立刻灌列表，
+                // 此时分组已就绪，快照/可见下标一次算对，不会先闪一下旧分组。
                 if (isOurPanel(self) && ModulePrefs.isClipboardGroupEnabled()) {
                     try {
                         resetGroupToAll((self as? PopupWindow)?.contentView?.context)
@@ -293,8 +293,8 @@ object CrossDeviceClipboardHook {
         log("group gate = $grpEnabled (panel ${self.javaClass.name})")
         if (grpEnabled) {
             sPopupRef = java.lang.ref.WeakReference(self)
-            // v2.0.5：不再恢复上次分组——每次打开都从「全部」开始
-            // （主要重置在 showAtLocation 钩子内先于列表灌入执行，这里再兜一次保险）
+            // v2.0.5：面板打开时恢复分组位置（记忆开启时）/回「全部」（记忆关闭时），
+            // 主恢复在 showAtLocation 钩子内先于列表灌入执行，这里再兜一次保险。
             resetGroupToAll((self as? PopupWindow)?.contentView?.context)
             mainHandler.post {
                 try {
@@ -1906,9 +1906,14 @@ object CrossDeviceClipboardHook {
     // ===================== 分组筛选（v2.0.6）=====================
 
     internal const val CAT_ALL = 0
-    private const val CAT_LINK = 1
-    private const val CAT_IMAGE = 2
-    private const val CAT_TEXT = 3
+    private const val CAT_LINK = 1    // 链接（type 2 淘宝 / 3 URL）
+    private const val CAT_IMGTEXT = 2 // 图文（type 11 纯图 / 12 / 13 图文）
+    private const val CAT_TEXT = 3    // 文本（type 10 纯文本）
+    private const val CAT_OTHER = 4   // 其他（type 14 其它文件）
+    private const val CAT_AV = 5      // 音视频（type 20 音频 / 21 视频）
+    private const val CAT_APK = 6     // 安装包（type 23 .apk）
+    private const val CAT_MULTI = 7   // 多文件（type 24）
+    private const val CAT_FILE = 8    // 文件（type 15 Excel / 16 zip / 17 Word / 18 PDF / 19 PPT / 22 txt）
     private const val GROUP_FILE = "clipboardfix_group_v2.txt"
 
     @Volatile
@@ -1979,8 +1984,13 @@ object CrossDeviceClipboardHook {
     private fun labelFor(cat: Int): String = when (cat) {
         CAT_ALL -> "剪贴板"
         CAT_LINK -> "链接"
-        CAT_IMAGE -> "图片"
-        CAT_TEXT -> "文字"
+        CAT_TEXT -> "文本"
+        CAT_IMGTEXT -> "图文"
+        CAT_OTHER -> "其他"
+        CAT_FILE -> "文件"
+        CAT_AV -> "音视频"
+        CAT_APK -> "安装包"
+        CAT_MULTI -> "多文件"
         else -> "剪贴板"
     }
 
@@ -1993,27 +2003,57 @@ object CrossDeviceClipboardHook {
      *  recompute（setClipboardList 钩子内）按目标分类计算可见下标，不会闪一下旧分组。
      */
     private fun resetGroupToAll(ctx: Context?) {
-        val remember = ModulePrefs.isGroupRememberEnabled() && ModulePrefs.isClipboardGroupEnabled()
+        val rememberOn = ModulePrefs.isGroupRememberEnabled()
+        val groupOn = ModulePrefs.isClipboardGroupEnabled()
+        val remember = rememberOn && groupOn
         val target = if (remember) loadGroupPref(ctx) else CAT_ALL
         val changed = sActiveCat != target
         sActiveCat = target
-        saveGroupPref(ctx)
-        if (!changed) return
+        // 只有「记忆开启」时才写回偏好文件。关闭记忆时绝不能覆盖——否则面板每次打开
+        // 都会把记下的分组冲写成「全部」（开关在 hook 侧短暂读不到时记忆被永久清掉）。
+        if (remember) saveGroupPref(ctx)
+        if (!changed) {
+            log("group on panel show: cat=$target (unchanged) remember=$rememberOn group=$groupOn file=${readGroupFileRaw(ctx)}")
+            return
+        }
         try {
             synchronized(sGroupFullSnapshot) { recomputeGroupVisible() }
             applyTabLabel()
         } catch (t: Throwable) {
             log("resetGroupToAll ui failed - $t")
         }
-        log("group on panel show -> cat=$target (remember=$remember)")
+        log("group on panel show -> cat=$target remember=$rememberOn group=$groupOn file=${readGroupFileRaw(ctx)}")
+    }
+
+    /** 诊断用：读偏好文件原始内容（不解析），读不到返回 null。 */
+    private fun readGroupFileRaw(ctx: Context?): String? {
+        return try {
+            filesCtx(ctx)?.openFileInput(GROUP_FILE)?.use { String(it.readBytes()) }?.trim()
+        } catch (_: Throwable) { null }
+    }
+
+    private val atCurrentAppMethod: java.lang.reflect.Method? = try {
+        Class.forName("android.app.ActivityThread").getMethod("currentApplication")
+    } catch (_: Throwable) { null }
+
+    /** 取输入法进程自己的 Application context 作文件存取目录。
+     *  绝不能用面板 contentView 的 context——面板要加载 phrase 资源，其 context 是 phrase 包的
+     *  context（files 落 /data/user/0/com.miui.phrase/ 下，当前进程跨包写入 ENOENT 失败，实测
+     *  豆包输入法，置顶持久化同坑同解）。优先 ActivityThread.currentApplication()，取不到退回 [fallback]。 */
+    private fun filesCtx(fallback: Context?): Context? {
+        try {
+            val app = atCurrentAppMethod?.invoke(null)
+            if (app is Context) return app
+        } catch (_: Throwable) {}
+        return fallback
     }
 
     /** 读回 [switchGroupCategory] 记下的上次分组（GROUP_FILE）；无效 / 读不到时回「全部」。 */
     private fun loadGroupPref(ctx: Context?): Int {
         return try {
-            val raw = ctx?.openFileInput(GROUP_FILE)?.use { String(it.readBytes()) }
+            val raw = filesCtx(ctx)?.openFileInput(GROUP_FILE)?.use { String(it.readBytes()) }
             when (raw?.trim()?.toIntOrNull()) {
-                CAT_LINK, CAT_IMAGE, CAT_TEXT -> raw.trim().toInt()
+                CAT_LINK, CAT_TEXT, CAT_IMGTEXT, CAT_OTHER, CAT_FILE, CAT_AV, CAT_APK, CAT_MULTI -> raw.trim().toInt()
                 else -> CAT_ALL
             }
         } catch (t: Throwable) {
@@ -2023,7 +2063,7 @@ object CrossDeviceClipboardHook {
 
     private fun saveGroupPref(ctx: Context?) {
         try {
-            ctx?.openFileOutput(GROUP_FILE, Context.MODE_PRIVATE)?.use { it.write(sActiveCat.toString().toByteArray()) }
+            filesCtx(ctx)?.openFileOutput(GROUP_FILE, Context.MODE_PRIVATE)?.use { it.write(sActiveCat.toString().toByteArray()) }
         } catch (t: Throwable) {
             log("group pref save failed - $t")
         }
@@ -2057,35 +2097,32 @@ object CrossDeviceClipboardHook {
         } catch (_: Throwable) { null }
     }
 
-    /** 诊断用：取条目文本前若干字符（去空白），便于在日志里看清分类依据。 */
-    private fun shortText(item: Any?): String {
-        val t = itemText(item) ?: return "∅"
-        val s = t.replace("\\s+".toRegex(), " ").trim()
-        return if (s.length > 16) s.substring(0, 16) + "…" else s
-    }
-
-    // v2.0.5：链接判定从「整段必须纯 URL」放宽为「文本中包含 URL 即归链接」，
-    // 解决带标题/描述的链接条目（如「点击查看 https://...」）被误判为文字、跑到文字分组的问题。
-    private val URL_RE = java.util.regex.Pattern.compile("https?://[^\\s]+|www\\.[^\\s]+")
-
-    private fun hasUrl(s: String): Boolean = URL_RE.matcher(s).find()
-
-    /** 取 phrase 条目的类型（ClipboardContentModel.getType()）：2=淘宝链接 / 3=URL 链接（均显示链接图标），
-     *  11/12/13=图片、10=纯文本（无图标）。读不到返回 -1。 */
+    /** 取 phrase 条目的类型（ClipboardContentModel.getType()），完整派发表：
+     *  2=淘宝 / 3=URL（链接图标）、10=纯文本、11=纯图、12/13=图文、14=其它文件、15=Excel、
+     *  16=zip、17=Word、18=PDF、19=PPT、20=音频、21=视频、22=txt、23=apk安装包、24=多文件。
+     *  0/读不到=未过派发（云端直出模型）。 */
     private fun itemType(item: Any?): Int {
         if (item == null) return -1
         return (Reflect.callMethod(item, "getType") as? Number)?.toInt() ?: -1
     }
 
     private fun classifyItem(item: Any?): Int {
-        // v2.0.5：链接判定以 phrase 的「链接图标」为准——条目右侧显示链接图标的（type=2 淘宝 / 3 URL）
-        // 一律归链接。phrase 在 checkClipboardUrlAndTaoBao 用 getClipLinkUrl/findUrl(Linkify) 判 URL，
-        // 命中即置 type=2/3 并显示链接图标（适配器 typeLayout 仅这两类可见），故以 getType() 与图标完全对齐。
-        // 这样 wwwbaidu.com 这类无 www. 前缀的域名（Linkify 认、旧 www. 正则漏判为文字）也能正确归链接。
-        if (itemType(item) == 2 || itemType(item) == 3) return CAT_LINK
-        if (itemHasImage(item)) return CAT_IMAGE
-        val t = itemText(item)
-        if (t != null && hasUrl(t)) return CAT_LINK
+        // 按 phrase 类型派发逻辑归组（与 getType()/面板图标完全对齐）：
+        //   2/3→链接、10→文本、11/12/13→图文、14→其他、15-19/22→文件、20/21→音视频、23→安装包、24→多文件。
+        //   链接判定只认 type 2/3（面板显示链接图标的条目）——文本里含 URL 但面板没给链接图标的
+        //   （HTML 代码、带链接的长文等）一律不归链接，避免正则误抓。
+        //   type 0/未知（云端直出模型未过派发）走图片/文本兜底。
+        when (itemType(item)) {
+            2, 3 -> return CAT_LINK
+            10 -> return CAT_TEXT
+            11, 12, 13 -> return CAT_IMGTEXT
+            14 -> return CAT_OTHER
+            15, 16, 17, 18, 19, 22 -> return CAT_FILE
+            20, 21 -> return CAT_AV
+            23 -> return CAT_APK
+            24 -> return CAT_MULTI
+        }
+        if (itemHasImage(item)) return CAT_IMGTEXT
         return CAT_TEXT
     }
 
@@ -2098,10 +2135,6 @@ object CrossDeviceClipboardHook {
             // 故改为并集：master 只增不减，永远保留其它分组曾出现过的条目；被删条目由 sWipedKeys
             // 在显示层拦截，不会误显示，cycleGroupCategory 也按 sWipedKeys 排除已删项。
             sMasterList = unionMaster(sMasterList, list)
-            val mm = sMasterList
-            val mT = mm?.count { classifyItem(it) == CAT_TEXT } ?: 0
-            val mL = mm?.count { classifyItem(it) == CAT_LINK } ?: 0
-            val mI = mm?.count { classifyItem(it) == CAT_IMAGE } ?: 0
             filterListByGroup(list)
         } catch (t: Throwable) {
             // 不可写列表（如 Arrays$ArrayList）：过滤静默跳过，列表保持全量，不影响面板显示。
@@ -2163,15 +2196,10 @@ object CrossDeviceClipboardHook {
             for (i in full.indices) sGroupVisibleIdx.add(i)
             return
         }
-        val sb = StringBuilder()
         for (i in full.indices) {
             val e = full[i] ?: continue
             if (isEntryBlocked(e)) continue
-            val c = classifyItem(e)
-            val cc = when (c) { CAT_LINK -> "L"; CAT_IMAGE -> "I"; CAT_TEXT -> "T"; else -> "?" }
-            val k = entryKey(e) ?: "?"
-            sb.append("[$i$cc=$k=${shortText(e)}]")
-            if (c == sActiveCat) sGroupVisibleIdx.add(i)
+            if (classifyItem(e) == sActiveCat) sGroupVisibleIdx.add(i)
         }
     }
 
@@ -2549,7 +2577,7 @@ object CrossDeviceClipboardHook {
     }
 
     /** 分组 UI：把「剪贴板」标签文字直接改成当前分组名（全部→剪贴板），并盖一层透明覆盖层实现双击循环切换
-     *  （文字→链接→图片→全部）。不再需要右上角额外小芯片。 */
+     *  （链接→文本→图文→其他→文件→音视频→安装包→多文件→全部）。不再需要右上角额外小芯片。 */
     private fun injectGroupChip(popup: Any) {
         val pw = popup as? PopupWindow ?: return
         val content = pw.contentView as? ViewGroup ?: return
@@ -2723,46 +2751,33 @@ object CrossDeviceClipboardHook {
         }
     }
 
-    /** 双击循环：只在「有条目」的分组间切换——没图片不轮到图片、没链接不轮到链接、没文字不轮到文字；
-     *  剪贴板无任何内容时不允许切换。顺序：文字 → 链接 → 图片 → 全部 → 文字（跳过空分组）。
+    /** 双击循环：只在「有条目」的分组间切换（跳过空分组），剪贴板无任何内容时不允许切换。
+     *  顺序：链接 → 文本 → 图文 → 其他 → 文件 → 音视频 → 安装包 → 多文件 → 全部（循环）。
      *  CAT_ALL（全部）在有内容时始终可回。 */
     private fun cycleGroupCategory(ctx: Context?) {
         if (!isClipboardPageActive()) { log("group cycle blocked: not in clipboard page"); return }
-        // v2.0.5 修复（「分组内删除后轮询丢图片组」根因）：
-        // 可用性判定不能只看 master(DIAGGRP buildCapture)。实测在文字/链接分组里删掉一条后，
-        // 输入法重建内部列表，重建产物往往不再带图片条目；master 只在全量查库路径并集更新，
-        // 于是图片组被判定为空、双击直接跳过 —— 只能在文字/链接/全部之间轮询，关面板重开
-        // （重新全量捕获）才恢复。改为「展示快照 ∪ master」双源判定：任一源认为有内容
-        // 就允许切过去，切过去后再用实际渲染结果校验（见下方 blank 回滚）。
+        // 可用性判定用「展示快照 ∪ master」双源：任一源认为有内容就允许切过去，
+        // 切过去后再用实际渲染结果校验（见下方 blank 回滚）——只看 master 会在
+        // 分组内删除后被重建列表误导整组为空（v2.0.5 修复的「轮询丢组」根因）。
         val keys = java.util.HashSet<String?>()
-        var hasText = false
-        var hasLink = false
-        var hasImage = false
+        val has = BooleanArray(9)
         fun tally(e: Any?) {
             if (e == null) return
             if (isEntryBlocked(e)) return     // 已删条目（屏蔽表拦截）不计入分类
             val k = entryKey(e) ?: return
             if (!keys.add(k)) return          // 同一内容在快照/master 各存一份，只算一次
-            when (classifyItem(e)) {
-                CAT_TEXT -> hasText = true
-                CAT_LINK -> hasLink = true
-                CAT_IMAGE -> hasImage = true
-            }
+            val c = classifyItem(e)
+            if (c in has.indices) has[c] = true
         }
         synchronized(sGroupFullSnapshot) { for (e in sGroupFullSnapshot) tally(e) }
         sMasterList?.let { for (e in it) tally(e) }
-        if (!hasText && !hasLink && !hasImage) {
+        if (!has.any { it }) {
             log("group cycle blocked: clipboard empty")
             return
         }
         // 固定轮询顺序，跳过空分组
-        val order = intArrayOf(CAT_TEXT, CAT_LINK, CAT_IMAGE, CAT_ALL)
-        fun available(cat: Int): Boolean = when (cat) {
-            CAT_TEXT -> hasText
-            CAT_LINK -> hasLink
-            CAT_IMAGE -> hasImage
-            else -> true // CAT_ALL 有内容时始终可回
-        }
+        val order = intArrayOf(CAT_LINK, CAT_TEXT, CAT_IMGTEXT, CAT_OTHER, CAT_FILE, CAT_AV, CAT_APK, CAT_MULTI, CAT_ALL)
+        fun available(cat: Int): Boolean = if (cat == CAT_ALL) true else has[cat] // CAT_ALL 有内容时始终可回
         val curIdx = order.indexOf(sActiveCat).let { if (it < 0) order.size - 1 else it }
         val prev = sActiveCat
         for (step in 1..order.size) {
@@ -2772,11 +2787,12 @@ object CrossDeviceClipboardHook {
             // 判定有内容却一行都渲染不出来（快照里确实没有该组条目）——别停在这个空白组，
             // 回滚后继续找下一个可用分组。
             if (next == CAT_ALL || sGroupVisibleIdx.isNotEmpty()) {
-                log("group cycle: $prev -> $next (text=$hasText link=$hasLink image=$hasImage) visible=${sGroupVisibleIdx.size}")
+                log("group cycle: $prev -> $next (has=${has.joinToString("") { if (it) "1" else "0" }}) visible=${sGroupVisibleIdx.size}")
                 return
             }
             log("group cycle skip blank render: $next (snapshot has no such row)")
             sActiveCat = prev
+            saveGroupPref(ctx) // 回滚后同步偏好文件，避免文件记着空白组
         }
         // 全部落空：回到原分组，保持 sActiveCat 与已保存偏好一致
         switchGroupCategory(prev, ctx)
