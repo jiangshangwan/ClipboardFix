@@ -4,7 +4,7 @@
 <br>
 <div align="center">
 <h1>HyperClipFix</h1>
-<p>🛠️ 修复第三方输入法在HyperOS无法使用系统剪贴板及全面屏键盘优化的问题</p>
+<p>🔒 解锁第三方输入法在 HyperOS 无法访问系统剪贴板、使用全面屏键盘优化的限制，并提供额外剪贴板增强功能</p>
 
 <a href="https://www.android.com/"><img src="https://img.shields.io/badge/Android-16--17-brightgreen?style=flat&logo=android&logoColor=white"></a> 
 <a href="https://hyperos.mi.com/"><img src="https://img.shields.io/badge/HyperOS-OS3--OS4-purple?style=flat&logo=xiaomi&logoColor=white"></a> 
