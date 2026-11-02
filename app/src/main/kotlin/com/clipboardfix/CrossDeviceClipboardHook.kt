@@ -468,7 +468,6 @@ object CrossDeviceClipboardHook {
                                 @Suppress("UNCHECKED_CAST")
                                 val full = ArrayList(r as List<Any?>)
                                 sMasterList = unionMaster(sMasterList, full)
-                                log("DIAGGRP buildCapture: full=${full.size} activeCat=$sActiveCat master=${sMasterList?.size}")
                             }
                             r
                         }
@@ -518,7 +517,6 @@ object CrossDeviceClipboardHook {
                                             sGroupFullSnapshot.addAll(d)
                                             recomputeGroupVisible()
                                         }
-                                        log("DIAGGRP groupSnap: phrase=${phraseList.size} display=${d.size} visible=${sGroupVisibleIdx.size} cat=$sActiveCat")
                                     }
                                     display = d
                                 }
@@ -559,7 +557,6 @@ object CrossDeviceClipboardHook {
                 val pv = Reflect.findClassIfExists(CLIP_POPUP_VIEW, cl)
                 if (pv == null) {
                     // 诊断：类都没找到就得换定位方式（类名随 phrase 版本可能变）
-                    log("DIAG delete hook: popup class NOT found - $CLIP_POPUP_VIEW")
                 } else {
                     var hooked = false
                     for (m in pv.declaredMethods) {
@@ -572,7 +569,6 @@ object CrossDeviceClipboardHook {
                                 try {
                                     val model = chain.getArg(0)
                                     val pos = chain.getArg(1) as? Int ?: 0
-                                    log("DIAG delete called: pos=$pos " + diagEntry(model) + " | activeCat=$sActiveCat visibleSize=${sGroupVisibleIdx.size}")
                                     // v2.0.5：分组视图下「单条删除」已重新启用，但必须走位置映射——
                                     // phrase 的 ViewHolder 给的是「显示位置」p，其原生删除按 p 在完整列表里取模型
                                     // （mClipboardList.get(p)），分组态下显示位置≠完整下标 → 会删错条目/删到别的分组。
@@ -596,7 +592,6 @@ object CrossDeviceClipboardHook {
                                             synchronized(sGroupFullSnapshot) { recomputeGroupVisible() }
                                             val correctIdx = if (pos in 0 until sGroupVisibleIdx.size) sGroupVisibleIdx[pos] else pos
                                             val correctModel = if (correctIdx in 0 until sGroupFullSnapshot.size) sGroupFullSnapshot[correctIdx] else model
-                                            log("DIAG delete remap: pos=$pos -> idx=$correctIdx " + diagEntry(correctModel) + " | visible=$sGroupVisibleIdx")
                                             marked = correctModel
                                             modArgs = arrayOf<Any?>(correctModel, correctIdx)
                                         } else {
@@ -624,7 +619,6 @@ object CrossDeviceClipboardHook {
                                             if (vanished.size == 1) {
                                                 val truth = vanished[0]
                                                 markDeletedEntry(truth)
-                                                log("DIAG delete truth: " + diagEntry(truth))
                                                 val tk = entryKey(truth)
                                                 purgeKey = tk
                                                 val mk = entryKey(marked)
@@ -633,10 +627,8 @@ object CrossDeviceClipboardHook {
                                                     // 否则这条内容此后会被当成「已删」持续吞掉。
                                                     sWipedKeys.remove(mk)
                                                     persistDeletedKeys()
-                                                    log("DIAG delete unmark wrong: $mk")
                                                 }
                                             } else {
-                                                log("DIAG delete truth: vanished=${vanished.size} (skip truth-mark)")
                                             }
                                         }
                                         // 2) 再按适配器真实列表重建快照（严格等长同序，见函数注释）；
@@ -647,7 +639,6 @@ object CrossDeviceClipboardHook {
                                             if (purgeKey == null) null else setOf(purgeKey)
                                         )
                                         notifyAdapter()
-                                        log("DIAGGRP delete rebind: visible=${sGroupVisibleIdx.size}")
                                         // 本地库持久化：phrase 原生删除往往只改内存列表、不落本地库，
                                         // 下次查库（切分组/周期同步/关面板重开）会把已删条目从库里捞回 → 复活。
                                         // 这里把「当前列表去掉所有已屏蔽条目」覆盖式写回本地库（与一键清空同机制），
@@ -671,7 +662,6 @@ object CrossDeviceClipboardHook {
                                                             break
                                                         }
                                                     }
-                                                    log("DIAGGRP delete persist: dbList=${cleaned.size} mData=${cur.size} (removed=${cur.size - cleaned.size})")
                                                 }
                                             }
                                         } catch (t: Throwable) { log("delete persist failed - $t") }
@@ -691,7 +681,6 @@ object CrossDeviceClipboardHook {
                         }
                     }
                     if (!hooked) {
-                        log("DIAG delete hook: deleteClipboardListItemAndTrack NOT found on popup")
                     }
                     // 补充捕获点：deleteSavedFile(model) 同样带模型对象（图片条目删文件也走它）
                     for (m in pv.declaredMethods) {
@@ -699,7 +688,6 @@ object CrossDeviceClipboardHook {
                             m.isAccessible = true
                             XposedInit.hook(m) { chain ->
                                 try {
-                                    log("DIAG deleteSavedFile: " + diagEntry(chain.getArg(0)))
                                     markDeletedEntry(chain.getArg(0))
                                 } catch (t: Throwable) {
                                     log("deleteSavedFile capture failed - $t")
@@ -755,7 +743,6 @@ object CrossDeviceClipboardHook {
                                         } else emptyList()
                                         if (!dbOk) {
                                             // 读不到本地库全量就不敢覆盖写库（会误清），降级为原生全清（与无模块一致）。
-                                            log("DIAGGRP partialClear: db unreadable, fall back to native clear")
                                             chain.proceed()
                                             return@hook null
                                         }
@@ -810,8 +797,6 @@ object CrossDeviceClipboardHook {
                                         //    表现为「清空后所有分组空白、需重开才恢复」。当前分组已空由 RecyclerView
                                         //    0 行呈现即可，其它分组切过去 getItemCount 返回正确数量即显示内容，
                                         //    与重开面板行为一致，且不会触发闪退。
-                                        log("DIAGGRP partialClear: skip global emptyView sync (would stick across groups)")
-                                        log("DIAGGRP partialClear: cat=$cat dbList=${dbList.size} removed=${removed.size} keep=${keep.size} (intercepted)")
                                         return@hook null
                                     }
                                 } catch (t: Throwable) {
@@ -1087,11 +1072,8 @@ object CrossDeviceClipboardHook {
         var added = 0
         var blocked = 0
         if (cache.isNotEmpty()) {
-            log("DIAG prepend: cache=" + cache.size + " blockedKeys=" + sWipedKeys.size)
         }
         for (c in cache) {
-            log("DIAG cache entry: " + diagEntry(c)
-                    + " wt=" + (entryKey(c)?.let { sWipedKeys[it] } ?: "none"))
             // v4.14：精确跳过「已被一键清空」的条目（按 entryKey 屏蔽），防复活。
             // 不再按时间一刀切——正常云端/新条目（entryKey 不同）照常实时显示，
             // 修 v4.13 回归（云端条目面板开着时不显示、关面板重开才有）。
@@ -1158,9 +1140,7 @@ object CrossDeviceClipboardHook {
      */
     private fun dropBlockedEntries(list: MutableList<Any?>): Boolean {
         ensureDeletedKeysLoaded()
-        log("DIAG drop: list=" + list.size + " blockedKeys=" + sWipedKeys.size)
         for (i in 0 until minOf(list.size, 5)) {
-            log("DIAG list[$i]: " + diagEntry(list[i]))
         }
         if (sWipedKeys.isEmpty()) {
             return false
@@ -1175,14 +1155,12 @@ object CrossDeviceClipboardHook {
                 if (k.startsWith("c:")) {
                     it.remove()
                     removed++
-                    log("DIAGGRP dropBlocked: cloud content blocked key=$k")
                     continue
                 }
                 val t = entryTime(e) ?: 0L
                 if (t <= wt) {
                     it.remove()
                     removed++
-                    log("DIAGGRP dropBlocked: key=$k time=$t wiped=$wt")
                 } else {
                     sWipedKeys.remove(k)
                     log("wipe block lifted (display): $k (t=$t > wiped t=$wt)")
@@ -1254,7 +1232,6 @@ object CrossDeviceClipboardHook {
                 val fp = contentFingerprint(e)
                 if (!fp.isNullOrEmpty()) {
                     val dev = stringField(e, "getDeviceId") ?: ""
-                    log("DIAGGRP entryKey: cloud text -> c-key dev=$dev len=${fp.length}")
                     return "c:" + dev + ":" + if (fp.length <= 256) fp else (fp.length.toString(36) + ":" + fp.hashCode().toString(36))
                 }
             }
@@ -1727,7 +1704,6 @@ object CrossDeviceClipboardHook {
         ensureDeletedKeysLoaded()
         val k = entryKey(e)
         val t = entryTime(e) ?: 0L
-        log("DIAGGRP markDeleted: key=$k time=$t")
         if (k == null) {
             log("single delete: entryKey unresolved, skip - " + diagEntry(e))
             return
@@ -1957,6 +1933,13 @@ object CrossDeviceClipboardHook {
         if (idx < 0 || idx >= full.size) return null
         return full[idx]
     }
+
+    /** 同 [currentDisplayItem]，但调用前先按当前快照+分组重算可见下标，避免手势时刻下标陈旧（与删除钩子同策略）。 */
+    internal fun currentDisplayItemFresh(adapterPos: Int): Any? {
+        synchronized(sGroupFullSnapshot) { recomputeGroupVisible() }
+        return currentDisplayItem(adapterPos)
+    }
+
     @Volatile
     private var sMasterList: MutableList<Any?>? = null
 
@@ -2091,7 +2074,6 @@ object CrossDeviceClipboardHook {
             val mT = mm?.count { classifyItem(it) == CAT_TEXT } ?: 0
             val mL = mm?.count { classifyItem(it) == CAT_LINK } ?: 0
             val mI = mm?.count { classifyItem(it) == CAT_IMAGE } ?: 0
-            log("DIAGGRP applyGroupFilter: incoming=${list.size} master=${mm?.size} activeCat=$sActiveCat master(T/L/I)=$mT/$mL/$mI")
             filterListByGroup(list)
         } catch (t: Throwable) {
             // 不可写列表（如 Arrays$ArrayList）：过滤静默跳过，列表保持全量，不影响面板显示。
@@ -2122,7 +2104,6 @@ object CrossDeviceClipboardHook {
         val wt = sWipedKeys[k] ?: return false
         if (k.startsWith("c:")) {
             // 云端内容指纹键：记过即永久拦（云端会重复推送同内容，time 已不可用）
-            log("DIAGGRP isEntryBlocked: cloud content blocked key=$k")
             return true
         }
         val t = entryTime(e) ?: 0L
@@ -2152,7 +2133,6 @@ object CrossDeviceClipboardHook {
         val full = sGroupFullSnapshot
         if (sActiveCat == CAT_ALL) {
             for (i in full.indices) sGroupVisibleIdx.add(i)
-            log("DIAGGRP recompute: cat=ALL snap=${full.size} visible=${full.size}")
             return
         }
         val sb = StringBuilder()
@@ -2165,7 +2145,6 @@ object CrossDeviceClipboardHook {
             sb.append("[$i$cc=$k=${shortText(e)}]")
             if (c == sActiveCat) sGroupVisibleIdx.add(i)
         }
-        log("DIAGGRP recompute: cat=$sActiveCat snap=${full.size} visible=${sGroupVisibleIdx.size} $sb")
     }
 
     /**
@@ -2183,7 +2162,6 @@ object CrossDeviceClipboardHook {
             }
             recomputeGroupVisible()
         }
-        log("DIAGGRP afterDelete: snapshot=${sGroupFullSnapshot.size} visible=${sGroupVisibleIdx.size}")
     }
 
     /** 通知适配器重绘（分组切换后刷新展示层过滤结果）。 */
@@ -2267,7 +2245,6 @@ object CrossDeviceClipboardHook {
             if (actual != null) sGroupFullSnapshot.addAll(actual)
             recomputeGroupVisible()
         }
-        log("DIAGGRP resync: snap=${sGroupFullSnapshot.size} actual=${actual?.size} purged=$purged visible=${sGroupVisibleIdx.size}")
     }
 
     /**
@@ -2287,7 +2264,6 @@ object CrossDeviceClipboardHook {
                     val actual = adapterDataListSize(chain.thisObject)
                     val n = sGroupVisibleIdx.size
                     val out = if (actual in 0 until n) actual else n
-                    log("DIAGGRP getItemCount -> $out (visible=$n actual=$actual)")
                     return@hook out
                 }
                 chain.proceed()
@@ -2303,7 +2279,6 @@ object CrossDeviceClipboardHook {
                         val pos = chain.getArg(0) as? Int ?: 0
                         val idx = if (pos in 0 until sGroupVisibleIdx.size) sGroupVisibleIdx[pos] else -1
                         if (idx >= 0 && idx < sGroupFullSnapshot.size) {
-                            log("DIAGGRP getItem($pos) -> snap[$idx]")
                             return@hook sGroupFullSnapshot[idx]
                         }
                     }
@@ -2331,7 +2306,6 @@ object CrossDeviceClipboardHook {
                                 sBindRemapGuard.remove()
                             }
                         }
-                        log("DIAGGRP getItemViewType fallback pos=$pos idx=$idx actual=$actual")
                     }
                     chain.proceed()
                 }
@@ -2365,7 +2339,6 @@ object CrossDeviceClipboardHook {
             // mData.get(完整下标) = 正确条目。getItemViewType/getItemId 也走同一映射保持一致。
             // 点击删除仍走 getAdapterPosition（显示位置），由 delete 钩子的 sGroupVisibleIdx 映射处理。
             try {
-                log("DIAGGRP adapter methods: " + cls.declaredMethods.joinToString(",") { it.name })
             } catch (_: Throwable) {}
             for (m in cls.declaredMethods) {
                 if (m.name == "onBindViewHolder" && m.parameterCount >= 2) {
@@ -2386,7 +2359,6 @@ object CrossDeviceClipboardHook {
                                 // 失同步防御：换位下标必须落在 phrase 实际列表内，否则 mData.get 越界。
                                 val actual = adapterDataListSize(chain.thisObject)
                                 if (idx in 0 until sGroupFullSnapshot.size && (actual < 0 || idx < actual)) {
-                                    log("DIAGGRP onBind pos=$pos -> idx=$idx bind=${diagEntry(adapterElementAt(chain.thisObject, idx))}")
                                     // chain.getArgs() 是不可变 List，直接改下标会抛
                                     // UnsupportedOperationException（换位静默失败的根因）——
                                     // 必须复制成数组再改（同 loadVideoOrImage 钩子范式）。
@@ -2394,7 +2366,6 @@ object CrossDeviceClipboardHook {
                                     arr[1] = idx
                                     mod = arr
                                 } else {
-                                    log("DIAGGRP onBind fallback pos=$pos idx=$idx actual=$actual")
                                 }
                             }
                         } catch (t: Throwable) { log("onBind swap failed - $t") }
@@ -2423,7 +2394,6 @@ object CrossDeviceClipboardHook {
                             try {
                                 if (ModulePrefs.isClipboardGroupEnabled()) {
                                     resyncGroupSnapshotFromAdapter(chain.thisObject)
-                                    log("DIAGGRP resync after $clearName")
                                 }
                             } catch (t: Throwable) { log("clear resync failed - $t") }
                             r
@@ -2508,7 +2478,6 @@ object CrossDeviceClipboardHook {
             merged.addAll(missing)
             method.isAccessible = true
             method.invoke(adapter, merged)
-            log("DIAGGRP restoreMissing: cat=$cat rows=${missing.size} adapter=${merged.size}")
             return missing.size
         } catch (t: Throwable) {
             log("restoreMissingRows failed - $t")

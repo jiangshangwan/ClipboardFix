@@ -1209,11 +1209,9 @@ object ClipboardPinHook {
 
     /** 置顶 / 取消置顶当前手势所在条目，然后刷新面板。 */
     private fun togglePinAt(swipe: Any) {
-        // v2.0.5：分组视图下禁用置顶（删除/置顶只允许在「全部」分组使用），避免分组态置顶的排序/快照复杂度。
-        if (ModulePrefs.isClipboardGroupEnabled() && CrossDeviceClipboardHook.currentGroupCat() != CrossDeviceClipboardHook.CAT_ALL) {
-            log("pin disabled in category view (cat=" + CrossDeviceClipboardHook.currentGroupCat() + ")")
-            return
-        }
+        // v2.0.5：置顶现已支持分组视图——取行 time 走分组感知的 currentDisplayItemFresh 映射，
+        // 排序/快照由 ensurePinnedFirst（在完整列表上把置顶项移到 index 0）统一处理；
+        // 分组过滤保持条目在原分类内的相对顺序，故置顶项在其所属分类内置顶、其余分类不受影响。
         val time = timeOfRow(swipe)
         if (time == 0L) {
             log("toggle pin: row time unresolved (swipe="
@@ -1380,18 +1378,16 @@ object ClipboardPinHook {
                         + "mapSize=" + sBindMap.size)
                 return 0L
             }
-            val list = sDisplayListRef.get()
-            log("timeOfRow: pos=" + p + " list="
-                    + (if (list == null) "null"
-                    else list.size.toString() + "x" + (if (list.isEmpty()) "?"
-                    else list[0]?.javaClass?.simpleName))
-                    + " snapshot=" + sRowTimes.size)
-            if (list != null && p >= 0 && p < list.size) {
-                val t = timeOfItem(list[p])
+            // 分组态下适配器位置是「过滤后可见位置」，必须经分组映射取真实模型；
+            // 直接用 sDisplayListRef[pos]（完整列表）会读到错误条目、置顶到错误 time。
+            val item = CrossDeviceClipboardHook.currentDisplayItemFresh(p)
+            if (item != null) {
+                val t = timeOfItem(item)
                 if (t != 0L) {
                     return t
                 }
             }
+            // 兜底：最近一次查询快照（同样按适配器位置）
             val times = sRowTimes
             if (p >= 0 && p < times.size) {
                 return times[p]
