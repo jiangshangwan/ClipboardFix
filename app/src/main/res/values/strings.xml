@@ -53,6 +53,8 @@
     <string name="sw_clipboard_pin_sub">面板内右滑可对内容置顶</string>
     <string name="sw_clipboard_group">开启剪贴板分组功能</string>
     <string name="sw_clipboard_group_sub">双击⌈剪贴板⌋标签开启分组功能</string>
+    <string name="sw_clipboard_group_remember">记忆剪贴板分组位置</string>
+    <string name="sw_clipboard_group_remember_sub">记忆关闭面板前的分组位置</string>
 
     <!-- 主开关关闭确认弹窗 -->
     <string name="dialog_ime_unlock_title">全面屏键盘优化</string>

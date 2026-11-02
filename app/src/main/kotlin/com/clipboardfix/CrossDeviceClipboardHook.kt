@@ -1984,15 +1984,19 @@ object CrossDeviceClipboardHook {
         else -> "剪贴板"
     }
 
-    /** 每次打开面板都回到「全部」分组（v2.0.5 需求：关闭面板再打开，默认展示全部内容）。
+    /** 面板打开时应用分组位置：默认「每次打开都回全部」。
      *
-     *  <p>同时把偏好文件写回「全部」——否则进程重启后若还有别处读偏好，又会把上次的分组复原。
+     *  <p>「记忆剪贴板分组位置」开启且分组功能开启时，改为恢复 [switchGroupCategory] 记下的
+     *  上次分组；否则（记忆关闭 / 分组功能关闭）强制回到「全部」。偏好文件随之写回目标分类，
+     *  重启后读偏好不会误复原。
      *  重置发生在 showAtLocation 钩子里、先于列表灌入执行，因此随后的
-     *  recompute（setClipboardList 钩子内）天然按「全部」计算可见下标，不会闪一下旧分组。
+     *  recompute（setClipboardList 钩子内）按目标分类计算可见下标，不会闪一下旧分组。
      */
     private fun resetGroupToAll(ctx: Context?) {
-        val changed = sActiveCat != CAT_ALL
-        sActiveCat = CAT_ALL
+        val remember = ModulePrefs.isGroupRememberEnabled() && ModulePrefs.isClipboardGroupEnabled()
+        val target = if (remember) loadGroupPref(ctx) else CAT_ALL
+        val changed = sActiveCat != target
+        sActiveCat = target
         saveGroupPref(ctx)
         if (!changed) return
         try {
@@ -2001,7 +2005,20 @@ object CrossDeviceClipboardHook {
         } catch (t: Throwable) {
             log("resetGroupToAll ui failed - $t")
         }
-        log("group reset -> ALL on panel show")
+        log("group on panel show -> cat=$target (remember=$remember)")
+    }
+
+    /** 读回 [switchGroupCategory] 记下的上次分组（GROUP_FILE）；无效 / 读不到时回「全部」。 */
+    private fun loadGroupPref(ctx: Context?): Int {
+        return try {
+            val raw = ctx?.openFileInput(GROUP_FILE)?.use { String(it.readBytes()) }
+            when (raw?.trim()?.toIntOrNull()) {
+                CAT_LINK, CAT_IMAGE, CAT_TEXT -> raw.trim().toInt()
+                else -> CAT_ALL
+            }
+        } catch (t: Throwable) {
+            CAT_ALL
+        }
     }
 
     private fun saveGroupPref(ctx: Context?) {

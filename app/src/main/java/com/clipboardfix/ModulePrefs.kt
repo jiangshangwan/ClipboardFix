@@ -39,12 +39,16 @@ object ModulePrefs {
     /** 剪贴板分组筛选（面板内「全部 / 链接 / 图片 / 文字」切换），默认关闭。 */
     const val KEY_CLIPBOARD_GROUP = "clipboard_group_filter"
 
+    /** 记忆剪贴板分组位置（关闭面板再打开停留上次分组），默认关闭。 */
+    const val KEY_CLIPBOARD_GROUP_REMEMBER = "clipboard_group_remember"
+
     const val DEFAULT_IME_UNLOCK = true
     const val DEFAULT_UNLIMIT_COUNT = false
     const val DEFAULT_UNLIMIT_TIME = false
     const val DEFAULT_PANEL_COLOR = false
     const val DEFAULT_CLIPBOARD_PIN = false
     const val DEFAULT_CLIPBOARD_GROUP = false
+    const val DEFAULT_CLIPBOARD_GROUP_REMEMBER = false
 
     /** hook 侧读取远程偏好；不可用时返回 null（调用方回退默认值）。 */
     private fun hookPrefs(): SharedPreferences? {
@@ -107,5 +111,12 @@ object ModulePrefs {
         val raw = p?.getBoolean(KEY_CLIPBOARD_GROUP, DEFAULT_CLIPBOARD_GROUP)
         android.util.Log.d("ClipboardFixGroup", "isClipboardGroupEnabled: prefsNull=${p == null} raw=$raw default=$DEFAULT_CLIPBOARD_GROUP")
         return p != null && p.getBoolean(KEY_CLIPBOARD_GROUP, DEFAULT_CLIPBOARD_GROUP)
+    }
+
+    /** 记忆剪贴板分组位置是否启用（hook 侧）。默认关闭。 */
+    @JvmStatic
+    fun isGroupRememberEnabled(): Boolean {
+        val p = hookPrefs()
+        return p != null && p.getBoolean(KEY_CLIPBOARD_GROUP_REMEMBER, DEFAULT_CLIPBOARD_GROUP_REMEMBER)
     }
 }

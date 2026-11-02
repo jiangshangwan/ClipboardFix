@@ -84,6 +84,7 @@ class AboutActivity : ComponentActivity() {
     val uiSwPanelColor: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_PANEL_COLOR)
     val uiSwClipboardPin: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_PIN)
     val uiSwClipboardGroup: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
+    val uiSwClipboardGroupRemember: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
     val uiIconHidden: MutableState<Boolean> = stateOf(false)
     val uiUpdateDisabled: MutableState<Boolean> = stateOf(false)
     /** 主题模式（跟随系统/浅色/深色）。 */
@@ -182,7 +183,7 @@ class AboutActivity : ComponentActivity() {
             BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE,
             DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
             Build.VERSION.INCREMENTAL, phraseVersion(), abiInfo(),
-            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiSwClipboardGroup, uiIconHidden,
+            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiSwClipboardGroup, uiSwClipboardGroupRemember, uiIconHidden,
             Runnable { doCheckUpdate() },
             Runnable { onStatusCardTap() },
             BoolAction { onToggleImeUnlock(it) },
@@ -191,6 +192,7 @@ class AboutActivity : ComponentActivity() {
             BoolAction { onTogglePanelColor(it) },
             BoolAction { onToggleClipboardPin(it) },
             BoolAction { onToggleClipboardGroup(it) },
+            BoolAction { onToggleClipboardGroupRemember(it) },
             BoolAction { onToggleHideIcon(it) },
             IntAction { onRebootOrReload(it) },
             Runnable { openUrl("https://www.coolapk.com/u/3019478") },
@@ -512,6 +514,7 @@ class AboutActivity : ComponentActivity() {
         uiSwPanelColor.value = prefs.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)
         uiSwClipboardPin.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
         uiSwClipboardGroup.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
+        uiSwClipboardGroupRemember.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
         uiUpdateDisabled.value = prefs.getBoolean(AppConfig.KEY_DISABLE_UPDATE, false)
         uiThemeMode.value = AppConfig.getThemeMode(this)
     }
@@ -547,6 +550,11 @@ class AboutActivity : ComponentActivity() {
         saveFeaturePrefs()
     }
 
+    private fun onToggleClipboardGroupRemember(checked: Boolean) {
+        uiSwClipboardGroupRemember.value = checked
+        saveFeaturePrefs()
+    }
+
     /**
      * 保存功能开关并推送到远程偏好。[showReloadToast] 控制是否弹「已更改，重载进程后生效」——
      * 主开关（启用全面屏键盘优化）由功能页按新设计弹「已启用，请重启设备 / 重启设备生效」，
@@ -560,6 +568,7 @@ class AboutActivity : ComponentActivity() {
             .putBoolean(ModulePrefs.KEY_PANEL_COLOR, uiSwPanelColor.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, uiSwClipboardPin.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, uiSwClipboardGroup.value)
+            .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, uiSwClipboardGroupRemember.value)
             .apply()
         pushFeaturePrefs()
         // 四个功能开关的 hook 全部装在 com.miui.phrase / 输入法进程内（进程启动时读开关），
@@ -584,6 +593,7 @@ class AboutActivity : ComponentActivity() {
         val panelColor = local.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)
         val clipboardPin = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
         val clipboardGroup = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
+        val clipboardGroupRemember = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
         Thread({
             try {
                 svc.getRemotePreferences(ModulePrefs.GROUP).edit()
@@ -593,6 +603,7 @@ class AboutActivity : ComponentActivity() {
                     .putBoolean(ModulePrefs.KEY_PANEL_COLOR, panelColor)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, clipboardPin)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, clipboardGroup)
+                    .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, clipboardGroupRemember)
                     .apply()
             } catch (t: Throwable) {
                 // 远程写失败不影响本地开关状态

@@ -42,12 +42,14 @@ fun FeaturePage(
     swPanelColor: Boolean,
     swClipboardPin: Boolean,
     swClipboardGroup: Boolean,
+    swClipboardGroupRemember: Boolean,
     onToggleImeUnlock: (Boolean) -> Unit,
     onToggleUnlimitCount: (Boolean) -> Unit,
     onToggleUnlimitTime: (Boolean) -> Unit,
     onTogglePanelColor: (Boolean) -> Unit,
     onToggleClipboardPin: (Boolean) -> Unit,
     onToggleClipboardGroup: (Boolean) -> Unit,
+    onToggleClipboardGroupRemember: (Boolean) -> Unit,
 ) {
     val colors = MiuixTheme.colorScheme
     // 玻璃折射源：整页内容登记进 layerBackdrop，供 Snackbar 的柔光玻璃面板实时折射
@@ -157,6 +159,16 @@ fun FeaturePage(
                         enabled = swImeUnlock,
                         onClickWhenDisabled = { showSnack(strEnableFirst) },
                     )
+                    // 【记忆剪贴板分组位置】：仅当「开启剪贴板分组功能」打开时才显示（子选项），默认关闭
+                    if (swImeUnlock && swClipboardGroup) {
+                        FeatureSwitch(
+                            checked = swClipboardGroupRemember,
+                            onCheckedChange = onToggleClipboardGroupRemember,
+                            title = stringResource(R.string.sw_clipboard_group_remember),
+                            summary = stringResource(R.string.sw_clipboard_group_remember_sub),
+                            enabled = true,
+                        )
+                    }
                 }
             }
         }

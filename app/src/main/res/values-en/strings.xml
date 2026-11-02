@@ -53,6 +53,8 @@
     <string name="sw_clipboard_pin_sub">Swipe right on an entry to pin it</string>
     <string name="sw_clipboard_group">Enable Clipboard Grouping</string>
     <string name="sw_clipboard_group_sub">Double-tap the ⌈Clipboard⌋ tab to enable grouping</string>
+    <string name="sw_clipboard_group_remember">Remember Clipboard Group Position</string>
+    <string name="sw_clipboard_group_remember_sub">Remembers the group position from before the panel was closed</string>
 
     <!-- Main switch off confirm dialog -->
     <string name="dialog_ime_unlock_title">Fullscreen Keyboard Optimization</string>
