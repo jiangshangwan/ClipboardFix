@@ -103,5 +103,8 @@
 <img width="420" height="420" alt="澎湃OS剪贴板补全_打赏二维码_1778172233017" src="https://github.com/user-attachments/assets/5ace0a63-6575-489c-843e-01c190c22832" />
 
 ## License
-
-[MIT](LICENSE)
+ This project is licensed under the GNU General Public License v3.0 or later.
+ 
+ Copyright (c) 2026 江上晚
+ 
+ See the full license text in [LICENSE](./LICENSE).
