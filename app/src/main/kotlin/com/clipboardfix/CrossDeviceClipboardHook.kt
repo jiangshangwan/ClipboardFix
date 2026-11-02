@@ -2070,8 +2070,19 @@ object CrossDeviceClipboardHook {
 
     private fun hasUrl(s: String): Boolean = URL_RE.matcher(s).find()
 
+    /** 取 phrase 条目的类型（ClipboardContentModel.getType()）：2=淘宝链接 / 3=URL 链接（均显示链接图标），
+     *  11/12/13=图片、10=纯文本（无图标）。读不到返回 -1。 */
+    private fun itemType(item: Any?): Int {
+        if (item == null) return -1
+        return (Reflect.callMethod(item, "getType") as? Number)?.toInt() ?: -1
+    }
+
     private fun classifyItem(item: Any?): Int {
-        // 图文混排（含图）归入图片；纯文字再判断是否包含 URL
+        // v2.0.5：链接判定以 phrase 的「链接图标」为准——条目右侧显示链接图标的（type=2 淘宝 / 3 URL）
+        // 一律归链接。phrase 在 checkClipboardUrlAndTaoBao 用 getClipLinkUrl/findUrl(Linkify) 判 URL，
+        // 命中即置 type=2/3 并显示链接图标（适配器 typeLayout 仅这两类可见），故以 getType() 与图标完全对齐。
+        // 这样 wwwbaidu.com 这类无 www. 前缀的域名（Linkify 认、旧 www. 正则漏判为文字）也能正确归链接。
+        if (itemType(item) == 2 || itemType(item) == 3) return CAT_LINK
         if (itemHasImage(item)) return CAT_IMAGE
         val t = itemText(item)
         if (t != null && hasUrl(t)) return CAT_LINK
