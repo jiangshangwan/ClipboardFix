@@ -22,7 +22,7 @@ android {
         buildConfigField "String", "BUILD_DATE", "\"${new Date().format('yyyy-MM-dd')}\""
         // 小米设备全部为 ARM 架构；剔除 x86 / x86_64 原生库（libdexkit.so），省约 817KB。
         // 只保留 arm64-v8a：再省约 253KB（armeabi-v7a 的 libdexkit.so + libandroidx.graphics.path.so）；
-        // 代价是 32 位老设备装不上（用户已确认「老设备不管」）。
+        // 代价是 32 位老设备装不上。
         ndk {
             abiFilters 'arm64-v8a'
         }
