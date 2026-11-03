@@ -299,8 +299,7 @@ fun AboutPage(
             item {
                 Column {
                     Spacer(Modifier.height(12.dp))
-                    // 版权声明行（2026-11-03 用户批准的文案冻结破例；旧短版权行已按用户要求移除，
-                    // 样式沿用旧行）：ModulePrefs.AUTHOR_SIGNATURE 的精简版（同源同属，全串含指纹版见该常量）。
+                    // 版权声明行。
                     Text(
                         text = "Copyright © 2026 江上晚 (jiangshangwan) · GPL-3.0",
                         fontSize = 13.sp,

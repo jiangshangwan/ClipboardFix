@@ -228,7 +228,7 @@ object CrossDeviceClipboardHook {
     fun initPanelMerge(param: PackageLoadedParam) {
         if (panelMergeInited) return
         panelMergeInited = true
-        // 版权横幅：每个进程一次，随日志输出版权标识（含隐蔽指纹 CF-JSW-2026）
+        // 版权横幅：每个进程一次，随日志输出版权标识。
         log("HyperClipFix v" + BuildConfig.VERSION_NAME + " · " + ModulePrefs.AUTHOR_SIGNATURE)
         try {
             hookPanelMergeViaPopup(param.defaultClassLoader)
