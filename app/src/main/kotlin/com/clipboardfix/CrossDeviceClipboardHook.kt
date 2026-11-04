@@ -721,6 +721,9 @@ object CrossDeviceClipboardHook {
                                         val mAll = objField(self, "mAllClipboardList") as? MutableList<Any?>
                                         // 反射取不到内存列表：降级为原生全清（与原行为一致，避免误清本地库）
                                         if (mAll == null) {
+                                            // v4.23：全清前先记账——此刻 adapter 显示列表尚在，
+                                            // 等 provider 层再捕获时列表已被原生清空、键记不到
+                                            clearRestoreCaches()
                                             chain.proceed()
                                             return@hook null
                                         }
@@ -750,6 +753,8 @@ object CrossDeviceClipboardHook {
                                         } else emptyList()
                                         if (!dbOk) {
                                             // 读不到本地库全量就不敢覆盖写库（会误清），降级为原生全清（与无模块一致）。
+                                            // v4.23：同样先记账再全清（键捕获须在 adapter 列表被清空前完成）
+                                            clearRestoreCaches()
                                             chain.proceed()
                                             return@hook null
                                         }
@@ -809,6 +814,12 @@ object CrossDeviceClipboardHook {
                                 } catch (t: Throwable) {
                                     log("partial clear hook error - $t")
                                 }
+                                // v4.23：走原生全清（全部分组 / 分组功能关 / 上方异常兜底）——
+                                // 先整批记账再放行。provider 层的 clearRestoreCaches 在原生清空
+                                // 执行后才跑，届时 adapter 列表已空、显示源键捕获不到（漏记
+                                // 本地条目 → 切分组经 sMasterList 补回复活的根因），必须在此
+                                // 列表仍完整时提前捕获；置顶条目由 mark 内按 time 豁免。
+                                clearRestoreCaches()
                                 chain.proceed()
                             }
                             log("OK: hooked popup clearClipBoardData confirm (partial-clear)")
@@ -1763,10 +1774,14 @@ object CrossDeviceClipboardHook {
         // v4.14：先把「当前被清空的这些条目」的 entryKey 记入 sWipedKeys，之后任何补回路径
         // 都不得再塞回它们。关键：此时刷新尚未跑，adapter 显示列表仍是清空前内容，正是要屏蔽的集合。
         // v4.16：值记该条目的 time（屏蔽「这一代副本」，不是永久屏蔽同一内容）。
+        // v4.23：置顶条目豁免记账——清空后由 restorePinnedAfterClear 写回，进了屏蔽表会被
+        // dropBlockedEntries 拦掉导致置顶失效；按 time 识别（与置顶自身的身份判定一致）。
+        val pinT = ClipboardPinHook.pinnedTime()
         val wiped = java.util.LinkedHashMap<String, Long>()
         fun mark(key: String?, e: Any?) {
             if (key == null) return
             val t = entryTime(e) ?: 0L
+            if (pinT != 0L && t == pinT) return
             val old = wiped[key]
             if (old == null || t > old) wiped[key] = t
         }
@@ -1791,6 +1806,17 @@ object CrossDeviceClipboardHook {
         for ((k, v) in sSeenCloud) {
             mark(k, v)
         }
+        // v4.23：sMasterList 是第三条复活源（restoreMissingRows 从它补「缺失」条目），
+        // 必须一起记账。尤其一键清空走原生全清时 adapter 列表可能已被先行清空、
+        // 显示源捕获不到东西，而 master 不随原生清空动、仍持有全量条目——只记显示
+        // 列表会漏掉全部本地条目（键从未入表），切分组即被当缺失补回（清空复活根因）。
+        // [CF-JSW-2611] 记账后 master 整体作废：全清场景下它已无保留价值，
+        // 留着只会继续充当补给源；后续面板重拉会经 unionMaster 从新列表重建。
+        sMasterList?.let { base ->
+            for (e in base) {
+                mark(entryKey(e), e)
+            }
+        }
         for ((k, t) in wiped) {
             val old = sWipedKeys[k]
             if (old == null || t > old) sWipedKeys[k] = t
@@ -1804,6 +1830,7 @@ object CrossDeviceClipboardHook {
         }
         sCloudCache = null
         sSeenCloud.clear()
+        sMasterList = null
         // v4.20：一键清空的屏蔽项同样落盘——否则换输入法（新进程）后已清空内容会复活
         persistDeletedKeys()
         log("panel wiped: caches cleared, blocked " + wiped.size + " keys (total " + sWipedKeys.size + ")")
@@ -2200,14 +2227,13 @@ object CrossDeviceClipboardHook {
     private fun recomputeGroupVisible() {
         sGroupVisibleIdx.clear()
         val full = sGroupFullSnapshot
-        if (sActiveCat == CAT_ALL) {
-            for (i in full.indices) sGroupVisibleIdx.add(i)
-            return
-        }
         for (i in full.indices) {
             val e = full[i] ?: continue
+            // v4.23：全部分组同样剔除屏蔽条目——与非 ALL 分支保持一致，避免
+            // 「切分组能看到、全部里看不到」的视图不对称；已删条目任何分组都不应出现。
             if (isEntryBlocked(e)) continue
-            if (classifyItem(e) == sActiveCat) sGroupVisibleIdx.add(i)
+            if (sActiveCat != CAT_ALL && classifyItem(e) != sActiveCat) continue
+            sGroupVisibleIdx.add(i)
         }
     }
 

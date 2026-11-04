@@ -216,6 +216,9 @@ object ClipboardPinHook {
     @Volatile
     private var sPinnedJson: String? = null
 
+    /** 当前置顶条目的 time（0=无置顶）。清空记账按此豁免置顶条目——清空后写回，不得进屏蔽表。 */
+    fun pinnedTime(): Long = sPinnedTime // rev-2611·pin-exempt
+
     /** 持久化文件是否已加载过（只试一次，失败保持内存态）。 */
     @Volatile
     private var sPinLoaded = false
@@ -483,13 +486,12 @@ object ClipboardPinHook {
                 val r = chain.proceed()
                 try {
                     val uri = chain.getArg(0) as? Uri
-                    if (uri == null) {
-                        return@hook r
-                    }
-                    log("query: " + uri)
-                    if (!uri.toString().contains(URI_LIST)) {
-                        return@hook r
-                    }
+                if (uri == null) {
+                    return@hook r
+                }
+                if (!uri.toString().contains(URI_LIST)) {
+                    return@hook r
+                }
                     log("query hit: " + uri + " cursor="
                             + (if (r == null) "null" else r.javaClass.name))
                     if (r !is Cursor) {
@@ -608,10 +610,11 @@ object ClipboardPinHook {
                 val r = chain.proceed()
                 try {
                     val methodArg = chain.getArg(1)
-                    log("provider call: method=" + methodArg + " uri=" + chain.getArg(0))
                     if (METHOD_CLEAR != methodArg) {
                         return@hook r
                     }
+                    // 仅对清空调用记日志，避免 system 进程内其它 call（含其它模块）被无差别记录刷屏
+                    log("provider call: method=" + methodArg + " uri=" + chain.getArg(0))
                     // v4.12：清空已执行——先作废补回缓存（云端/图片旧条目不再复活），
                     // 再写回置顶条目并刷新面板。顺序要紧：先清缓存，否则随后的刷新会
                     // 走 prependMissingCloud 把刚清掉的旧条目又补回头部。
@@ -655,8 +658,14 @@ object ClipboardPinHook {
             XposedInit.hook(m) { chain ->
                 val r = chain.proceed()
                 try {
+                    val uri = chain.getArg(0) as? Uri
+                    // 仅记录剪贴板 provider 自身的写操作，避免 system 进程内其它模块
+                    // （如 HyperCeiler）的写入被无差别记进日志刷屏。
+                    if (uri == null || !uri.toString().contains("com.miui.phrase.input")) {
+                        return@hook r
+                    }
                     val a1 = chain.getArg(1)
-                    log("provider " + name + ": uri=" + chain.getArg(0)
+                    log("provider " + name + ": uri=" + uri
                             + " arg=" + (a1?.toString() ?: "null"))
                 } catch (ignored: Throwable) {
                     // 诊断日志失败不影响主流程

@@ -53,6 +53,9 @@ object ModulePrefs {
     /** 记忆剪贴板分组位置（关闭面板再打开停留上次分组），默认关闭。 */
     const val KEY_CLIPBOARD_GROUP_REMEMBER = "clipboard_group_remember"
 
+    /** 系统设置内模块入口位置（0=禁用 1=顶部 2=中部 3=底部），默认禁用。 */
+    const val KEY_SETTINGS_ICON = "settings_icon"
+
     const val DEFAULT_IME_UNLOCK = true
     const val DEFAULT_UNLIMIT_COUNT = false
     const val DEFAULT_UNLIMIT_TIME = false
@@ -60,6 +63,7 @@ object ModulePrefs {
     const val DEFAULT_CLIPBOARD_PIN = false
     const val DEFAULT_CLIPBOARD_GROUP = false
     const val DEFAULT_CLIPBOARD_GROUP_REMEMBER = false
+    const val DEFAULT_SETTINGS_ICON = 0
 
     /** hook 侧读取远程偏好；不可用时返回 null（调用方回退默认值）。 */
     private fun hookPrefs(): SharedPreferences? {
@@ -129,5 +133,12 @@ object ModulePrefs {
     fun isGroupRememberEnabled(): Boolean {
         val p = hookPrefs()
         return p != null && p.getBoolean(KEY_CLIPBOARD_GROUP_REMEMBER, DEFAULT_CLIPBOARD_GROUP_REMEMBER)
+    }
+
+    /** 系统设置内模块入口位置（hook 侧）。0=禁用 1=顶部 2=中部 3=底部。 */
+    @JvmStatic
+    fun settingsIconMode(): Int {
+        val p = hookPrefs()
+        return p?.getInt(KEY_SETTINGS_ICON, DEFAULT_SETTINGS_ICON) ?: DEFAULT_SETTINGS_ICON
     }
 }

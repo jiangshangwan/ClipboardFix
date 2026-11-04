@@ -53,11 +53,13 @@ fun SettingsPage(
     langMode: Int,
     updateDisabled: Boolean,
     iconHidden: Boolean,
+    settingsIconMode: State<Int>,
     onThemeSelect: (Int) -> Unit,
     onLanguageSelect: (Int) -> Unit,
     onToggleUpdateDisabled: (Boolean) -> Unit,
     onHideIcon: (Boolean) -> Unit,
     onRebootOrReload: (Int) -> Unit,
+    onSettingsIconSelect: (Int) -> Unit,
 ) {
     val colors = MiuixTheme.colorScheme
     val langOptions = listOf(
@@ -74,6 +76,13 @@ fun SettingsPage(
     val rebootReloadOptions = listOf(
         stringResource(R.string.opt_reboot_phone),
         stringResource(R.string.opt_reload_all),
+    )
+    // 设置图标位置：0 = 禁用，1 = 顶部，2 = 中部，3 = 底部
+    val settingsIconOptions = listOf(
+        stringResource(R.string.opt_disabled),
+        stringResource(R.string.opt_top),
+        stringResource(R.string.opt_middle),
+        stringResource(R.string.opt_bottom),
     )
 
     // 下拉弹卡：模糊源（页面内容）+ 当前请求 / 展开状态
@@ -114,17 +123,29 @@ fun SettingsPage(
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     SwitchPreference(
-                        checked = iconHidden,
-                        onCheckedChange = onHideIcon,
-                        title = stringResource(R.string.hide_icon),
-                        summary = stringResource(R.string.hide_icon_sub_default),
-                    )
-                    SwitchPreference(
                         checked = updateDisabled,
                         onCheckedChange = onToggleUpdateDisabled,
                         title = stringResource(R.string.disable_update),
                         summary = stringResource(R.string.disable_update_sub),
                     )
+                    SwitchPreference(
+                        checked = iconHidden,
+                        onCheckedChange = onHideIcon,
+                        title = stringResource(R.string.hide_icon),
+                        summary = stringResource(R.string.hide_icon_sub_default),
+                    )
+                    // 设置图标入口（系统设置内模块入口）功能暂缓，UI 一并隐藏，待后续恢复
+                    // GlassDropdownRow(
+                    //     title = stringResource(R.string.settings_icon),
+                    //     items = settingsIconOptions,
+                    //     selectedIndex = settingsIconMode.value.coerceIn(0, settingsIconOptions.size - 1),
+                    //     onSelected = { onSettingsIconSelect(it) },
+                    //     onOpen = {
+                    //         dropdownReq = it
+                    //         dropdownOpen = true
+                    //     },
+                    //     subtitle = stringResource(R.string.settings_icon_sub),
+                    // )
                     GlassDropdownRow(
                         title = stringResource(R.string.reboot_reload_title),
                         items = rebootReloadOptions,

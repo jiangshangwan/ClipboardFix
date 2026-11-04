@@ -92,6 +92,13 @@ class XposedInit : XposedModule() {
             return
         }
 
+        // 系统设置内模块入口注入（header 列表构建后插入）
+        // 功能暂缓：图标跨包渲染问题未解，入口注入停用，保留代码以便后续恢复
+        if (PKG_SETTINGS == pkg) {
+            // SettingsEntryHook.init(param)
+            return
+        }
+
         // 其余按第三方输入法处理（system / android 等无关包直接忽略）
         if (!imeBottomSupported()) {
             log(pkg + " skip: " + PROP_MIUI_IME_BOTTOM + " != 1")
@@ -118,6 +125,7 @@ class XposedInit : XposedModule() {
         const val TAG = "[ClipboardFix]"
 
         const val PKG_PHRASE = "com.miui.phrase"
+        const val PKG_SETTINGS = "com.android.settings"
 
         /** 系统是否支持 MIUI 输入法底部栏，不支持就没必要 hook 全面屏优化。 */
         private const val PROP_MIUI_IME_BOTTOM = "ro.miui.support_miui_ime_bottom"

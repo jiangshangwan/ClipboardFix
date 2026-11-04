@@ -94,6 +94,8 @@ class AboutActivity : ComponentActivity() {
     val uiUpdateDisabled: MutableState<Boolean> = stateOf(false)
     /** 主题模式（跟随系统/浅色/深色）。 */
     val uiThemeMode: MutableState<Int> = stateOf(AppConfig.MODE_SYSTEM)
+    /** 系统设置内模块入口位置（0=禁用 1=顶部 2=中部 3=底部）。 */
+    val uiSettingsIconMode: MutableState<Int> = stateOf(ModulePrefs.DEFAULT_SETTINGS_ICON)
 
     // ---- 欢迎引导（首次进入的三页覆盖层）----
     /** 当前页（Compose 读写同一份状态）。 */
@@ -207,10 +209,11 @@ class AboutActivity : ComponentActivity() {
             Runnable { showDonateSheet() },
             Runnable { openUrl(TELEGRAM_URL) },
             Runnable { openLicenses() },
-            uiThemeMode, AppConfig.getLangMode(this), uiUpdateDisabled,
+            uiThemeMode, AppConfig.getLangMode(this), uiUpdateDisabled, uiSettingsIconMode,
             IntAction { selectTheme(it) },
             IntAction { selectLanguage(it) },
-            BoolAction { onToggleUpdateDisabled(it) }
+            BoolAction { onToggleUpdateDisabled(it) },
+            IntAction { onSettingsIconSelect(it) }
         )
 
         // 模块启用状态实时查询
@@ -522,6 +525,7 @@ class AboutActivity : ComponentActivity() {
         uiSwClipboardGroupRemember.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
         uiUpdateDisabled.value = prefs.getBoolean(AppConfig.KEY_DISABLE_UPDATE, false)
         uiThemeMode.value = AppConfig.getThemeMode(this)
+        uiSettingsIconMode.value = prefs.getInt(ModulePrefs.KEY_SETTINGS_ICON, ModulePrefs.DEFAULT_SETTINGS_ICON)
     }
 
     private fun onToggleImeUnlock(checked: Boolean) {
@@ -558,6 +562,30 @@ class AboutActivity : ComponentActivity() {
     private fun onToggleClipboardGroupRemember(checked: Boolean) {
         uiSwClipboardGroupRemember.value = checked
         saveFeaturePrefs()
+    }
+
+    private fun onSettingsIconSelect(mode: Int) {
+        uiSettingsIconMode.value = mode
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putInt(ModulePrefs.KEY_SETTINGS_ICON, mode)
+            .apply()
+        pushSettingsIconPref()
+        showSnack(getString(R.string.snack_changed_reload))
+    }
+
+    /** 将设置图标偏好推送到远程（hook 侧读取）。 */
+    private fun pushSettingsIconPref() {
+        val svc = sXposedService ?: return
+        val mode = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt(ModulePrefs.KEY_SETTINGS_ICON, ModulePrefs.DEFAULT_SETTINGS_ICON)
+        Thread({
+            try {
+                svc.getRemotePreferences(ModulePrefs.GROUP).edit()
+                    .putInt(ModulePrefs.KEY_SETTINGS_ICON, mode)
+                    .apply()
+            } catch (_: Throwable) {
+            }
+        }, "cf-prefs-push").start()
     }
 
     /**
@@ -730,6 +758,8 @@ class AboutActivity : ComponentActivity() {
                 // 目标进程：剪贴板/常用短语宿主 + 所有已安装输入法（按包名去重）
                 val pkgs = LinkedHashSet<String>()
                 pkgs.add("com.miui.phrase")
+                // 系统设置暂不纳入重载范围（设置入口功能暂缓，无需随重载生效）
+                // pkgs.add("com.android.settings")
                 val imm = getSystemService(InputMethodManager::class.java)
                 if (imm != null) {
                     for (info in imm.inputMethodList) {
@@ -943,6 +973,7 @@ class AboutActivity : ComponentActivity() {
     // 折射源是本页内容，故必须画在页面 Compose 覆盖层里而不是独立弹窗。
     private fun showChangelog() {
         val blocks = listOf(
+            "V2.0.6" to getString(R.string.changelog_v206),
             "V2.0.5" to getString(R.string.changelog_v205),
             "V2.0.4" to getString(R.string.changelog_v204),
             "V2.0.3" to getString(R.string.changelog_v203),
@@ -1212,6 +1243,7 @@ class AboutActivity : ComponentActivity() {
                 val a = sCurrent.get()
                 if (a != null) {
                     a.pushFeaturePrefs()
+                    a.pushSettingsIconPref()
                     a.refreshModuleStatus()
                 }
             }

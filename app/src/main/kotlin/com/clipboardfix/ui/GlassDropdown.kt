@@ -161,6 +161,7 @@ internal fun GlassDropdownRow(
     onSelected: (Int) -> Unit,
     onOpen: (DropdownRequest) -> Unit,
     summary: String? = null,
+    subtitle: String? = null,
 ) {
     val colors = MiuixTheme.colorScheme
     val anchor = remember { arrayOfNulls<LayoutCoordinates>(1) }
@@ -187,6 +188,7 @@ internal fun GlassDropdownRow(
                 )
             },
         title = title,
+        summary = subtitle,
         insideMargin = PaddingValues(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
         endActions = {
             Text(

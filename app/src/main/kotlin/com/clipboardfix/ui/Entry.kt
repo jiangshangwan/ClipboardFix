@@ -87,9 +87,11 @@ fun installPages(
     themeMode: State<Int>,
     langMode: Int,
     updateDisabled: State<Boolean>,
+    settingsIconMode: State<Int>,
     onThemeSelect: IntAction,
     onLanguageSelect: IntAction,
     onToggleUpdateDisabled: BoolAction,
+    onSettingsIconSelect: IntAction,
 ) {
     // Snackbar 队列泵（幂等）：四个页面共享宿主状态，集中驱动，Activity 重建不重排
     SnackbarBridge.start()
@@ -155,11 +157,13 @@ fun installPages(
                 langMode = langMode,
                 updateDisabled = updateDisabled.value,
                 iconHidden = iconHidden.value,
+                settingsIconMode = settingsIconMode,
                 onThemeSelect = { onThemeSelect.invoke(it) },
                 onLanguageSelect = { onLanguageSelect.invoke(it) },
                 onToggleUpdateDisabled = { onToggleUpdateDisabled.invoke(it) },
                 onHideIcon = { onHideIcon.invoke(it) },
                 onRebootOrReload = { onRebootOrReload.invoke(it) },
+                onSettingsIconSelect = { onSettingsIconSelect.invoke(it) },
             )
         }
     }
