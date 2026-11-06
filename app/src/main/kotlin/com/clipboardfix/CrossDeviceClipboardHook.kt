@@ -389,6 +389,12 @@ object CrossDeviceClipboardHook {
     private fun ensurePanelClassHooks(cl: ClassLoader) {
         if (panelClassHooksInited) return
         panelClassHooksInited = true
+        // 分组视图下清空确认文案与实际作用范围对齐；与本类的分组状态同进程、只装一次。
+        try {
+            ClearConfirmTextHook.init()
+        } catch (t: Throwable) {
+            log("FAIL: clear-confirm text hook entry - $t")
+        }
         try {
             val mgr = Reflect.findClassIfExists(MIUI_CLIPBOARD_MANAGER, cl)
             if (mgr != null) {
