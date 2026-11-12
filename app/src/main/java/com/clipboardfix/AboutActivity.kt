@@ -92,6 +92,8 @@ class AboutActivity : ComponentActivity() {
     val uiSwClipboardGroupRemember: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
     val uiIconHidden: MutableState<Boolean> = stateOf(false)
     val uiUpdateDisabled: MutableState<Boolean> = stateOf(false)
+    /** 云端最新版本号：由 UpdateChecker 静默/手动检查回传；为空表示本次尚未取得。 */
+    val uiLatestVersion: MutableState<String> = stateOf("")
     /** 主题模式（跟随系统/浅色/深色）。 */
     val uiThemeMode: MutableState<Int> = stateOf(AppConfig.MODE_SYSTEM)
     /** 系统设置内模块入口位置（0=禁用 1=顶部 2=中部 3=底部）。 */
@@ -187,7 +189,7 @@ class AboutActivity : ComponentActivity() {
             pageHome!!, pageFeature!!, pageAbout!!, pageSettings!!,
             uiStatusText, uiImeCountText, uiStatusEnabled, uiRootGranted,
             uiEnabledFeatures, uiBadgesVisible,
-            BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE,
+            BuildConfig.VERSION_NAME, uiLatestVersion, Runnable { UpdateChecker(this).showUpdateDialogIfNeeded() }, BuildConfig.BUILD_DATE,
             DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
             Build.VERSION.INCREMENTAL, phraseVersion(), abiInfo(),
             uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiSwClipboardGroup, uiSwClipboardGroupRemember, uiIconHidden,
@@ -231,7 +233,9 @@ class AboutActivity : ComponentActivity() {
 
         // 静默检查更新（有新版本才弹窗；已停用更新检测则跳过）
         if (!AppConfig.isUpdateDisabled(this)) {
-            UpdateChecker(this).checkSilent()
+            val checker = UpdateChecker(this)
+            checker.setOnLatestVersionListener { tag -> uiLatestVersion.value = tag }
+            checker.checkSilent()
         }
     }
 
@@ -652,6 +656,7 @@ class AboutActivity : ComponentActivity() {
         }
         val checker = UpdateChecker(this)
         checker.setMessageSink(UpdateChecker.MessageSink { showSnack(it) })
+        checker.setOnLatestVersionListener { tag -> uiLatestVersion.value = tag }
         checker.checkForUpdates()
     }
 
@@ -973,6 +978,7 @@ class AboutActivity : ComponentActivity() {
     // 折射源是本页内容，故必须画在页面 Compose 覆盖层里而不是独立弹窗。
     private fun showChangelog() {
         val blocks = listOf(
+            "V2.0.7" to getString(R.string.changelog_v207),
             "V2.0.6" to getString(R.string.changelog_v206),
             "V2.0.5" to getString(R.string.changelog_v205),
             "V2.0.4" to getString(R.string.changelog_v204),

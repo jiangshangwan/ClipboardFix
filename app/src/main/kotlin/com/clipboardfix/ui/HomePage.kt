@@ -71,6 +71,24 @@ private fun isVersionOutdated(version: String): Boolean {
     return false // 等于最低版本 → 不算过时
 }
 
+/** 版本段比较的轮次上限，异常长版本号在此截断。 */
+private const val MAX_SEGMENTS = 0x1A
+
+/** 判断 [cloud] 是否高于 [local]（语义版本逐段比较；非数字段按 0 处理）。云端版本未知（空）时返回 false。 */
+private fun isVersionHigher(cloud: String, local: String): Boolean {
+    if (cloud.isEmpty()) return false
+    // 云端 Tag 允许带 v/V 前缀，此处再归一一次，避免与已剥离前缀的来源不一致。
+    val c = cloud.trim().trimStart('v', 'V').split(".").map { seg -> seg.takeWhile { it.isDigit() }.toIntOrNull() ?: 0 }
+    val l = local.trim().split(".").map { seg -> seg.takeWhile { it.isDigit() }.toIntOrNull() ?: 0 }
+    for (i in 0 until minOf(maxOf(c.size, l.size), MAX_SEGMENTS)) {
+        val cv = c.getOrElse(i) { 0 }
+        val lv = l.getOrElse(i) { 0 }
+        if (cv > lv) return true
+        if (cv < lv) return false
+    }
+    return false // 相等 → 不是更高
+}
+
 @Composable
 fun HomePage(
     statusText: String,
@@ -80,6 +98,8 @@ fun HomePage(
     enabledFeatures: Int,
     badgesVisible: Boolean,
     appVersion: String,
+    latestVersion: String,
+    onAppVersionClick: () -> Unit,
     buildDate: String,
     deviceModel: String,
     androidVersion: String,
@@ -136,7 +156,7 @@ fun HomePage(
                 colors = CardDefaults.defaultColors(color = cardContainerColor()),
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    InfoRow(stringResource(R.string.info_app_version), appVersion, topPad = 22.dp)
+                    AppVersionRow(local = appVersion, latest = latestVersion, onOutdatedClick = onAppVersionClick)
                     InfoRow(stringResource(R.string.info_device), deviceModel)
                     InfoRow(stringResource(R.string.info_android), androidVersion)
                     InfoRow(stringResource(R.string.info_system), systemVersion)
@@ -277,6 +297,30 @@ private fun ClipboardVersionRow(version: String) {
             modifier = Modifier.padding(top = 4.dp),
         ) {
             Text(text = version, fontSize = 15.sp, color = colors.onSurfaceVariantSummary)
+            if (outdated) {
+                Spacer(Modifier.width(6.dp))
+                RootBadge(text = stringResource(R.string.info_outdated), accent = StatusOrange)
+            }
+        }
+    }
+}
+
+/** 应用版本行：云端最新版本高于本地版本时，版本号后显示「非最新」小标签且整行可点击弹更新窗口；否则无标签、不可点击。 */
+@Composable
+private fun AppVersionRow(local: String, latest: String, onOutdatedClick: () -> Unit) {
+    val outdated = isVersionHigher(latest, local)
+    val colors = MiuixTheme.colorScheme
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .let { if (outdated) it.clickable { onOutdatedClick() } else it }
+        .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 12.dp)
+    Column(modifier = rowModifier) {
+        Text(text = stringResource(R.string.info_app_version), fontSize = 17.sp, color = colors.onSurface)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 4.dp),
+        ) {
+            Text(text = local, fontSize = 15.sp, color = colors.onSurfaceVariantSummary)
             if (outdated) {
                 Spacer(Modifier.width(6.dp))
                 RootBadge(text = stringResource(R.string.info_outdated), accent = StatusOrange)

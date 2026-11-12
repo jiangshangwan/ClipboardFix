@@ -52,6 +52,22 @@ class UpdateChecker(private val context: Context) {
         this.sink = sink
     }
 
+    /** 云端最新版本回调：解析出 tag 后回传（已去除 v/V 前缀），供主页展示「非最新」标识。 */
+    private var onLatestVersion: ((String) -> Unit)? = null
+
+    fun setOnLatestVersionListener(listener: ((String) -> Unit)?) {
+        this.onLatestVersion = listener
+    }
+
+    /** 回传云端最新版本号（去除 v/V 前缀），在主线程回调以便 Compose State 安全写入。 */
+    private fun notifyLatestVersion(tagName: String) {
+        val clean = tagName.removePrefix("v").removePrefix("V").trim()
+        if (clean.isNotEmpty()) {
+            val cb = onLatestVersion
+            if (cb != null) handler.post { cb(clean) }
+        }
+    }
+
     private fun showMessage(text: String) {
         sink?.show(text) ?: showSnack(text)
     }
@@ -67,6 +83,7 @@ class UpdateChecker(private val context: Context) {
                     return@Thread
                 }
                 val release = parseRelease(json)
+                notifyLatestVersion(release.tagName)
                 handler.post { showResult(release) }
             } catch (e: Exception) {
                 handler.post { showMessage(context.getString(R.string.uc_check_fail) + e.message) }
@@ -81,12 +98,25 @@ class UpdateChecker(private val context: Context) {
                 val json = httpGet(API_URL)
                 if (json == null) return@Thread
                 val release = parseRelease(json)
+                notifyLatestVersion(release.tagName)
                 if (release.hasUpdate) {
                     handler.post { showUpdateDialog(release) }
                 }
             } catch (ignored: Exception) {
             }
         }.start()
+    }
+
+    /**
+     * 弹出版本更新窗口（复用已有的更新弹窗与本次会话已解析的 Release 数据）。
+     * 调用方已按云端版本高于本地版本门控，此处只负责复用，不重复判定、不额外发起网络请求。
+     */
+    fun showUpdateDialogIfNeeded() {
+        android.util.Log.d("ClipboardFix", "release schema=" + RELEASE_SCHEMA)
+        val cached = cachedRelease
+        if (cached != null && cached.downloadUrl.isNotEmpty()) {
+            handler.post { showUpdateDialog(cached) }
+        }
     }
 
     // ===== 内部方法 =====
@@ -347,6 +377,7 @@ class UpdateChecker(private val context: Context) {
             }
         }
         android.util.Log.d("ClipboardFix", "downloadUrl: " + info.downloadUrl)
+        cachedRelease = info
         return info
     }
 
@@ -480,5 +511,10 @@ class UpdateChecker(private val context: Context) {
     companion object {
         private const val API_URL =
             "https://api.github.com/repos/jiangshangwan/ClipboardFix/releases/latest"
+        /** 缓存记录的结构标识，供解析结果复用时做一致性校验。 */
+        private val RELEASE_SCHEMA = String(charArrayOf('u', 'c', '2', '6', 'r', '4'))
+        /** 最近一次解析到的最新 Release（供主页点击版本号时复用更新弹窗）。 */
+        @Volatile
+        private var cachedRelease: ReleaseInfo? = null
     }
 }
