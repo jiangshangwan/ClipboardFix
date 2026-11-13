@@ -90,6 +90,7 @@ class AboutActivity : ComponentActivity() {
     val uiSwClipboardPin: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_PIN)
     val uiSwClipboardGroup: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
     val uiSwClipboardGroupRemember: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
+    val uiSwGaussianBlur: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_GAUSSIAN_BLUR)
     val uiIconHidden: MutableState<Boolean> = stateOf(false)
     val uiUpdateDisabled: MutableState<Boolean> = stateOf(false)
     /** 云端最新版本号：由 UpdateChecker 静默/手动检查回传；为空表示本次尚未取得。 */
@@ -192,7 +193,7 @@ class AboutActivity : ComponentActivity() {
             BuildConfig.VERSION_NAME, uiLatestVersion, Runnable { UpdateChecker(this).showUpdateDialogIfNeeded() }, BuildConfig.BUILD_DATE,
             DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
             Build.VERSION.INCREMENTAL, phraseVersion(), abiInfo(),
-            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiSwClipboardGroup, uiSwClipboardGroupRemember, uiIconHidden,
+            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiSwClipboardGroup, uiSwClipboardGroupRemember, uiSwGaussianBlur, uiIconHidden,
             Runnable { doCheckUpdate() },
             Runnable { onStatusCardTap() },
             BoolAction { onToggleImeUnlock(it) },
@@ -202,6 +203,7 @@ class AboutActivity : ComponentActivity() {
             BoolAction { onToggleClipboardPin(it) },
             BoolAction { onToggleClipboardGroup(it) },
             BoolAction { onToggleClipboardGroupRemember(it) },
+            BoolAction { onToggleGaussianBlur(it) },
             BoolAction { onToggleHideIcon(it) },
             IntAction { onRebootOrReload(it) },
             Runnable { openUrl("https://www.coolapk.com/u/3019478") },
@@ -527,6 +529,7 @@ class AboutActivity : ComponentActivity() {
         uiSwClipboardPin.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
         uiSwClipboardGroup.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
         uiSwClipboardGroupRemember.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
+        uiSwGaussianBlur.value = prefs.getBoolean(ModulePrefs.KEY_GAUSSIAN_BLUR, ModulePrefs.DEFAULT_GAUSSIAN_BLUR)
         uiUpdateDisabled.value = prefs.getBoolean(AppConfig.KEY_DISABLE_UPDATE, false)
         uiThemeMode.value = AppConfig.getThemeMode(this)
         uiSettingsIconMode.value = prefs.getInt(ModulePrefs.KEY_SETTINGS_ICON, ModulePrefs.DEFAULT_SETTINGS_ICON)
@@ -568,6 +571,11 @@ class AboutActivity : ComponentActivity() {
         saveFeaturePrefs()
     }
 
+    private fun onToggleGaussianBlur(checked: Boolean) {
+        uiSwGaussianBlur.value = checked
+        saveFeaturePrefs()
+    }
+
     private fun onSettingsIconSelect(mode: Int) {
         uiSettingsIconMode.value = mode
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
@@ -606,6 +614,7 @@ class AboutActivity : ComponentActivity() {
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, uiSwClipboardPin.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, uiSwClipboardGroup.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, uiSwClipboardGroupRemember.value)
+            .putBoolean(ModulePrefs.KEY_GAUSSIAN_BLUR, uiSwGaussianBlur.value)
             .apply()
         pushFeaturePrefs()
         // 四个功能开关的 hook 全部装在 com.miui.phrase / 输入法进程内（进程启动时读开关），
@@ -631,6 +640,7 @@ class AboutActivity : ComponentActivity() {
         val clipboardPin = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
         val clipboardGroup = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
         val clipboardGroupRemember = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
+        val gaussianBlur = local.getBoolean(ModulePrefs.KEY_GAUSSIAN_BLUR, ModulePrefs.DEFAULT_GAUSSIAN_BLUR)
         Thread({
             try {
                 svc.getRemotePreferences(ModulePrefs.GROUP).edit()
@@ -641,6 +651,7 @@ class AboutActivity : ComponentActivity() {
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, clipboardPin)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, clipboardGroup)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, clipboardGroupRemember)
+                    .putBoolean(ModulePrefs.KEY_GAUSSIAN_BLUR, gaussianBlur)
                     .apply()
             } catch (t: Throwable) {
                 // 远程写失败不影响本地开关状态

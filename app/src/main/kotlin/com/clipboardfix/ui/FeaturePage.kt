@@ -45,6 +45,7 @@ fun FeaturePage(
     swUnlimitCount: Boolean,
     swUnlimitTime: Boolean,
     swPanelColor: Boolean,
+    swGaussianBlur: Boolean,
     swClipboardPin: Boolean,
     swClipboardGroup: Boolean,
     swClipboardGroupRemember: Boolean,
@@ -52,6 +53,7 @@ fun FeaturePage(
     onToggleUnlimitCount: (Boolean) -> Unit,
     onToggleUnlimitTime: (Boolean) -> Unit,
     onTogglePanelColor: (Boolean) -> Unit,
+    onToggleGaussianBlur: (Boolean) -> Unit,
     onToggleClipboardPin: (Boolean) -> Unit,
     onToggleClipboardGroup: (Boolean) -> Unit,
     onToggleClipboardGroupRemember: (Boolean) -> Unit,
@@ -148,6 +150,16 @@ fun FeaturePage(
                         enabled = swImeUnlock,
                         onClickWhenDisabled = { showSnack(strEnableFirst) },
                     )
+                    // 【启用高斯模糊背景】：仅当「优化剪贴板面板背景」开启时才显示（子选项），默认关闭
+                    if (swImeUnlock && swPanelColor) {
+                        FeatureSwitch(
+                            checked = swGaussianBlur,
+                            onCheckedChange = onToggleGaussianBlur,
+                            title = stringResource(R.string.sw_gaussian_blur),
+                            summary = stringResource(R.string.sw_gaussian_blur_sub),
+                            enabled = true,
+                        )
+                    }
                     FeatureSwitch(
                         checked = swImeUnlock && swClipboardPin,
                         onCheckedChange = onToggleClipboardPin,

@@ -15,6 +15,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.PorterDuff
+import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.DrawableWrapper
@@ -24,6 +25,8 @@ import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
 import android.os.Handler
 import android.os.Looper
+import android.view.PixelCopy
+import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
@@ -118,6 +121,50 @@ object PanelColorHook {
      * 调用方。只能自己按间隔看一次（详见 [startThemeWatch]）。
      */
     private const val THEME_WATCH_MS = 250L
+
+    /**
+     * 底栏合成色复核间隔。底栏的最终观感由窗口背后内容与材质层合成，颜色会随场景变化，
+     * 因此按固定节拍重新采样；两次之间设最小间隔，避免窗口 surface 被高频读取。
+     */
+    private const val PROBE_INTERVAL_MS = 900L
+
+    /** 主题轮询中每隔多少拍触发一次复核。 */
+    private const val PROBE_HEARTBEAT = 8
+
+    /** 视图树扫描的结点上限与分层日志上限，键盘视图较深时及时收敛。 */
+    private const val PROBE_VIEW_LIMIT = 180
+    private const val PROBE_LOG_LIMIT = 20
+
+    /** 采样位图边长；只需统计区域主色，不需要全分辨率。 */
+    private const val PROBE_BITMAP_PX = 16
+
+    /** 采样结果有效像素的最低占比，低于此值视为该区域未绘制出内容。 */
+    private const val PROBE_MIN_COVERAGE = 0.30f
+
+    /** 结构版本标记。 */
+    private const val PROBE_SCHEMA = "pc" + "26" + "b3"
+
+    /**
+     * 采样色与面板原生底色之间允许的最小通道差。底栏观感由模糊与材质混合产生，若采样结果
+     * 落在原生底色附近，说明读到的是窗口自身底色而非底栏合成色，此时不应覆盖面板。
+     */
+    private const val COMPOSITE_MIN_DELTA = 12
+
+    /**
+     * 材质参数未观测到时使用的等效混合层：深色压暗、浅色提亮。
+     * 叠在系统背景模糊之上，颜色仍随窗口背后内容变化，不固化为某个 ARGB。
+     */
+    private val DEFAULT_DARK_BLEND: Int = 0x99141414.toInt()
+    private val DEFAULT_LIGHT_BLEND: Int = 0x66FFFFFF
+
+    /** 材质配置结构版本标记。 */
+    private const val MATERIAL_SCHEMA = "hm" + "26" + "v5"
+
+    /** 窗口采样准入配置结构版本标记。 */
+    private const val ADMISSION_SCHEMA = "aw" + "26" + "s5"
+
+    /** 材质配置在视图尚未挂载等暂时状态下允许的重试次数。 */
+    private const val NATIVE_RETRY_LIMIT = 6
 
     /** 当前显示的面板内容容器，供换色时同步刷新（面板消失即被回收）。 */
     @Volatile
@@ -272,6 +319,84 @@ object PanelColorHook {
     @Volatile
     private var sBarDumped = false
 
+    /** 最近一次采样时刻（单调时钟）。 */
+    @Volatile
+    private var sProbeAt = 0L
+
+    /** 是否有一次像素拷贝仍在进行，防止重入。 */
+    @Volatile
+    private var sProbePending = false
+
+    /** 底栏区域的等效合成色；-1 表示尚无可用结果。 */
+    @Volatile
+    private var sCompositeColor = -1
+
+    /** 合成色的取得方式，仅用于运行期排查。 */
+    @Volatile
+    private var sCompositeFrom = "none"
+
+    /**
+     * 系统材质下发的背景混合色，按明暗分别缓存。
+     *
+     * <p>底栏的最终观感由「窗口背后内容模糊 + 这层混合色」共同决定，颜色本身不落在任何
+     * View 的 background 上，从参数链路或视图树都取不到，只能从框架下发处观测。
+     */
+    @Volatile
+    private var sBlendDark = -1
+    @Volatile
+    private var sBlendLight = -1
+
+    /** 液态玻璃材质下发的 tint；存在时优先于普通混合色。 */
+    @Volatile
+    private var sGlassTint = -1
+
+    /** 最近一次模糊层叠加色的来源，仅用于运行期排查。 */
+    @Volatile
+    private var sTintFrom = "none"
+
+    /** 材质接口被调用的次数，用于判断取色链路是否真的在工作。 */
+    @Volatile
+    private var sMaterialCalls = 0
+
+    /** 系统材质接口方法表；空表表示已探测过且本机不可用。 */
+    @Volatile
+    private var sMaterialMethods: Map<String, Method>? = null
+
+    /** 已挂系统材质的面板视图与当时的明暗，主题或视图变化后需重新配置。 */
+    @Volatile
+    private var sNativeBodyRef: WeakReference<View> = WeakReference(null)
+    @Volatile
+    private var sNativeNight = false
+
+    /**
+     * 仅当框架材质接口在本机确实不存在时置位；视图未挂载、窗口状态尚未就绪等
+     * 暂时性失败不在此列，否则一次早期回调就会让后续所有面板都停在降级路径。
+     */
+    @Volatile
+    private var sNativeUnavailable = false
+
+    /** 暂时性失败累计次数，超过上限才停止继续尝试，避免每次开面板反复抛异常。 */
+    @Volatile
+    private var sNativeAttempts = 0
+
+    /** 最近一次材质配置的参数摘要，仅用于运行期排查。 */
+    @Volatile
+    private var sNativeDetail = "none"
+
+    /** 框架记录的跨窗口采样开关状态；null 表示本机没有对应字段。 */
+    @Volatile
+    private var sPassBlurState: Boolean? = null
+
+    /**
+     * 配置材质期间对窗口采样准入的临时放行标记。面板内容视图的 context 与宿主窗口
+     * 可能分属不同包，按包名静态匹配会漏放；仅在设置材质的同步调用栈内生效。
+     */
+    private val sBlurAdmission = ThreadLocal<Boolean>()
+
+    /** 视图层结构只在首次扫描时完整输出一次。 */
+    @Volatile
+    private var sProbeDumped = false
+
     /** 面板自身圆角（第一次上色前抓取，用于给模糊层切同样的圆角）。 */
     @Volatile
     private var sPanelRadius = -1f
@@ -360,6 +485,12 @@ object PanelColorHook {
         sHostPkg = param.packageName
         log("init enter: pkg=$sHostPkg")
         ensurePassWindowBlur()
+        ensureMaterialTintHook()
+        // 进程启动即解析一次，日志缓冲被淘汰后仍可据此判断材质链路是否可用
+        resolveMaterialMethods()
+        log("material bootstrap: schema=" + MATERIAL_SCHEMA
+                + " admission=" + ADMISSION_SCHEMA
+                + " methods=" + (sMaterialMethods?.size ?: -1))
         // 面板 Tab 选中胶囊底色的纠偏 hook 装在动态 dex 的类上，必须拦截 loadDex 抢在
         // 首次开面板（showClipBoard→createPhraseThemeContext）之前挂上。
         hookModuleManagerLoadDex()
@@ -389,22 +520,166 @@ object PanelColorHook {
      */
     private fun ensurePassWindowBlur() {
         try {
-            val stubCls = Class.forName(
-                    "android.view.ViewRootImplStub", true, ClassLoader.getSystemClassLoader())
-            val getInstance = stubCls.getMethod("getInstance")
-            val stub = getInstance.invoke(null)
+            val loaders = arrayOf(
+                    ClassLoader.getSystemClassLoader(), View::class.java.classLoader)
+            var stubCls: Class<*>? = null
+            for (cl in loaders) {
+                if (cl == null) {
+                    continue
+                }
+                try {
+                    stubCls = Class.forName("android.view.ViewRootImplStub", true, cl)
+                    break
+                } catch (ignored: Throwable) {
+                    // 不同版本的框架把准入类挂在不同的加载器下，逐个尝试
+                }
+            }
+            if (stubCls == null) {
+                log("pass-window blur: admission stub absent, schema=" + ADMISSION_SCHEMA)
+                return
+            }
+            val stub = stubCls.getMethod("getInstance").invoke(null)
             val isAllowed = stub.javaClass.getMethod(
                     "isPassWindowBlurAllowed", String::class.java)
             XposedInit.hook(isAllowed) { chain ->
                 val arg = chain.getArg(0)
+                if (java.lang.Boolean.TRUE == sBlurAdmission.get()) {
+                    return@hook java.lang.Boolean.TRUE
+                }
                 if (sHostPkg != null && sHostPkg == arg) {
-                    return@hook java.lang.Boolean.TRUE // 与美化模块一致：只放行宿主自身
+                    return@hook java.lang.Boolean.TRUE
                 }
                 return@hook chain.proceed() // 其余包名保持系统原本判定
             }
-            log("OK: pass-window blur allowed for $sHostPkg")
+            log("OK: pass-window blur allowed for $sHostPkg schema=" + ADMISSION_SCHEMA)
         } catch (t: Throwable) {
             log("pass-window blur hook skipped - $t")
+        }
+    }
+
+    /**
+     * 观测系统材质下发的背景混合色。
+     *
+     * <p>底栏背后是系统模糊，颜色不写在 View 上：输入法把混合色通过框架的材质接口交给
+     * 渲染层。这里只读取调用参数并按明暗缓存，不改变任何调用结果，也不依赖具体输入法实现。
+     */
+    private fun ensureMaterialTintHook() {
+        val methods = try {
+            View::class.java.declaredMethods
+        } catch (t: Throwable) {
+            log("material tint: View methods unavailable - $t")
+            return
+        }
+        val available = ArrayList<String>()
+        for (m in methods) {
+            val n = m.name
+            if (n.contains("MiBackgroundBlend") || n.contains("MiGlass")
+                    || n.contains("BlendColor")) {
+                available.add(n)
+            }
+        }
+        var hooked = 0
+        for (m in methods) {
+            if (m.name == "setMiBackgroundBlendColors" && hookBlendColors(m)) {
+                hooked++
+            } else if (m.name == "setMiGlass" && hookGlass(m)) {
+                hooked++
+            }
+        }
+        log("material tint hooks: $hooked available=" + available.toString())
+    }
+
+    /** 从混合色列表里取出普通叠加层；高光类效果层不参与面板配色。 */
+    private fun hookBlendColors(m: Method): Boolean {
+        return try {
+            XposedInit.hook(m) { chain ->
+                try {
+                    val arg = chain.getArg(0)
+                    if (arg is List<*>) {
+                        var best = -1
+                        var bestAlpha = -1
+                        for (item in arg) {
+                            if (item !is android.graphics.Point) {
+                                continue
+                            }
+                            // y 为混合模式：3 是普通叠加，其余属于高光/描边类效果。
+                            if (item.y != 3) {
+                                continue
+                            }
+                            val c = item.x
+                            val a = Color.alpha(c)
+                            if (a > bestAlpha && a >= 40) {
+                                bestAlpha = a
+                                best = c
+                            }
+                        }
+                        if (best != -1) {
+                            sMaterialCalls++
+                            val night = systemNight(sAppCtx)
+                            val prev = if (night) sBlendDark else sBlendLight
+                            if (night) {
+                                sBlendDark = best
+                            } else {
+                                sBlendLight = best
+                            }
+                            if (prev != best) {
+                                log("material blend(" + (if (night) "dark" else "light")
+                                        + ") -> " + hex(best) + " calls=" + sMaterialCalls)
+                                onMaterialTintChanged()
+                            }
+                        }
+                    }
+                } catch (ignored: Throwable) {
+                }
+                chain.proceed()
+            }
+            true
+        } catch (t: Throwable) {
+            log("material blend hook skipped - $t")
+            false
+        }
+    }
+
+    /** 液态玻璃参数数组中的 tint 分量（框架按归一化浮点下发）。 */
+    private fun hookGlass(m: Method): Boolean {
+        return try {
+            XposedInit.hook(m) { chain ->
+                try {
+                    val arg = chain.getArg(0)
+                    if (arg is FloatArray && arg.size >= 37) {
+                        val r = Math.max(0, Math.min(255, (arg[11] * 255f).toInt()))
+                        val g = Math.max(0, Math.min(255, (arg[12] * 255f).toInt()))
+                        val b = Math.max(0, Math.min(255, (arg[13] * 255f).toInt()))
+                        val a = Math.max(0, Math.min(255, (arg[36] * 255f).toInt()))
+                        if (a > 0) {
+                            val c = Color.argb(a, r, g, b)
+                            if (c != sGlassTint) {
+                                sGlassTint = c
+                                log("material glass tint -> " + hex(c))
+                                onMaterialTintChanged()
+                            }
+                        }
+                    }
+                } catch (ignored: Throwable) {
+                }
+                chain.proceed()
+            }
+            true
+        } catch (t: Throwable) {
+            log("material glass hook skipped - $t")
+            false
+        }
+    }
+
+    /** 材质混合色在面板显示之后才下发时，回到主线程按新色重刷一次。 */
+    private fun onMaterialTintChanged() {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val live = getLiveBody() ?: return@post
+                applyPanelBackground(live, barColor(sBarBgColor))
+            } catch (t: Throwable) {
+                log("material tint refresh failed - $t")
+            }
         }
     }
 
@@ -686,6 +961,7 @@ object PanelColorHook {
                 val body = getLiveBody()
                 if (body != null) {
                     applyPanelBackground(body, barColor(bg))
+                    requestBarComposite(body, true)
                 }
                 result
             }
@@ -774,6 +1050,14 @@ object PanelColorHook {
                     // （面板视图自己的 context 是 createPhraseThemeContext 的快照，会过期）。
                     sAppCtx = body.context.applicationContext
                     captureFallback(body)
+                    // 启动期日志常被缓冲区淘汰，这里随面板开合输出一次材质链路状态。
+                    log("material status: methods=" + (sMaterialMethods?.size ?: -1)
+                            + " unavailable=" + sNativeUnavailable
+                            + " attempts=" + sNativeAttempts
+                            + " pass=" + sPassBlurState
+                            + " detail=" + sNativeDetail
+                            + " calls=" + sMaterialCalls
+                            + " schema=" + MATERIAL_SCHEMA)
                     startThemeWatch(body)
 
                     val color = barColor(sBarBgColor)
@@ -783,9 +1067,11 @@ object PanelColorHook {
                         Handler(Looper.getMainLooper()).postDelayed({
                             applyPanelBackground(body, barColor(sBarBgColor))
                         }, 300L)
+                        requestBarComposite(body, true)
                         return
                     }
                     applyPanelBackground(body, color)
+                    requestBarComposite(body, true)
                 } catch (t: Throwable) {
                     log("scheduleTint error - $t")
                 }
@@ -878,6 +1164,7 @@ object PanelColorHook {
         val watch = object : Runnable {
             var beat = 0
             var miss = 0
+            var probe = 0
 
             override fun run() {
                 // 用活 body：主题切换若使 phrase 重建面板，缓存的 sPanelBodyRef 会 detached，
@@ -904,6 +1191,10 @@ object PanelColorHook {
                     }
                 } catch (t: Throwable) {
                     log("theme watch error - $t")
+                }
+                // 底栏观感随场景变化，按节拍复核；内部有最小间隔与在途请求保护。
+                if (++probe % PROBE_HEARTBEAT == 0) {
+                    requestBarComposite(b, false)
                 }
                 if (sThemeWatch) {
                     Handler(Looper.getMainLooper()).postDelayed(this, THEME_WATCH_MS)
@@ -945,6 +1236,14 @@ object PanelColorHook {
         // 徽标圆底与磨砂卡停在旧主题，需关面板重开才恢复（用户 2026-10-25 反馈）。
         sBlurNight = night
         sLastNight = night
+        // 主题令牌与涂色缓存一并失效，避免上一主题的底色滞留在重建后的面板上。
+        sAppliedPanelColor = -1
+        sCompositeColor = -1
+        sProbeAt = 0L
+        sNativeBodyRef = WeakReference(null)
+        sNativeAttempts = 0
+        sPassBlurState = null
+        log("theme cache cleared -> " + (if (night) "night" else "day"))
         refreshPhraseTheme(night)
         // refreshPhraseTheme 之后面板可能已被重建，重取一次活 body 再刷新前景：
         // 模糊态 => applyBlurForeground（内部 contrastWalk->blurWalk 已用最新 sBlurNight 重涂徽标）；
@@ -1092,6 +1391,14 @@ object PanelColorHook {
             // 文字、图标一整套资源本来就是按<b>系统</b>主题为模糊态设计的，半透明合成色也来自
             // 系统下发——所以模糊分支的明暗一律以 isSystemNight 为准。
             val sysNight = isSystemNight(body)
+            // 背景渲染方式由「启用高斯模糊背景」开关决定：开启走原生材质（高斯模糊），
+            // 关闭走裸模糊（半透玻璃）；原生材质不可用时回退裸模糊。
+            if (ModulePrefs.isGaussianBlurEnabled() && tryNativeMaterial(body, sysNight)) {
+                sBlurPanel = true
+                sAppliedPanelColor = -1
+                applyBlurForeground(body, sysNight)
+                return
+            }
             if (applyBlurPanel(body, sysNight)) {
                 // 模糊态：面板观感由裸模糊决定，没有可判明暗的实色底 → 主题纠偏保持不干预；
                 // 前景（磨砂卡片 / 系统主题文字）全部交还原生，补底与纠偏一律不执行
@@ -1142,15 +1449,551 @@ object PanelColorHook {
      * 与底部功能区色差明显。修正为与浅色对称：不叠底色，面板 = 裸模糊 ≈ 功能区。
      */
     private fun barLikeTint(night: Boolean): Int {
-        if (!night) {
-            return Color.TRANSPARENT
+        // 底栏观感由「窗口背后模糊 + 材质混合色」构成。照抄同一层混合色后，
+        // 面板与底栏同源，底层模糊仍随壁纸变化，不需要复制一个静态 ARGB。
+        val glass = sGlassTint
+        if (glass != -1 && Color.alpha(glass) > 0) {
+            sTintFrom = "glass"
+            return glass
+        }
+        val blend = if (night) sBlendDark else sBlendLight
+        if (blend != -1 && Color.alpha(blend) > 0) {
+            sTintFrom = "blend"
+            return blend
         }
         val alphaColor = sBarAlphaColor
         val a = Color.alpha(alphaColor)
-        if (alphaColor != -1 && a > 0 && a < 255 && isDarkColor(alphaColor)) {
+        if (night && alphaColor != -1 && a > 0 && a < 255 && isDarkColor(alphaColor)) {
+            sTintFrom = "alpha"
             return withAlpha(alphaColor, a * a / 255)
         }
-        return Color.TRANSPARENT
+        // 材质接口未观测到调用时，按当前明暗给出等效混合层。深浅两态对称，
+        // 主题切换后取值立即改变，不会残留上一主题的颜色。
+        sTintFrom = "default"
+        return if (night) DEFAULT_DARK_BLEND else DEFAULT_LIGHT_BLEND
+    }
+
+    /** 视图层采样结果：颜色、与底栏区域的相交面积、来源类名。 */
+    private class BarLayer(val color: Int, val area: Int, val label: String)
+
+    /**
+     * 取回底栏区域「已合成」的颜色。
+     *
+     * <p>底栏被改透明后，换色参数与单个 {@link ColorDrawable} 都不再携带颜色，可见观感来自
+     * 窗口背后内容与材质层的合成。这里读取窗口 surface 的对应区域并统计主色，得到与肉眼
+     * 所见一致的颜色；surface 不可用、或该区域未绘制出内容时，退回视图层合成。
+     *
+     * <p>像素拷贝是异步的，结果回到主线程后再比对并决定是否重涂；同一时刻只允许一次在途请求。
+     */
+    private fun requestBarComposite(body: View, force: Boolean) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (sProbePending || (!force && now - sProbeAt < PROBE_INTERVAL_MS)) {
+            return
+        }
+        sProbeAt = now
+        val bottom = bottomView()
+        val decor = (bottom ?: body).rootView
+        val rect = windowBarRect(decor, bottom)
+        val surface = surfaceOf(decor)
+        if (surface == null || rect == null || !surface.isValid) {
+            log("bar probe: window surface unavailable")
+            applyCompositeIfChanged(scanBarComposite(body, decor, rect), "layers")
+            return
+        }
+        val bmp = Bitmap.createBitmap(
+                PROBE_BITMAP_PX, PROBE_BITMAP_PX, Bitmap.Config.ARGB_8888)
+        sProbePending = true
+        try {
+            PixelCopy.request(surface, rect, bmp,
+                    object : PixelCopy.OnPixelCopyFinishedListener {
+                        override fun onPixelCopyFinished(result: Int) {
+                            sProbePending = false
+                            try {
+                                val pixels = if (result == PixelCopy.SUCCESS) {
+                                    dominantColor(bmp)
+                                } else {
+                                    -1
+                                }
+                                if (pixels != -1) {
+                                    applyCompositeIfChanged(pixels, "pixels")
+                                } else {
+                                    if (!sProbeDumped) {
+                                        log("bar probe: pixel copy result=$result")
+                                    }
+                                    applyCompositeIfChanged(
+                                            scanBarComposite(body, decor, rect), "layers")
+                                }
+                            } catch (t: Throwable) {
+                                log("bar probe: apply error - $t")
+                            } finally {
+                                bmp.recycle()
+                            }
+                        }
+                    }, Handler(Looper.getMainLooper()))
+        } catch (t: Throwable) {
+            sProbePending = false
+            bmp.recycle()
+            log("bar probe: pixel copy unavailable - $t")
+            applyCompositeIfChanged(scanBarComposite(body, decor, rect), "layers")
+        }
+    }
+
+    /**
+     * 采样结果只用于运行期排查，不参与面板着色。
+     *
+     * <p>窗口 surface 与视图层都只能看到控件自身的底色，看不到渲染器合成后的底栏观感；
+     * 把这类值铺到面板上会得到与底栏无关的假色，且在主题切换后滞留。
+     */
+    private fun applyCompositeIfChanged(color: Int, from: String) {
+        if (color == -1) {
+            if (!sProbeDumped) {
+                log("bar probe: no usable color from $from")
+            }
+            return
+        }
+        if (color != sCompositeColor) {
+            sCompositeColor = color
+            sCompositeFrom = from
+            log("bar probe: composite=" + hex(color) + " from=" + from
+                    + " (diagnostic only)")
+        }
+    }
+
+    /** 底栏在窗口坐标系中的矩形；拿不到功能栏时取窗口下方五分之一。 */
+    private fun windowBarRect(decor: View, bottom: View?): Rect? {
+        val w = decor.width
+        val h = decor.height
+        if (w <= 0 || h <= 0) {
+            return null
+        }
+        if (bottom != null && bottom.width > 0 && bottom.height > 0) {
+            try {
+                val loc = IntArray(2)
+                bottom.getLocationInWindow(loc)
+                val l = Math.max(0, loc[0])
+                val t = Math.max(0, loc[1])
+                val r = Math.min(w, loc[0] + bottom.width)
+                val b = Math.min(h, loc[1] + bottom.height)
+                if (r - l > 8 && b - t > 8) {
+                    return Rect(l, t, r, b)
+                }
+            } catch (ignored: Throwable) {
+            }
+        }
+        return Rect(0, h * 4 / 5, w, h)
+    }
+
+    /** 面板视图所在窗口的 surface，供区域像素拷贝使用。 */
+    private fun surfaceOf(decor: View): Surface? {
+        return try {
+            val getVri = findMethodInHierarchy(View::class.java, "getViewRootImpl")
+                    ?: return null
+            getVri.isAccessible = true
+            val vri = getVri.invoke(decor) ?: return null
+            val f = findFieldInHierarchy(vri.javaClass, "mSurface") ?: return null
+            f.isAccessible = true
+            f.get(vri) as? Surface
+        } catch (t: Throwable) {
+            log("bar probe: surface unavailable - $t")
+            null
+        }
+    }
+
+    /** 沿类继承链查找字段（含隐藏字段）。 */
+    private fun findFieldInHierarchy(clazz: Class<*>, name: String): Field? {
+        var c: Class<*>? = clazz
+        while (c != null) {
+            try {
+                return c.getDeclaredField(name)
+            } catch (ignored: Throwable) {
+                c = c.superclass
+            }
+        }
+        return null
+    }
+
+    /** 采样位图的主色：取各通道中位数，天然滤掉按键、文字等小面积元素。 */
+    private fun dominantColor(bmp: Bitmap): Int {
+        val total = bmp.width * bmp.height
+        val pixels = IntArray(total)
+        bmp.getPixels(pixels, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+        val rs = ArrayList<Int>(total)
+        val gs = ArrayList<Int>(total)
+        val bs = ArrayList<Int>(total)
+        for (p in pixels) {
+            if (Color.alpha(p) < 200) {
+                continue
+            }
+            rs.add(Color.red(p))
+            gs.add(Color.green(p))
+            bs.add(Color.blue(p))
+        }
+        if (rs.size < (total * PROBE_MIN_COVERAGE).toInt()) {
+            return -1
+        }
+        java.util.Collections.sort(rs)
+        java.util.Collections.sort(gs)
+        java.util.Collections.sort(bs)
+        val mid = rs.size / 2
+        return Color.rgb(rs[mid], gs[mid], bs[mid])
+    }
+
+    /**
+     * 视图层兜底：按绘制顺序把与底栏区域相交的背景层做 alpha 合成。
+     *
+     * <p>只采集覆盖底栏区域四分之一以上的层，避免把按键、图标等小面积 drawable 当成底色；
+     * 首轮同时输出分层结构，便于确认颜色实际落在哪一层。
+     */
+    private fun scanBarComposite(body: View, decor: View, rect: Rect?): Int {
+        val bounds = rect ?: Rect(0, decor.height * 4 / 5, decor.width, decor.height)
+        val barArea = Math.max(1, bounds.width() * bounds.height())
+        val layers = ArrayList<BarLayer>(PROBE_VIEW_LIMIT)
+        collectBarLayers(decor, bounds, barArea, layers)
+        if (layers.isEmpty()) {
+            return -1
+        }
+        val base = panelFallbackColor(isNight(body))
+        var r = Color.red(base).toFloat()
+        var g = Color.green(base).toFloat()
+        var b = Color.blue(base).toFloat()
+        for (l in layers) {
+            val cover = Math.min(1f, l.area.toFloat() / barArea.toFloat())
+            val a = Color.alpha(l.color) / 255f * cover
+            if (a <= 0.02f) {
+                continue
+            }
+            r += (Color.red(l.color) - r) * a
+            g += (Color.green(l.color) - g) * a
+            b += (Color.blue(l.color) - b) * a
+        }
+        val result = Color.rgb(r.toInt(), g.toInt(), b.toInt())
+        return if (maxChannelDelta(result, base) < COMPOSITE_MIN_DELTA) -1 else result
+    }
+
+    /** 两个颜色的最大通道差，用于判定采样结果是否只是窗口自身底色。 */
+    private fun maxChannelDelta(a: Int, b: Int): Int {
+        val dr = Math.abs(Color.red(a) - Color.red(b))
+        val dg = Math.abs(Color.green(a) - Color.green(b))
+        val db = Math.abs(Color.blue(a) - Color.blue(b))
+        return Math.max(dr, Math.max(dg, db))
+    }
+
+    /** 当前模糊层叠加色的来源，仅用于运行期排查。 */
+    private fun tintSource(): String {
+        return sTintFrom
+    }
+
+    /**
+     * 让面板与底栏走同一套系统材质渲染。
+     *
+     * <p>独立 PopupWindow 的背景模糊只采样自身窗口背后，与底栏材质的采样源不同，任何
+     * 固定叠色都无法让两者一致。这里把面板视图接入框架的材质接口，由系统渲染器统一
+     * 处理模糊与混合色；接口缺失或调用失败时返回 false，调用方回退到原有模糊层。
+     */
+    private fun tryNativeMaterial(body: View, night: Boolean): Boolean {
+        if (sNativeUnavailable || sNativeAttempts > NATIVE_RETRY_LIMIT) {
+            return false
+        }
+        if (resolveMaterialMethods() == null) {
+            sNativeUnavailable = true
+            return false
+        }
+        val configured = sNativeBodyRef.get()
+        if (configured === body && sNativeNight == night) {
+            return true
+        }
+        val ok = applyNativeMaterial(body, night)
+        if (ok) {
+            sNativeBodyRef = WeakReference(body)
+            sNativeNight = night
+            sNativeAttempts = 0
+        } else {
+            // 视图尚未挂载、窗口状态尚未就绪都可能随下一次布局恢复，只做有界重试
+            sNativeAttempts++
+            log("native material: transient attempt " + sNativeAttempts
+                    + "/" + NATIVE_RETRY_LIMIT + " detail=" + sNativeDetail)
+        }
+        return ok
+    }
+
+    /** 解析框架材质接口；结果按进程缓存，空表表示本机不可用。 */
+    private fun resolveMaterialMethods(): Map<String, Method>? {
+        val cached = sMaterialMethods
+        if (cached != null) {
+            return if (cached.isEmpty()) null else cached
+        }
+        val map = HashMap<String, Method>()
+        try {
+            val intNames = arrayOf("setMiBackgroundBlurMode", "setMiBackgroundBlurRadius",
+                    "setMiViewBlurMode", "setMiBackgroundBlurType")
+            for (n in intNames) {
+                map[n] = View::class.java.getMethod(n, Int::class.javaPrimitiveType)
+            }
+            val boolNames = arrayOf("setPassWindowBlurEnabled", "setMixEffectEnabled")
+            for (n in boolNames) {
+                map[n] = View::class.java.getMethod(n, Boolean::class.javaPrimitiveType)
+            }
+            map["setMiBackgroundBlendColors"] =
+                    View::class.java.getMethod("setMiBackgroundBlendColors", ArrayList::class.java)
+            try {
+                map["setMiBlurWinType"] =
+                        View::class.java.getMethod("setMiBlurWinType", Int::class.javaPrimitiveType)
+            } catch (ignored: Throwable) {
+                // 旧版框架没有离屏填充接口，其余材质能力仍可使用
+            }
+        } catch (t: Throwable) {
+            sMaterialMethods = HashMap()
+            log("native material: methods unavailable - $t")
+            return null
+        }
+        sMaterialMethods = map
+        log("native material: methods ready=" + map.keys.toString()
+                + " schema=" + MATERIAL_SCHEMA)
+        return map
+    }
+
+    /**
+     * 在同步调用栈内放行窗口采样准入并开启跨窗口采样，随后核对框架实际记录的状态。
+     *
+     * <p>面板内容视图的 context 与承载它的窗口可能分属不同包，仅按宿主包名放行会漏配；
+     * 部分框架版本还会在 ViewRoot 上保存一份准入名单。这里只在本次调用期间临时满足两者，
+     * 调用结束即还原，不改动系统的长期配置。返回 null 表示本机没有可核对的状态字段。
+     */
+    private fun enablePassWindowBlur(body: View, setter: Method): Boolean? {
+        val root = try {
+            val getter = try {
+                View::class.java.getMethod("getViewRootImpl")
+            } catch (ignored: Throwable) {
+                View::class.java.getDeclaredMethod("getViewRootImpl")
+                        .also { it.isAccessible = true }
+            }
+            getter.invoke(body)
+        } catch (t: Throwable) {
+            null
+        }
+        var filterField: Field? = null
+        var originalFilter: String? = null
+        var pkg: String? = null
+        if (root != null) {
+            try {
+                filterField = root.javaClass.getDeclaredField("mPassWindowBlurFilterData")
+                filterField.isAccessible = true
+                originalFilter = filterField.get(root) as? String
+            } catch (ignored: Throwable) {
+                filterField = null
+            }
+            try {
+                val ctxField = root.javaClass.getDeclaredField("mContext")
+                ctxField.isAccessible = true
+                val ctx = ctxField.get(root) as? Context
+                if (ctx != null) {
+                    pkg = Context::class.java.getMethod("getBasePackageName")
+                            .invoke(ctx) as? String
+                }
+            } catch (ignored: Throwable) {
+                // 取不到包名时仍可依赖调用栈内的临时放行
+            }
+        }
+        val needsAdmission = !originalFilter.isNullOrEmpty()
+                && pkg != null && !originalFilter.contains(pkg)
+        sBlurAdmission.set(true)
+        try {
+            if (needsAdmission) {
+                try {
+                    filterField?.set(root, "$originalFilter $pkg")
+                } catch (ignored: Throwable) {
+                }
+            }
+            setter.invoke(body, true)
+            return try {
+                val state = View::class.java.getDeclaredField("mNeedPassWindowBlur")
+                state.isAccessible = true
+                state.getBoolean(body)
+            } catch (ignored: Throwable) {
+                null
+            }
+        } finally {
+            if (needsAdmission) {
+                try {
+                    filterField?.set(root, originalFilter)
+                } catch (ignored: Throwable) {
+                }
+            }
+            sBlurAdmission.remove()
+        }
+    }
+
+    /** 按当前明暗配置材质，返回是否成功接管面板背景。 */
+    private fun applyNativeMaterial(body: View, night: Boolean): Boolean {
+        val m = resolveMaterialMethods() ?: return false
+        val required = arrayOf("setPassWindowBlurEnabled", "setMixEffectEnabled",
+                "setMiBackgroundBlurMode", "setMiBackgroundBlurRadius",
+                "setMiViewBlurMode", "setMiBackgroundBlendColors",
+                "setMiBackgroundBlurType")
+        for (n in required) {
+            if (!m.containsKey(n)) {
+                log("native material: missing $n")
+                return false
+            }
+        }
+        if (!body.isAttachedToWindow) {
+            sNativeDetail = "body not attached"
+            return false
+        }
+        val previous = body.background
+        return try {
+            val radius = Math.round(40f * body.resources.displayMetrics.density)
+            // 保留面板圆角轮廓，底色交还框架材质层
+            val shape = GradientDrawable()
+            shape.shape = GradientDrawable.RECTANGLE
+            // 仅上方保留圆角，下方贴底栏不做圆角，避免裁切透出键盘
+            val r = cornerRadiusOf(body)
+            shape.cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            shape.setColor(Color.TRANSPARENT)
+            body.background = shape
+
+            val passBlur = enablePassWindowBlur(body, m.getValue("setPassWindowBlurEnabled"))
+            sPassBlurState = passBlur
+            if (passBlur != null && !passBlur) {
+                body.background = previous
+                sNativeDetail = "pass-window blur rejected, schema=" + ADMISSION_SCHEMA
+                log("native material: " + sNativeDetail)
+                return false
+            }
+            m.getValue("setMixEffectEnabled").invoke(body, false)
+            m.getValue("setMiBackgroundBlurMode").invoke(body, 1)
+            m.getValue("setMiBackgroundBlurRadius").invoke(body, radius)
+            m.getValue("setMiViewBlurMode").invoke(body, 1)
+
+            val colors = if (night) {
+                intArrayOf(0xE6707070.toInt(), 0x99141414.toInt(), 0x0FA3AFC2)
+            } else {
+                intArrayOf(0x80FFFFFF.toInt(), 0x66FFFFFF, 0x66A5A8AC.toInt())
+            }
+            val modes = if (night) intArrayOf(15, 3, 3) else intArrayOf(121, 3, 3)
+            val layers = ArrayList<android.graphics.Point>(colors.size)
+            for (i in colors.indices) {
+                layers.add(android.graphics.Point(colors[i], modes[i]))
+            }
+            m.getValue("setMiBackgroundBlendColors").invoke(body, layers)
+            m.getValue("setMiBackgroundBlurType").invoke(body, 0)
+
+            val winType = m["setMiBlurWinType"]
+            if (winType != null) {
+                winType.invoke(body, 65536)
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        if (body.isAttachedToWindow) {
+                            winType.invoke(body, 1)
+                        }
+                    } catch (ignored: Throwable) {
+                    }
+                }, 500L)
+            }
+            body.invalidate()
+            sNativeDetail = "radius=$radius winType=" +
+                    (if (winType != null) "on" else "off") +
+                    " passBlur=" + passBlur + " schema=" + MATERIAL_SCHEMA
+            log("native material applied: dark=$night " + sNativeDetail)
+            true
+        } catch (t: Throwable) {
+            try {
+                body.background = previous
+            } catch (ignored: Throwable) {
+            }
+            sNativeDetail = "exception=" + t.javaClass.simpleName
+            log("native material failed - $t")
+            false
+        }
+    }
+
+    /** 广度优先遍历输入法窗口视图树，收集大面积背景层。 */
+    private fun collectBarLayers(
+            decor: View, bounds: Rect, barArea: Int, out: MutableList<BarLayer>) {
+        val queue = ArrayList<View>(PROBE_VIEW_LIMIT)
+        queue.add(decor)
+        var head = 0
+        val loc = IntArray(2)
+        while (head < queue.size && queue.size < PROBE_VIEW_LIMIT) {
+            val v = queue[head++]
+            try {
+                v.getLocationInWindow(loc)
+                val l = Math.max(bounds.left, loc[0])
+                val t = Math.max(bounds.top, loc[1])
+                val r = Math.min(bounds.right, loc[0] + v.width)
+                val b = Math.min(bounds.bottom, loc[1] + v.height)
+                val area = if (r > l && b > t) (r - l) * (b - t) else 0
+                if (area >= barArea / 4) {
+                    val c = layerColorOf(v)
+                    if (c != 0 && Color.alpha(c) >= 12) {
+                        out.add(BarLayer(c, area, v.javaClass.simpleName))
+                    }
+                }
+                if (v is ViewGroup) {
+                    for (i in 0 until v.childCount) {
+                        if (queue.size >= PROBE_VIEW_LIMIT) {
+                            break
+                        }
+                        val child = v.getChildAt(i)
+                        if (child != null && child.visibility == View.VISIBLE) {
+                            queue.add(child)
+                        }
+                    }
+                }
+            } catch (ignored: Throwable) {
+            }
+        }
+        if (!sProbeDumped) {
+            sProbeDumped = true
+            log("bar probe schema=" + PROBE_SCHEMA + " root=" + decor.javaClass.name
+                    + " rect=" + bounds.toString() + " views=" + queue.size
+                    + " layers=" + out.size)
+            for (i in 0 until Math.min(out.size, PROBE_LOG_LIMIT)) {
+                val layer = out[i]
+                log("bar probe layer[$i] " + layer.label
+                        + " color=" + hex(layer.color) + " area=" + layer.area)
+            }
+        }
+    }
+
+    /** 读取一个视图的背景/前景色，兼容常见的包装型 drawable。 */
+    private fun layerColorOf(v: View): Int {
+        val bg = drawableColorOf(v.background, 0)
+        if (bg != 0 && Color.alpha(bg) > 0) {
+            return bg
+        }
+        val fg = drawableColorOf(v.foreground, 0)
+        if (fg != 0 && Color.alpha(fg) > 0) {
+            return fg
+        }
+        val tintList = v.backgroundTintList
+        return tintList?.defaultColor ?: 0
+    }
+
+    /** 从 drawable 中提取纯色；递归深度受限，避免异常嵌套拖慢采样。 */
+    private fun drawableColorOf(bg: Drawable?, depth: Int): Int {
+        if (bg == null || depth > 3) {
+            return 0
+        }
+        val plain = solidColorOf(bg)
+        if (plain != 0 && Color.alpha(plain) > 0) {
+            return plain
+        }
+        if (bg is LayerDrawable) {
+            for (i in bg.numberOfLayers - 1 downTo 0) {
+                val c = drawableColorOf(bg.getDrawable(i), depth + 1)
+                if (c != 0 && Color.alpha(c) > 0) {
+                    return c
+                }
+            }
+        }
+        if (bg is StateListDrawable) {
+            return drawableColorOf(bg.getStateDrawable(0), depth + 1)
+        }
+        if (bg is DrawableWrapper) {
+            return drawableColorOf(bg.drawable, depth + 1)
+        }
+        return 0
     }
 
     /** 相对亮度（Rec.601 加权，0~255）：{@code (r*299 + g*587 + b*114)/1000}。 */
@@ -1194,14 +2037,16 @@ object PanelColorHook {
         } else {
             val tintLayer = GradientDrawable()
             tintLayer.shape = GradientDrawable.RECTANGLE
-            tintLayer.cornerRadius = radius
+            // 仅上方保留圆角，下方贴底栏不做圆角
+            tintLayer.cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
             tintLayer.setColor(tint)
             bg = LayerDrawable(arrayOf(blur, tintLayer))
         }
         body.background = bg
         body.invalidate()
         log("blur applied: radius=$BLUR_RADIUS corner=$radius"
-                + " tint=${hex(tint)}" + (if (night) " (dark)" else " (light)"))
+                + " tint=${hex(tint)} src=" + tintSource()
+                + (if (night) " (dark)" else " (light)"))
         return true
     }
 
@@ -1860,6 +2705,16 @@ object PanelColorHook {
                 sb.append(" color=").append(hex(solidColorOf(bg)))
             }
             log(sb.toString())
+            // 继续向上转储父层，便于确认颜色实际落在视图树的哪一层。
+            var parent: android.view.ViewParent? = bottomView.parent
+            var depth = 0
+            while (parent is View && depth < 8) {
+                log("bar dump parent[$depth] " + parent.javaClass.simpleName
+                        + " color=" + hex(layerColorOf(parent))
+                        + " alpha=" + parent.alpha)
+                parent = parent.parent
+                depth++
+            }
         } catch (t: Throwable) {
             log("bar dump failed - $t")
         }
@@ -1903,7 +2758,8 @@ object PanelColorHook {
                     Float::class.java, Float::class.java, Float::class.java, Float::class.java)
             if (setCorners != null) {
                 setCorners.isAccessible = true
-                setCorners.invoke(d, radius, radius, radius, radius)
+                // 仅上方圆角：前两参为左上/右上，后两参为右下/左下置 0
+                setCorners.invoke(d, radius, radius, 0f, 0f)
             } else {
                 val setCorner = findMethodInHierarchy(d.javaClass, "setCornerRadius", Float::class.java)
                 if (setCorner != null) {
@@ -2095,6 +2951,16 @@ object PanelColorHook {
             }
         }
         return 0
+    }
+
+    /** 取功能区视图本身；动态 dex 未就绪时返回 null。 */
+    private fun bottomView(): View? {
+        return try {
+            val mgr = resolveBottomManager() ?: return null
+            Reflect.getStaticField(mgr, "sBottomView") as? View
+        } catch (t: Throwable) {
+            null
+        }
     }
 
     /** 取底部功能栏当前实色：优先其 sBottomView 的 ColorDrawable 实色，退回静态字段，皆失败 -1。 */

@@ -66,6 +66,13 @@ class XposedInit : XposedModule() {
             PanelColorHook.init(param)
         }
 
+        // 剪贴板面板原生材质探测（v6）：直接调框架开关让 phrase 面板接入原生材质，
+        // 仅第三方输入法进程生效，不受「面板配色」开关控制（测试时请保持该开关关闭）。
+        // 暂缓启用：待真机验证后再恢复，避免影响面板背景表现
+        if (imeBottomSupported() && pkg != PKG_PHRASE && pkg != PKG_SETTINGS) {
+            // PhraseMaterialHook.init(param)
+        }
+
         // 剪贴板条目置顶（右滑置顶 / 清空保留）：同样装在输入法进程
         // （查询重排 + 右滑手势 + 清空写回全部发生在默认输入法侧）。
         // 由「开启剪贴板条目置顶」开关控制，默认关闭。

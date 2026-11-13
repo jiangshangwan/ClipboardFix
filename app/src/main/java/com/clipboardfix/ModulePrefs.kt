@@ -38,6 +38,9 @@ object ModulePrefs {
     /** 剪贴板/常用语面板背景跟随底部功能栏取色，默认关闭。 */
     const val KEY_PANEL_COLOR = "clipboard_panel_color"
 
+    /** 面板背景渲染方式：true=高斯模糊（原生材质），false=半透玻璃（裸模糊）。默认关闭（半透玻璃）。 */
+    const val KEY_GAUSSIAN_BLUR = "clipboard_panel_gaussian_blur"
+
     /** 剪贴板条目置顶（右滑置顶、清空保留），默认关闭。 */
     const val KEY_CLIPBOARD_PIN = "clipboard_pin_entry"
 
@@ -60,6 +63,7 @@ object ModulePrefs {
     const val DEFAULT_UNLIMIT_COUNT = false
     const val DEFAULT_UNLIMIT_TIME = false
     const val DEFAULT_PANEL_COLOR = false
+    const val DEFAULT_GAUSSIAN_BLUR = false
     const val DEFAULT_CLIPBOARD_PIN = false
     const val DEFAULT_CLIPBOARD_GROUP = false
     const val DEFAULT_CLIPBOARD_GROUP_REMEMBER = false
@@ -110,6 +114,13 @@ object ModulePrefs {
     fun isPanelColorEnabled(): Boolean {
         val p = hookPrefs()
         return p != null && p.getBoolean(KEY_PANEL_COLOR, DEFAULT_PANEL_COLOR)
+    }
+
+    /** 面板背景渲染方式（hook 侧）。true=高斯模糊，false=半透玻璃。默认 false（半透玻璃）。 */
+    @JvmStatic
+    fun isGaussianBlurEnabled(): Boolean {
+        val p = hookPrefs()
+        return p != null && p.getBoolean(KEY_GAUSSIAN_BLUR, DEFAULT_GAUSSIAN_BLUR)
     }
 
     /** 剪贴板条目置顶是否启用（hook 侧）。默认关闭，需用户在「功能设置」里手动开启。 */
