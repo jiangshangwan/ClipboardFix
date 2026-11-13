@@ -25,8 +25,11 @@ object ClearConfirmTextHook {
 
     private const val RES_NAME = "clear_clipboard_data_confirm"
 
-    /** 名称解析不可用时回退到当前版本的资源标识。 */
-    private const val LEGACY_ID = 0x7f110076
+    /** 名称解析不可用时回退到 5.7.8(10278) 基准资源表的标识。 */
+    private const val LEGACY_ID = 0x7f110078
+
+    /** 基准资源表版本代号。 */
+    private const val BASE_RES_REV = 0x2826
 
     private const val TEXT_ZH = "确认清空当前面板内容？"
     private const val TEXT_EN = "Clear current panel content?"
@@ -37,6 +40,7 @@ object ClearConfirmTextHook {
 
     private const val SCHEMA_TAG = "cf" + "26" + "cct"
 
+    /** 目标资源标识；0 表示尚未解析，-1 表示标识路径停用。 */
     @Volatile
     private var resolvedId = 0
 
@@ -72,7 +76,7 @@ object ClearConfirmTextHook {
                 }
             }
             hookTextViewFallback()
-            XposedInit.log("OK: clear-confirm text hook [" + SCHEMA_TAG + "]")
+            XposedInit.log("OK: clear-confirm text hook [" + SCHEMA_TAG + "] rev=" + BASE_RES_REV)
         } catch (t: Throwable) {
             XposedInit.log("FAIL: clear-confirm text hook - $t")
         }
@@ -111,6 +115,7 @@ object ClearConfirmTextHook {
 
     private fun isTargetId(res: Resources?, id: Int): Boolean {
         val cached = resolvedId
+        if (cached == -1) return false
         if (cached != 0) return id == cached
         if (res == null) return false
         val found = try {
@@ -118,9 +123,24 @@ object ClearConfirmTextHook {
         } catch (t: Throwable) {
             0
         }
-        val target = if (found != 0) found else LEGACY_ID
-        resolvedId = target
-        return id == target
+        if (found != 0) {
+            resolvedId = found
+            return id == found
+        }
+        // 兜底标识须复核资源项名：资源表插入条目会让旧标识指向无关串，
+        // 名称不符即停用标识路径，保留原生取值。
+        if (id != LEGACY_ID) return false
+        val entry = try {
+            res.getResourceEntryName(id)
+        } catch (t: Throwable) {
+            null
+        }
+        if (entry != RES_NAME) {
+            resolvedId = -1
+            return false
+        }
+        resolvedId = id
+        return true
     }
 
     private fun matchesSource(s: String): Boolean {
