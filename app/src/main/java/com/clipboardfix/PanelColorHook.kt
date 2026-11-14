@@ -157,6 +157,15 @@ object PanelColorHook {
     private val DEFAULT_DARK_BLEND: Int = 0x99141414.toInt()
     private val DEFAULT_LIGHT_BLEND: Int = 0x66FFFFFF
 
+    /**
+     * 半透玻璃叠色的不透明度系数（阈值 0.60，基准色标 GL-7F2C）。
+     *
+     * <p>关闭「启用高级材质背景」后走裸模糊玻璃路径，叠色在 [barLikeTint] 给出的同源
+     * 混合色之上再整体压低 alpha（RGB 色相不动），使玻璃更透、背后模糊层更明显。
+     * 等效把默认深色 60% 压到约 36%、浅色 40% 压到约 24%；全透明叠色保持裸模糊不变。
+     */
+    private const val GLASS_TINT_ALPHA = 0.6f
+
     /** 材质配置结构版本标记。 */
     private const val MATERIAL_SCHEMA = "hm" + "26" + "v5"
 
@@ -165,6 +174,20 @@ object PanelColorHook {
 
     /** 材质配置在视图尚未挂载等暂时状态下允许的重试次数。 */
     private const val NATIVE_RETRY_LIMIT = 6
+
+    /**
+     * v6.1：面板系统跟随与「输入法收起」解耦。
+     *
+     * 早期 v6 调框架级 [android.inputmethodservice.InputMethodServiceInjector.setHyperMaterialEnabled]，
+     * 该总开关会令 phrase 内部 hideInputArea() 收起键盘，使底栏失去依托变透明（用户实测现象）。
+     * 现改为只驱动 phrase 面板自身：对内容适配器调 setIsHyperMaterial(1)（仅作用于面板，不复用全局
+     * sHyperMaterialEnabled，不触发 hideInputArea），再调 setMiuiPhraseThemeFollowInputMethod(darkTheme)
+     * 令面板材质跟随输入法 / 系统主题。框架总开关保持关闭，输入法键盘不收起，底栏始终有依托、保持
+     * 不透明；面板材质仍由本模块 applyNativeMaterial 的 Miui 模糊接口绘制。
+     */
+    private const val HYPER_MATERIAL_V6 = true
+    private var sHyperMaterialReady = false
+    private var sHyperMaterialTried = false
 
     /** 当前显示的面板内容容器，供换色时同步刷新（面板消失即被回收）。 */
     @Volatile
@@ -900,9 +923,88 @@ object PanelColorHook {
         } catch (t: Throwable) {
             log("WARN: isDarkTheme - $t")
         }
+        // 【重开面板退化为浅色的根因】：phrase 重开面板时复用 sClipboardWindow（不重建 popup），
+        // 构造期 hook 不再触发，showClipBoard 里 setPhraseBackgroundDarkTheme(miuiPhraseFollowType)
+        // 读到被复位/过期的旧值 → 标签栏 / 输入法切换面板退化成浅色。这里直接拦
+        // setPhraseBackgroundDarkTheme 的入参强制成系统明暗（1=日/2=夜），首开与重开都必经此入口、
+        // 都生效；并顺手钉住 miuiPhraseFollowType，供 createPhraseFollowThemeContext 读取。
+        try {
+            val m = popup.getDeclaredMethod("setPhraseBackgroundDarkTheme", Int::class.java)
+            m.isAccessible = true
+            XposedInit.hook(m) { chain ->
+                try {
+                    val forced = if (systemNight(sAppCtx)) 2 else 1
+                    applyPhraseFollowType(forced)
+                    val orig = toInt(chain.getArg(0))
+                    log("phrase setPhraseBackgroundDarkTheme $orig -> $forced")
+                    val modified = chain.args.toTypedArray()
+                    modified[0] = forced
+                    return@hook chain.proceed(modified)
+                } catch (t: Throwable) {
+                    return@hook chain.proceed()
+                }
+            }
+            any = true
+            log("OK: setPhraseBackgroundDarkTheme follow hook installed")
+        } catch (t: Throwable) {
+            log("WARN: setPhraseBackgroundDarkTheme hook - $t")
+        }
+        // 输入法切换面板 / 设置页等按需构建的视图经 createPhraseFollowThemeContext 读
+        // miuiPhraseFollowType；调用前钉到系统明暗，确保这些按需视图也跟随深色模式。
+        try {
+            val bm = Class.forName(BOTTOM_MANAGER, false, cl)
+            val m = bm.getDeclaredMethod("createPhraseFollowThemeContext", Context::class.java)
+            m.isAccessible = true
+            XposedInit.hook(m) { chain ->
+                try {
+                    applyPhraseFollowType(systemNight(sAppCtx))
+                } catch (ignored: Throwable) {
+                    // 断言失败交给后续重试，不阻断主题上下文构建
+                }
+                chain.proceed()
+            }
+            any = true
+            log("OK: createPhraseFollowThemeContext follow hook installed")
+        } catch (t: Throwable) {
+            log("WARN: createPhraseFollowThemeContext hook - $t")
+        }
         sPhraseHooked = any
         if (any) {
             log("OK: phrase theme hooks installed")
+        }
+        // 提前把 miuiPhraseFollowType 钉到当前系统明暗：首次开面板时构造期
+        // setPhraseBackgroundDarkTheme(miuiPhraseFollowType) 即按系统主题派生（标签栏 / 输入法切换面板）。
+        // 该静态字段与收起输入法无关；后续每次开面板 / 切主题再由 applyPhraseHyperMaterial /
+        // refreshPhraseTheme 重新断言。
+        try {
+            applyPhraseFollowType(systemNight(sAppCtx))
+        } catch (ignored: Throwable) {
+            log("WARN: proactive miuiPhraseFollowType - $ignored")
+        }
+        // 兜底：在剪贴板面板构造之前把 miuiPhraseFollowType 钉到系统明暗，避免 phrase 在构造末尾
+        // 的 setPhraseBackgroundDarkTheme(miuiPhraseFollowType) 读到旧值导致标签栏不跟随。
+        try {
+            val imeSvc = Class.forName("android.inputmethodservice.InputMethodService", false, cl)
+            val ctor = popup.getDeclaredConstructor(
+                    Context::class.java,
+                    imeSvc,
+                    Boolean::class.javaPrimitiveType,
+                    View::class.java,
+                    Int::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType,
+                    String::class.java)
+            ctor.isAccessible = true
+            XposedInit.hook(ctor) { chain ->
+                try {
+                    applyPhraseFollowType(systemNight(sAppCtx))
+                } catch (ignored: Throwable) {
+                    // 断言失败不影响构造，交给开面板时的二次断言
+                }
+                chain.proceed()
+            }
+            log("OK: phrase popup <init> follow-type hook installed")
+        } catch (ignored: Throwable) {
+            log("WARN: phrase popup <init> hook - $ignored")
         }
     }
 
@@ -1256,33 +1358,33 @@ object PanelColorHook {
     }
 
     /**
-     * 调 phrase 原生的主题刷新入口 {@code setPhraseBackgroundDarkTheme(int type, int arg2)}，
-     * 让它自己重刷能刷的部分（insideView 背景、导航条 colorMode、空视图文字色、三个
-     * adapter {@code notifyDataSetChanged}、RecyclerView 重排）。
+     * 调 phrase 原生的主题刷新入口 {@code setPhraseBackgroundDarkTheme(int)}，把面板强制成跟随
+     * <b>系统</b>明暗（1=日 / 2=夜，即 miuiPhraseFollowType 的取值，详见 getResourceNightMode），
+     * 正是用户诉求。同时先把进程级 miuiPhraseFollowType 钉到同值，使 createPhraseFollowThemeContext
+     * （输入法切换面板等按需构建的视图）也据此派生主题。
      *
-     * <p>{@code type} 传 {@code night ? 2 : 1}（1=日 / 2=夜），即跟随<b>系统</b>——正是
-     * 用户诉求；模糊态下 [phraseThemeOverride] 返回 -1 不干预，type 原样生效。
-     * {@code arg2} 传 2：原生只在 {@code arg2 != 2} 时把 insideView 背景 setAlpha(0)，
-     * 而模块随后会整体替换背景，没必要让它先抹成透明。
-     *
-     * <p>方法名/签名随 phrase 版本可能变化，一律 try/catch 降级：刷不了只打日志，
-     * 前景由本模块的 [blurWalk] 兜底。
+     * <p>旧实现写成了两参重载 (int,int)，而 phrase 5.7.8 只有单参 (I)V，导致 findMethod 始终
+     * 返回 null、整段静默失效——这是「切换深色模式后标签栏 / 输入法选择器不跟随」的根因之一。
+     * 这里改回单参，并显式强制 miuiPhraseFollowType，确保切换时面板子树真正重解析主题。
      */
     private fun refreshPhraseTheme(night: Boolean) {
+        val follow = if (night) 2 else 1
+        applyPhraseFollowType(follow)
         val pw = sPopupRef.get()
         if (pw == null) {
+            // 即便 popup 还没就绪，miuiPhraseFollowType 已先钉好，构造期即可生效。
             return
         }
         try {
             val m = findMethodInHierarchy(pw.javaClass,
-                    "setPhraseBackgroundDarkTheme", Int::class.java, Int::class.java)
+                    "setPhraseBackgroundDarkTheme", Int::class.java)
             if (m == null) {
                 log("phrase refresh: setPhraseBackgroundDarkTheme not found")
                 return
             }
             m.isAccessible = true
-            m.invoke(pw, if (night) 2 else 1, 2)
-            log("phrase refresh invoked, type=" + (if (night) 2 else 1))
+            m.invoke(pw, follow)
+            log("phrase refresh invoked, type=$follow")
         } catch (t: Throwable) {
             log("phrase refresh failed - $t")
         }
@@ -1836,6 +1938,9 @@ object PanelColorHook {
                 return false
             }
         }
+        // v6.1：只驱动 phrase 面板自身材质（适配器 setIsHyperMaterial + 主题跟随），不复用框架
+        // 级 setHyperMaterialEnabled，避免触发 hideInputArea() 收起键盘导致底栏透明。
+        val following = applyPhraseHyperMaterial(body, night)
         if (!body.isAttachedToWindow) {
             sNativeDetail = "body not attached"
             return false
@@ -1865,17 +1970,23 @@ object PanelColorHook {
             m.getValue("setMiBackgroundBlurRadius").invoke(body, radius)
             m.getValue("setMiViewBlurMode").invoke(body, 1)
 
-            val colors = if (night) {
-                intArrayOf(0xE6707070.toInt(), 0x99141414.toInt(), 0x0FA3AFC2)
+            if (following) {
+                // v6：框架级材质已接管，交由 phrase 按系统主题派生面板材质（与底栏同源），
+                // 不再写入写死混合色；透明形状层仅作圆角遮罩保留。
+                log("native material: theme-follow active, skip hardcoded blend")
             } else {
-                intArrayOf(0x80FFFFFF.toInt(), 0x66FFFFFF, 0x66A5A8AC.toInt())
+                val colors = if (night) {
+                    intArrayOf(0xE6707070.toInt(), 0x99141414.toInt(), 0x0FA3AFC2)
+                } else {
+                    intArrayOf(0x80FFFFFF.toInt(), 0x66FFFFFF, 0x66A5A8AC.toInt())
+                }
+                val modes = if (night) intArrayOf(15, 3, 3) else intArrayOf(121, 3, 3)
+                val layers = ArrayList<android.graphics.Point>(colors.size)
+                for (i in colors.indices) {
+                    layers.add(android.graphics.Point(colors[i], modes[i]))
+                }
+                m.getValue("setMiBackgroundBlendColors").invoke(body, layers)
             }
-            val modes = if (night) intArrayOf(15, 3, 3) else intArrayOf(121, 3, 3)
-            val layers = ArrayList<android.graphics.Point>(colors.size)
-            for (i in colors.indices) {
-                layers.add(android.graphics.Point(colors[i], modes[i]))
-            }
-            m.getValue("setMiBackgroundBlendColors").invoke(body, layers)
             m.getValue("setMiBackgroundBlurType").invoke(body, 0)
 
             val winType = m["setMiBlurWinType"]
@@ -1905,6 +2016,130 @@ object PanelColorHook {
             log("native material failed - $t")
             false
         }
+    }
+
+    /**
+     * v6.1：只驱动 phrase 面板自身材质，不复用框架级 setHyperMaterialEnabled（该开关会令 phrase 内部
+     * hideInputArea() 收起键盘，使底栏失依托变透明）。返回 true 表示面板材质已接管（调用方据此跳过
+     * 写死混合色）。
+     *
+     * <p>实现：① 对面板内容适配器调 setIsHyperMaterial(true)（仅作用于面板，不触碰全局 sHyperMaterialEnabled，
+     * 不会触发 hideInputArea）；② 调 setMiuiPhraseThemeFollowInputMethod(darkTheme) 令面板材质跟随输入法 /
+     * 系统主题（直接调框架 InputMethodServiceInjector 的主题跟随接口，不调用 setHyperMaterialEnabled）。失败降级返回
+     * false，由 [applyNativeMaterial] 回退到写死混合色。仅在「启用高斯模糊背景」开启时由 [applyNativeMaterial] 调用。
+     */
+    private fun applyPhraseHyperMaterial(body: View, night: Boolean): Boolean {
+        if (!HYPER_MATERIAL_V6) {
+            return false
+        }
+        if (sHyperMaterialReady) {
+            refreshPhraseHyperMaterial(night)
+            return true
+        }
+        if (sHyperMaterialTried) {
+            return false
+        }
+        sHyperMaterialTried = true
+        return try {
+            val popup = sPopupRef.get()
+            if (popup == null) {
+                // 面板 popup 尚未就绪，允许下次重试（调用方有界重试）。
+                sHyperMaterialTried = false
+                log("hyper material: popup ref not ready, defer")
+                return false
+            }
+            // ① 适配器材质（仅作用于面板，不触发 hideInputArea）。setIsHyperMaterial 签名为 (Z)V。
+            var applied = false
+            for (name in arrayOf("mInputMethodClipboardAdapter", "mInputMethodPhraseAdapter")) {
+                try {
+                    val f = popup.javaClass.getDeclaredField(name).apply { isAccessible = true }
+                    val adapter = f.get(popup) ?: continue
+                    adapter.javaClass.getDeclaredMethod("setIsHyperMaterial", Boolean::class.javaPrimitiveType)
+                            .apply { isAccessible = true }.invoke(adapter, true)
+                    applied = true
+                    log("hyper material: setIsHyperMaterial on $name")
+                } catch (ignored: Throwable) {
+                    // 某适配器不存在时跳过
+                }
+            }
+            if (!applied) {
+                throw IllegalStateException("phrase adapter setIsHyperMaterial unavailable")
+            }
+            // ② 主题跟随（框架级，令面板材质跟随输入法/系统主题）
+            applyThemeFollow(popup, night)
+            // ③ 强制 phrase 进程级 miuiPhraseFollowType 到系统明暗，驱动标签栏 / 输入法
+            // 切换面板等整条 subtree 跟随深色模式（该 setter 只写静态字段，不收起输入法）。
+            applyPhraseFollowType(night)
+            sHyperMaterialReady = true
+            log("hyper material: phrase-level applied, themeFollow night=$night")
+            true
+        } catch (t: Throwable) {
+            log("hyper material: phrase-level unavailable - $t")
+            false
+        }
+    }
+
+    /** 已确认可用后，按当前明暗刷新一次主题跟随（幂等，吞异常）。 */
+    private fun refreshPhraseHyperMaterial(night: Boolean) {
+        val popup = sPopupRef.get() ?: return
+        applyThemeFollow(popup, night)
+        // 同步把 phrase 进程级 miuiPhraseFollowType 钉到系统明暗，覆盖 phrase 在两次开面板之间
+        // 对该字段的任何复位，确保标签栏 / 输入法切换面板跟随当前主题。
+        applyPhraseFollowType(night)
+    }
+
+    /**
+     * 令面板材质跟随输入法 / 系统主题。调用框架 InputMethodServiceInjector 的
+     * setMiuiPhraseThemeFollowInputMethod(darkTheme)（仅此一处，绝不动 setHyperMaterialEnabled，
+     * 故不会触发 hideInputArea() 收起键盘）。该方法是独立的主题跟随开关，与收起输入法的
+     * setHyperMaterialEnabled 解耦。找不到时仅记日志，面板沿用默认材质。
+     */
+    private fun applyThemeFollow(popup: Any, night: Boolean) {
+        try {
+            val injector = resolveClass("android.inputmethodservice.InputMethodServiceInjector") ?: return
+            val m = try {
+                injector.getMethod("setMiuiPhraseThemeFollowInputMethod", Int::class.javaPrimitiveType)
+            } catch (ignored: Throwable) {
+                injector.getMethod("setMiuiPhraseThemeFollowInputMethod", Boolean::class.javaPrimitiveType)
+            }
+            if (m.parameterTypes[0] == Boolean::class.javaPrimitiveType) {
+                m.invoke(null, night)
+            } else {
+                m.invoke(null, if (night) 1 else 0)
+            }
+            log("hyper material: themeFollow via InputMethodServiceInjector")
+        } catch (ignored: Throwable) {
+            log("hyper material: themeFollow unavailable (panel may use default material)")
+        }
+    }
+
+    /**
+     * 强制 phrase 进程级 miuiPhraseFollowType 静态字段（1=日 / 2=夜，对应
+     * getResourceNightMode 的取值）。通过反射调用其私有静态 setter
+     * setMiuiPhraseThemeFollowInputMethod(I)V——该方法只写静态字段，不触碰
+     * sHyperMaterialEnabled、不触发 hideInputArea()，故不会收起输入法。
+     *
+     * <p>该字段驱动整条 phrase 子树的主题派生：① 输入法切换面板 / 设置页等按需构建的视图经
+     * createPhraseFollowThemeContext 读它；② 剪贴板面板构造末尾的 setPhraseBackgroundDarkTheme
+     * 也读它。把它钉到系统明暗，标签栏与输入法选择器即可跟随深色模式。
+     */
+    private fun applyPhraseFollowType(follow: Int) {
+        try {
+            val mgr = resolveBottomManager() ?: return
+            val m = mgr.getDeclaredMethod(
+                    "setMiuiPhraseThemeFollowInputMethod", Int::class.javaPrimitiveType)
+            m.isAccessible = true
+            m.invoke(null, follow)
+            log("hyper material: miuiPhraseFollowType -> $follow")
+        } catch (ignored: Throwable) {
+            log("hyper material: setMiuiPhraseThemeFollowInputMethod unavailable - $ignored")
+        }
+    }
+
+    /** 按系统明暗强制 phrase 主题跟随：true=夜 / false=日。 */
+    private fun applyPhraseFollowType(night: Boolean) {
+        // keep phrase follow-type pinned to system night to avoid stale context (cf-jsw)
+        applyPhraseFollowType(if (night) 2 else 1)
     }
 
     /** 广度优先遍历输入法窗口视图树，收集大面积背景层。 */
@@ -2029,7 +2264,14 @@ object PanelColorHook {
             return false
         }
         dumpBarOnce()
-        val tint = barLikeTint(night)
+        // 半透玻璃：叠色在同源混合色之上再压低不透明度（GLASS_TINT_ALPHA），色相不变，
+        // 让背后模糊层更透出来；全透明叠色仍走裸模糊。
+        val rawTint = barLikeTint(night)
+        val tint = if (Color.alpha(rawTint) == 0) {
+            rawTint
+        } else {
+            withAlpha(rawTint, Math.round(Color.alpha(rawTint) * GLASS_TINT_ALPHA))
+        }
         val bg: Drawable
         if (Color.alpha(tint) == 0) {
             // 功能区没有任何颜色叠加，面板也必须「裸模糊」才能同色（深浅色同理）。
