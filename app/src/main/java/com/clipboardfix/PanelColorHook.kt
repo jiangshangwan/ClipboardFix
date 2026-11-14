@@ -968,6 +968,8 @@ object PanelColorHook {
         } catch (t: Throwable) {
             log("WARN: createPhraseFollowThemeContext hook - $t")
         }
+        // 底部功能区由系统按下发的颜色自行绘制，此处只接管面板背景与主题上下文；
+        // 不额外改写底栏的绘制结果（207.c3）。
         sPhraseHooked = any
         if (any) {
             log("OK: phrase theme hooks installed")

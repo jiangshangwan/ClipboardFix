@@ -67,7 +67,6 @@ fun installPages(
     swClipboardPin: State<Boolean>,
     swClipboardGroup: State<Boolean>,
     swClipboardGroupRemember: State<Boolean>,
-    swGaussianBlur: State<Boolean>,
     iconHidden: State<Boolean>,
     onCheckUpdate: Runnable,
     onStatusCardTap: Runnable,
@@ -78,7 +77,6 @@ fun installPages(
     onToggleClipboardPin: BoolAction,
     onToggleClipboardGroup: BoolAction,
     onToggleClipboardGroupRemember: BoolAction,
-    onToggleGaussianBlur: BoolAction,
     onHideIcon: BoolAction,
     onRebootOrReload: IntAction,
     onOpenCoolapk: Runnable,
@@ -124,11 +122,11 @@ fun installPages(
     feature.setContent {
         ClipboardFixTheme {
             FeaturePage(
+                moduleEnabled = statusEnabled.value,
                 swImeUnlock = swImeUnlock.value,
                 swUnlimitCount = swUnlimitCount.value,
                 swUnlimitTime = swUnlimitTime.value,
                 swPanelColor = swPanelColor.value,
-                swGaussianBlur = swGaussianBlur.value,
                 swClipboardPin = swClipboardPin.value,
                 swClipboardGroup = swClipboardGroup.value,
                 swClipboardGroupRemember = swClipboardGroupRemember.value,
@@ -136,7 +134,6 @@ fun installPages(
                 onToggleUnlimitCount = { onToggleUnlimitCount.invoke(it) },
                 onToggleUnlimitTime = { onToggleUnlimitTime.invoke(it) },
                 onTogglePanelColor = { onTogglePanelColor.invoke(it) },
-                onToggleGaussianBlur = { onToggleGaussianBlur.invoke(it) },
                 onToggleClipboardPin = { onToggleClipboardPin.invoke(it) },
                 onToggleClipboardGroup = { onToggleClipboardGroup.invoke(it) },
                 onToggleClipboardGroupRemember = { onToggleClipboardGroupRemember.invoke(it) },

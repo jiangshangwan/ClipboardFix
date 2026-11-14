@@ -23,6 +23,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.Settings
 import android.system.Os
@@ -90,7 +91,6 @@ class AboutActivity : ComponentActivity() {
     val uiSwClipboardPin: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_PIN)
     val uiSwClipboardGroup: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
     val uiSwClipboardGroupRemember: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
-    val uiSwGaussianBlur: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_GAUSSIAN_BLUR)
     val uiIconHidden: MutableState<Boolean> = stateOf(false)
     val uiUpdateDisabled: MutableState<Boolean> = stateOf(false)
     /** 云端最新版本号：由 UpdateChecker 静默/手动检查回传；为空表示本次尚未取得。 */
@@ -142,6 +142,15 @@ class AboutActivity : ComponentActivity() {
 
     // 模块启用状态（通过 libxposed:service 实时查询 LSPosed）
     private val mStatusHandler = Handler(Looper.getMainLooper())
+    /** 前台状态轮询：连接可被框架单方面撤销，定期做一次真实探测。 */
+    private var moduleStatusPoller: Runnable? = null
+    /** 上次离开前台的时刻；回到前台时据此判断是否需要重新握手。 */
+    private var mLastPauseAt = 0L
+    /** 延迟判定「未启用」的回调引用，避免误清同队列里的其它轮询。 */
+    private var statusFallback: Runnable? = null
+    /** 跨进程探测串行化，避免框架无响应时探测线程堆积。 */
+    @Volatile
+    private var probeRunning = false
 
     // ---- 状态卡「连续点击 10 次」隐藏/显示标识 ----
     private var mTapCount = 0
@@ -193,17 +202,16 @@ class AboutActivity : ComponentActivity() {
             BuildConfig.VERSION_NAME, uiLatestVersion, Runnable { UpdateChecker(this).showUpdateDialogIfNeeded() }, BuildConfig.BUILD_DATE,
             DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
             Build.VERSION.INCREMENTAL, phraseVersion(), abiInfo(),
-            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiSwClipboardGroup, uiSwClipboardGroupRemember, uiSwGaussianBlur, uiIconHidden,
+            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiSwClipboardGroup, uiSwClipboardGroupRemember, uiIconHidden,
             Runnable { doCheckUpdate() },
             Runnable { onStatusCardTap() },
-            BoolAction { onToggleImeUnlock(it) },
-            BoolAction { onToggleUnlimitCount(it) },
-            BoolAction { onToggleUnlimitTime(it) },
-            BoolAction { onTogglePanelColor(it) },
-            BoolAction { onToggleClipboardPin(it) },
-            BoolAction { onToggleClipboardGroup(it) },
-            BoolAction { onToggleClipboardGroupRemember(it) },
-            BoolAction { onToggleGaussianBlur(it) },
+            featureToggle { onToggleImeUnlock(it) },
+            featureToggle { onToggleUnlimitCount(it) },
+            featureToggle { onToggleUnlimitTime(it) },
+            featureToggle { onTogglePanelColor(it) },
+            featureToggle { onToggleClipboardPin(it) },
+            featureToggle { onToggleClipboardGroup(it) },
+            featureToggle { onToggleClipboardGroupRemember(it) },
             BoolAction { onToggleHideIcon(it) },
             IntAction { onRebootOrReload(it) },
             Runnable { openUrl("https://www.coolapk.com/u/3019478") },
@@ -224,7 +232,7 @@ class AboutActivity : ComponentActivity() {
         initModuleStatus()
 
         // 初始落到上次所在 Tab（重建后保留，首次为 0=主页）
-        selectTab(sLastTab)
+        selectTab(intent.getIntExtra(EXTRA_RESTORE_TAB, sLastTab))
 
         // 首次进入：三页欢迎引导；已完成引导的旧版本升级用户走「您需了解」底部弹卡兜底。
         if (!welcomeDone()) {
@@ -402,6 +410,8 @@ class AboutActivity : ComponentActivity() {
      * 状态卡连续点击 10 次切换「标识」显隐（Root 标识 + 已启用的功能行）。
      */
     private fun onStatusCardTap() {
+        // 点状态卡即做一次实时探测（10 连击隐藏标识的逻辑保持不变）
+        refreshModuleStatus()
         val now = System.currentTimeMillis()
         if (now - mLastTapTime > TAP_RESET_MS) {
             mTapCount = 0
@@ -463,30 +473,91 @@ class AboutActivity : ComponentActivity() {
 
     /** 延迟确认状态：超时仍未绑定即判定为未启用（每次订阅都重置计时）。 */
     private fun scheduleStatusFallback() {
-        mStatusHandler.removeCallbacksAndMessages(null)
-        mStatusHandler.postDelayed({
-            if (!sModuleBound) {
-                applyModuleDisabled("未启用")
-            }
-        }, 2500)
+        statusFallback?.let { mStatusHandler.removeCallbacks(it) }
+        val r = Runnable {
+            if (!sModuleBound) applyModuleDisabled("未启用")
+        }
+        statusFallback = r
+        mStatusHandler.postDelayed(r, 2500)
     }
 
-    /** 从 XposedService 读取本模块作用域并刷新 UI（binder 线程或主线程均可调用）。 */
+    /**
+     * 用一次真实的跨进程调用判定服务是否仍可用；只持有缓存连接不足以证明模块仍处于激活状态。
+     * binder 调用放后台线程，结果回主线程写 UI。(st-26b)
+     */
     private fun refreshModuleStatus() {
         val svc = sXposedService
         if (svc == null) {
             mStatusHandler.post { applyModuleDisabled("未启用") }
             return
         }
-        var imeCount: Int
-        try {
-            val scope = svc.scope
-            imeCount = countInputMethodsInScope(scope)
-        } catch (e: Exception) {
-            imeCount = -1
+        if (probeRunning) return
+        probeRunning = true
+        Thread({
+            var online = false
+            var imeCount = -1
+            try {
+                val api = svc.apiVersion
+                val scope = svc.scope
+                android.util.Log.d("ClipboardFix", "module probe: api=$api scope=${scope?.size}")
+                if (scope != null && scope.isNotEmpty()) {
+                    online = true
+                    imeCount = countInputMethodsInScope(scope)
+                }
+            } catch (t: Throwable) {
+                android.util.Log.d("ClipboardFix", "module probe failed: $t")
+            } finally {
+                probeRunning = false
+            }
+            val finalCount = imeCount
+            val enabled = online
+            mStatusHandler.post {
+                if (enabled) applyModuleEnabled(finalCount) else applyModuleDisabled("未启用")
+            }
+        }, "cf-status-probe").start()
+    }
+
+    /** 前台周期探测：连接被框架撤销、框架重启等情况无需重开界面即可反映。 */
+    private fun startModuleStatusPoller() {
+        stopModuleStatusPoller()
+        val r = object : Runnable {
+            override fun run() {
+                refreshModuleStatus()
+                mStatusHandler.postDelayed(this, MODULE_POLL_MS)
+            }
         }
-        val finalCount = imeCount
-        mStatusHandler.post { applyModuleEnabled(finalCount) }
+        moduleStatusPoller = r
+        mStatusHandler.postDelayed(r, MODULE_POLL_MS)
+    }
+
+    private fun stopModuleStatusPoller() {
+        moduleStatusPoller?.let { mStatusHandler.removeCallbacks(it) }
+        moduleStatusPoller = null
+    }
+
+    /**
+     * 框架只在进程启动时向模块推送一次服务连接；管理器里开关模块不会撤销已建立的连接，
+     * 也不会通知已运行的进程。重新走一次进程握手才能读到框架当前的配置——新进程收不到
+     * 连接即为未启用，收到连接即为已启用。
+     */
+    private fun rehandshakeModuleStatus() {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putLong(KEY_LAST_HARD_RECHECK, SystemClock.elapsedRealtime()).apply()
+        val intent = Intent(this, AboutActivity::class.java)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        intent.putExtra(EXTRA_RESTORE_TAB, currentTab)
+        startActivity(intent)
+        finishAffinity()
+        Handler(Looper.getMainLooper()).post {
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
+    }
+
+    private fun shouldRehandshake(awayMs: Long): Boolean {
+        if (awayMs < BACKGROUND_MIN_MS || welcomeOverlay != null) return false
+        val last = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(KEY_LAST_HARD_RECHECK, 0L)
+        return SystemClock.elapsedRealtime() - last > HARD_RECHECK_GAP_MS
     }
 
     /** 统计作用域中属于输入法的包数量（即本模块已启用/勾选的输入法数量）。 */
@@ -520,6 +591,19 @@ class AboutActivity : ComponentActivity() {
     }
 
     // ---------------- 功能开关 ----------------
+
+    /**
+     * 功能开关的统一回调入口：模块未激活时不改变状态、不落库，避免界面值与远程偏好脱节。
+     * 页面侧的置灰判定与之共用同一状态源。(ab-207u)
+     */
+    private fun featureToggle(action: (Boolean) -> Unit): BoolAction = BoolAction { checked ->
+        if (uiStatusEnabled.value) {
+            action(checked)
+        } else {
+            showSnack(getString(R.string.toast_module_inactive))
+        }
+    }
+
     private fun loadSwitchState() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         uiSwImeUnlock.value = prefs.getBoolean(ModulePrefs.KEY_IME_UNLOCK, ModulePrefs.DEFAULT_IME_UNLOCK)
@@ -529,7 +613,6 @@ class AboutActivity : ComponentActivity() {
         uiSwClipboardPin.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
         uiSwClipboardGroup.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
         uiSwClipboardGroupRemember.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
-        uiSwGaussianBlur.value = prefs.getBoolean(ModulePrefs.KEY_GAUSSIAN_BLUR, ModulePrefs.DEFAULT_GAUSSIAN_BLUR)
         uiUpdateDisabled.value = prefs.getBoolean(AppConfig.KEY_DISABLE_UPDATE, false)
         uiThemeMode.value = AppConfig.getThemeMode(this)
         uiSettingsIconMode.value = prefs.getInt(ModulePrefs.KEY_SETTINGS_ICON, ModulePrefs.DEFAULT_SETTINGS_ICON)
@@ -571,11 +654,6 @@ class AboutActivity : ComponentActivity() {
         saveFeaturePrefs()
     }
 
-    private fun onToggleGaussianBlur(checked: Boolean) {
-        uiSwGaussianBlur.value = checked
-        saveFeaturePrefs()
-    }
-
     private fun onSettingsIconSelect(mode: Int) {
         uiSettingsIconMode.value = mode
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
@@ -606,6 +684,10 @@ class AboutActivity : ComponentActivity() {
      * 此处跳过以免重复；其余子开关仍沿用该提示（重载进程即可生效）。
      */
     private fun saveFeaturePrefs(showReloadToast: Boolean = true) {
+        // 模块未激活时不写本地偏好：远程偏好此时无法同步，落库只会造成两侧不一致。
+        if (!uiStatusEnabled.value) {
+            return
+        }
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putBoolean(ModulePrefs.KEY_IME_UNLOCK, uiSwImeUnlock.value)
             .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, uiSwUnlimitCount.value)
@@ -614,7 +696,6 @@ class AboutActivity : ComponentActivity() {
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, uiSwClipboardPin.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, uiSwClipboardGroup.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, uiSwClipboardGroupRemember.value)
-            .putBoolean(ModulePrefs.KEY_GAUSSIAN_BLUR, uiSwGaussianBlur.value)
             .apply()
         pushFeaturePrefs()
         // 四个功能开关的 hook 全部装在 com.miui.phrase / 输入法进程内（进程启动时读开关），
@@ -640,7 +721,6 @@ class AboutActivity : ComponentActivity() {
         val clipboardPin = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
         val clipboardGroup = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
         val clipboardGroupRemember = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
-        val gaussianBlur = local.getBoolean(ModulePrefs.KEY_GAUSSIAN_BLUR, ModulePrefs.DEFAULT_GAUSSIAN_BLUR)
         Thread({
             try {
                 svc.getRemotePreferences(ModulePrefs.GROUP).edit()
@@ -651,7 +731,6 @@ class AboutActivity : ComponentActivity() {
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, clipboardPin)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, clipboardGroup)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, clipboardGroupRemember)
-                    .putBoolean(ModulePrefs.KEY_GAUSSIAN_BLUR, gaussianBlur)
                     .apply()
             } catch (t: Throwable) {
                 // 远程写失败不影响本地开关状态
@@ -984,32 +1063,48 @@ class AboutActivity : ComponentActivity() {
         welcomeStatusPoller = null
     }
 
-    // ---------------- 弹卡：更新日志（最近几版） ----------------
+    // ---------------- 弹卡：更新日志（读取仓库 Release 列表） ----------------
     // 走柔光玻璃弹卡（GlassSheetBridge）：与功能页语言 / 主题下拉同一套玻璃材质与弹簧动画，
     // 折射源是本页内容，故必须画在页面 Compose 覆盖层里而不是独立弹窗。
+    // 版本说明来自远端发布记录；加载中先占位，取回后替换同一张弹卡的内容。(ab-26b)
     private fun showChangelog() {
-        val blocks = listOf(
-            "V2.0.7" to getString(R.string.changelog_v207),
-            "V2.0.6" to getString(R.string.changelog_v206),
-            "V2.0.5" to getString(R.string.changelog_v205),
-            "V2.0.4" to getString(R.string.changelog_v204),
-            "V2.0.3" to getString(R.string.changelog_v203),
-            "V2.0.2" to getString(R.string.changelog_v202),
-            "V2.0.1" to getString(R.string.changelog_v201),
-            "V2.0" to getString(R.string.changelog_v20),
-            "V1.4.13" to getString(R.string.changelog_v1413),
-            "V1.4.12" to getString(R.string.changelog_v1412),
-            "V1.4.11" to getString(R.string.changelog_v1411),
-            "V1.4.10" to getString(R.string.changelog_v1410),
-            "V1.4.9" to getString(R.string.changelog_v149),
-            "V1.4.8" to getString(R.string.changelog_v148),
-            "V1.4.7" to getString(R.string.changelog_v147),
-        )
+        val title = getString(R.string.sheet_changelog_title)
         GlassSheetBridge.show(
             GlassSheetRequest(
-                title = getString(R.string.sheet_changelog_title),
-                content = GlassSheetContent.Blocks(blocks),
+                title = title,
+                content = GlassSheetContent.Message(getString(R.string.changelog_loading)),
             )
+        )
+        ChangelogLoader.fetch(
+            onReady = { blocks ->
+                if (GlassSheetBridge.isOpen()) {
+                    GlassSheetBridge.show(
+                        GlassSheetRequest(title = title, content = GlassSheetContent.Blocks(blocks))
+                    )
+                }
+            },
+            onFailed = { cached ->
+                if (GlassSheetBridge.isOpen()) {
+                    if (cached != null) {
+                        GlassSheetBridge.show(
+                            GlassSheetRequest(title = title, content = GlassSheetContent.Blocks(cached))
+                        )
+                        showSnack(getString(R.string.changelog_offline))
+                    } else {
+                        GlassSheetBridge.show(
+                            GlassSheetRequest(
+                                title = title,
+                                content = GlassSheetContent.Message(getString(R.string.changelog_fail)),
+                                actionText = getString(R.string.changelog_retry),
+                                onAction = {
+                                    // 按钮回调返回后弹卡统一收起，延后一帧再投递，避免新请求被清掉
+                                    Handler(Looper.getMainLooper()).post { showChangelog() }
+                                },
+                            )
+                        )
+                    }
+                }
+            },
         )
     }
 
@@ -1073,6 +1168,14 @@ class AboutActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         sCurrent = WeakReference(this)
+        // 从其它应用（管理器等）返回时重新握手：框架只在进程启动时推送服务连接，
+        // 旧进程里缓存的连接无法反映管理器刚做过的开关变更。
+        val awayMs = if (mLastPauseAt > 0L) SystemClock.elapsedRealtime() - mLastPauseAt else 0L
+        mLastPauseAt = 0L
+        if (shouldRehandshake(awayMs)) {
+            rehandshakeModuleStatus()
+            return
+        }
         if (sListenerRegistered) {
             if (sModuleBound) {
                 refreshModuleStatus()
@@ -1080,6 +1183,7 @@ class AboutActivity : ComponentActivity() {
                 scheduleStatusFallback()
             }
         }
+        startModuleStatusPoller()
         // root 身份实时监听：每次回到前台立即重查，并启动周期轮询
         refreshRootStatus()
         startRootPoller()
@@ -1094,6 +1198,8 @@ class AboutActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        mLastPauseAt = SystemClock.elapsedRealtime()
+        stopModuleStatusPoller()
         stopRootPoller()
     }
 
@@ -1101,6 +1207,7 @@ class AboutActivity : ComponentActivity() {
         if (sCurrent.get() === this) {
             sCurrent.clear()
         }
+        stopModuleStatusPoller()
         // 引导仍在展示时记录当前页，供配置变更 / recreate 后落回原页
         if (welcomeOverlay != null) {
             sWelcomePage = uiWelcomePage.value
@@ -1243,6 +1350,15 @@ class AboutActivity : ComponentActivity() {
 
         // ---- 实时 root 轮询 ----
         private const val ROOT_POLL_MS = 3000L
+
+        // ---- 模块状态实时探测 ----
+        private const val MODULE_POLL_MS = 2000L
+        /** 离开前台超过该时长，回到前台时重新走一次进程握手。 */
+        private const val BACKGROUND_MIN_MS = 2500L
+        /** 两次重新握手的最小间隔，避免来回切换时反复重载。 */
+        private const val HARD_RECHECK_GAP_MS = 5000L
+        private const val KEY_LAST_HARD_RECHECK = "last_hard_recheck"
+        private const val EXTRA_RESTORE_TAB = "cf_restore_tab"
 
         // ---- 模块状态（进程级）----
         private var sXposedService: XposedService? = null

@@ -41,11 +41,11 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
 fun FeaturePage(
+    moduleEnabled: Boolean,
     swImeUnlock: Boolean,
     swUnlimitCount: Boolean,
     swUnlimitTime: Boolean,
     swPanelColor: Boolean,
-    swGaussianBlur: Boolean,
     swClipboardPin: Boolean,
     swClipboardGroup: Boolean,
     swClipboardGroupRemember: Boolean,
@@ -53,7 +53,6 @@ fun FeaturePage(
     onToggleUnlimitCount: (Boolean) -> Unit,
     onToggleUnlimitTime: (Boolean) -> Unit,
     onTogglePanelColor: (Boolean) -> Unit,
-    onToggleGaussianBlur: (Boolean) -> Unit,
     onToggleClipboardPin: (Boolean) -> Unit,
     onToggleClipboardGroup: (Boolean) -> Unit,
     onToggleClipboardGroupRemember: (Boolean) -> Unit,
@@ -69,7 +68,15 @@ fun FeaturePage(
     val strConfirmClose = stringResource(R.string.dialog_confirm_close)
     val strRebootEffect = stringResource(R.string.toast_reboot_effect)
     val strEnableFirst = stringResource(R.string.toast_enable_first)
+    val strModuleInactive = stringResource(R.string.toast_module_inactive)
     val strEnabledReboot = stringResource(R.string.toast_enabled_reboot)
+
+    // 两级只读：模块未激活时整页置灰；主开关未开启时子项置灰。提示按实际阻塞原因分流（fs-207u）
+    val switchesEnabled = moduleEnabled
+    val subSwitchesEnabled = moduleEnabled && swImeUnlock
+    val disabledHint: () -> Unit = {
+        showSnack(if (moduleEnabled) strEnableFirst else strModuleInactive)
+    }
 
     // 柔光玻璃弹卡（关闭主开关二次确认）请求槽位：与 Snackbar 同风格，由本页渲染
     val sheetReq = remember { mutableStateOf<GlassSheetRequest?>(null) }
@@ -125,56 +132,47 @@ fun FeaturePage(
                         onCheckedChange = handleImeUnlock,
                         title = stringResource(R.string.sw_ime_unlock),
                         summary = stringResource(R.string.sw_ime_unlock_sub),
+                        enabled = switchesEnabled,
                     )
                     FeatureSwitch(
                         checked = swImeUnlock && swUnlimitCount,
                         onCheckedChange = onToggleUnlimitCount,
                         title = stringResource(R.string.sw_unlimit),
                         summary = stringResource(R.string.sw_unlimit_sub),
-                        enabled = swImeUnlock,
-                        onClickWhenDisabled = { showSnack(strEnableFirst) },
+                        enabled = subSwitchesEnabled,
+                        onClickWhenDisabled = disabledHint,
                     )
                     FeatureSwitch(
                         checked = swImeUnlock && swUnlimitTime,
                         onCheckedChange = onToggleUnlimitTime,
                         title = stringResource(R.string.sw_unlimit_time),
                         summary = stringResource(R.string.sw_unlimit_time_sub),
-                        enabled = swImeUnlock,
-                        onClickWhenDisabled = { showSnack(strEnableFirst) },
+                        enabled = subSwitchesEnabled,
+                        onClickWhenDisabled = disabledHint,
                     )
                     FeatureSwitch(
                         checked = swImeUnlock && swPanelColor,
                         onCheckedChange = onTogglePanelColor,
                         title = stringResource(R.string.sw_panel),
                         summary = stringResource(R.string.sw_panel_sub),
-                        enabled = swImeUnlock,
-                        onClickWhenDisabled = { showSnack(strEnableFirst) },
+                        enabled = subSwitchesEnabled,
+                        onClickWhenDisabled = disabledHint,
                     )
-                    // 【启用高斯模糊背景】：仅当「优化剪贴板面板背景」开启时才显示（子选项），默认关闭
-                    if (swImeUnlock && swPanelColor) {
-                        FeatureSwitch(
-                            checked = swGaussianBlur,
-                            onCheckedChange = onToggleGaussianBlur,
-                            title = stringResource(R.string.sw_gaussian_blur),
-                            summary = stringResource(R.string.sw_gaussian_blur_sub),
-                            enabled = true,
-                        )
-                    }
                     FeatureSwitch(
                         checked = swImeUnlock && swClipboardPin,
                         onCheckedChange = onToggleClipboardPin,
                         title = stringResource(R.string.sw_clipboard_pin),
                         summary = stringResource(R.string.sw_clipboard_pin_sub),
-                        enabled = swImeUnlock,
-                        onClickWhenDisabled = { showSnack(strEnableFirst) },
+                        enabled = subSwitchesEnabled,
+                        onClickWhenDisabled = disabledHint,
                     )
                     FeatureSwitch(
                         checked = swImeUnlock && swClipboardGroup,
                         onCheckedChange = onToggleClipboardGroup,
                         title = stringResource(R.string.sw_clipboard_group),
                         summary = stringResource(R.string.sw_clipboard_group_sub),
-                        enabled = swImeUnlock,
-                        onClickWhenDisabled = { showSnack(strEnableFirst) },
+                        enabled = subSwitchesEnabled,
+                        onClickWhenDisabled = disabledHint,
                     )
                     // 【记忆剪贴板分组位置】：仅当「开启剪贴板分组功能」打开时才显示（子选项），默认关闭
                     if (swImeUnlock && swClipboardGroup) {
@@ -183,7 +181,8 @@ fun FeaturePage(
                             onCheckedChange = onToggleClipboardGroupRemember,
                             title = stringResource(R.string.sw_clipboard_group_remember),
                             summary = stringResource(R.string.sw_clipboard_group_remember_sub),
-                            enabled = true,
+                            enabled = switchesEnabled,
+                            onClickWhenDisabled = disabledHint,
                         )
                     }
                 }
@@ -201,9 +200,10 @@ fun FeaturePage(
 }
 
 /**
- * 功能开关行：主开关（[enabled]=swImeUnlock）关闭时，子开关被强制显示为关闭（checked=swImeUnlock && 实际值）、
- * 置灰且开关不可拨动；此时点击整行触发 [onClickWhenDisabled] 提示「请先启用主开关」。
- * 主开关重新开启后，子开关恢复各自保存的真实开关状态（非破坏性，仅视觉跟随）。
+ * 功能开关行：模块未激活或主开关关闭时，子开关被强制显示为关闭
+ * （checked=swImeUnlock && 实际值）、置灰且不可拨动；此时点击整行触发
+ * [onClickWhenDisabled]。主开关重新开启后，子开关恢复各自保存的真实开关状态
+ * （非破坏性，仅视觉跟随）。(fs-207u)
  */
 @Composable
 private fun FeatureSwitch(

@@ -49,8 +49,6 @@
     <string name="sw_unlimit_time_sub">解除官方72小时保存上限</string>
     <string name="sw_panel">优化剪贴板面板背景</string>
     <string name="sw_panel_sub">使剪贴板面板与下方功能区统一色调</string>
-    <string name="sw_gaussian_blur">启用高级材质背景</string>
-    <string name="sw_gaussian_blur_sub">使剪贴板背景接入系统级高级材质</string>
     <string name="sw_clipboard_pin">开启剪贴板条目置顶</string>
     <string name="sw_clipboard_pin_sub">面板内右滑可对内容置顶</string>
     <string name="sw_clipboard_group">开启剪贴板分组功能</string>
@@ -67,6 +65,7 @@
     <!-- 功能开关相关提示 -->
     <string name="toast_reboot_effect">重启设备生效</string>
     <string name="toast_enable_first">请启用全面屏键盘优化后尝试</string>
+    <string name="toast_module_inactive">请先启用模块后重试</string>
     <string name="toast_enabled_reboot">已启用，请重启设备</string>
 
     <!-- 设置页 -->
@@ -119,21 +118,10 @@
 
     <!-- 弹卡：更新日志 -->
     <string name="sheet_changelog_title">更新日志</string>
-    <string name="changelog_v20">1. 全面重构模块 UI，界面简洁清爽，视觉体验升级\n2. 新增液态玻璃导航，滑动更丝滑、触控更跟手\n3. 持续修复第三方输入法无法使用系统剪贴板的问题\n4. 新增【优化剪贴板面板背景】开关，开启后可统一剪贴板和键盘功能区的颜色\n5. 新增【开启剪贴板条目置顶】功能，剪贴板面板内右滑可选择置顶条目(最多置顶一条)\n6. 新增【停用更新检测】功能，开启后模块可完全脱离网络运行(开启后您将无法收到更新推送)\n7. 新增【重载进程】功能，模块更新后可通过重新进程加载最新hook(首次安装使用请重启手机)\n8. 新增【设置】页面，模块设置与功能设置独立展示\n9. 扩充主页信息展示面板，设备信息、模块运行状态直观可见\n10. 全新改版关于页面，内容丰富，使用便捷</string>
-    <string name="changelog_v203">1. 修复部分场景下剪贴板内文字看不清的问题\n2. 主页新增剪贴板和常用语版本号的显示\n3. 修复键盘与系统主题色不一致时导致剪贴板面板文字与背景同色的问题</string>
-    <string name="changelog_v204">1、修复由其他设备复制的图片同步到本地后图片内容无法长时间驻留的错误\n2、修复本地复制的图片条目无法在剪贴板内显示的错误\n3、修复切换主题后部分图标不能够及时跟随刷新的错误\n4、代码结构重构，统一代码规范，简化大量样板代码，全部代码由 Java 迁移至 Kotlin</string>
-    <string name="changelog_v207">1. 主页新增版本更新标识\n2. 适配剪贴板和常用语v5.7.8\n3. 剪贴板背景新增系统级高级材质效果(此功能依赖输入法背景/功能区底栏是否为高斯模糊/高级材质，输入法背景/功能区底栏为纯色背景则此功能开启后也无效)</string>
-    <string name="changelog_v206">1. 修复清空内容后再次复活的错误\n2. 修复其他隐性错误</string>
-    <string name="changelog_v205">1. 修复置顶功能泄露至常用语及其他隐形错误\n2. 优化置顶和取消置顶图标\n3. 优化部分标题的说明\n4. 新增剪贴板分组功能(默认关闭，可在功能页开启)\n5. 新增主页剪贴板版本更新提示\n6. 调整功能逻辑(本版本起关闭全面屏键盘优化功能时默认关闭全部功能，后续不再支持与其他全面屏键盘优化模块同时使用，实测会出现严重影响正常使用的BUG)</string>
-    <string name="changelog_v202">1. 修复取消条目置顶时条目删除功能被同时触发的问题\n2. 优化置顶及取消置顶图标\n3. 优化置顶功能逻辑</string>
-    <string name="changelog_v201">1. 修复剪贴板条目超72H被清空的问题，并新增开关选项，可通过模块功能页自由选择\n2. 修复置顶按钮边距过大的问题\n3. 优化部分输入法面板与底部功能区间距过大问题，使其第三方输入法下沉至与小爱输入法位置一致</string>
-    <string name="changelog_v1413">新增优化剪贴板面板背景功能，优化剪贴板和常用语面板与功能区的取色问题</string>
-    <string name="changelog_v1412">优化界面显示效果，修复部分错误</string>
-    <string name="changelog_v1411">修复部分错误</string>
-    <string name="changelog_v1410">修复部分输入法开启手势提示线后被异常抬高的bug\n新增启用全面屏优化功能开关\n新增解锁剪贴板数量限制上限</string>
-    <string name="changelog_v149">修复部分输入法因开启手势提示线导致的键盘抬高BUG\n新增对豆包输入法的支持\n社群开放，QQ群：1124180635</string>
-    <string name="changelog_v148">重构模块UI，模块状态及设备信息一目了然\n模块正式更名为HyperClipFix\n修复因开启手势提示线后导致部分输入法被异常抬高的BUG\n支持豆包输入法（测试）</string>
-    <string name="changelog_v147">1、修复跨设备剪贴板同步BUG，无需通过切换系统输入法进行预热\n2、新增对Gboard键盘的适配\n3、使用中如果出现键盘异常抬高的问题请尝试关闭小白条</string>
+    <string name="changelog_loading">正在从 GitHub 获取更新日志…</string>
+    <string name="changelog_fail">获取失败，请检查网络后重试</string>
+    <string name="changelog_retry">重试</string>
+    <string name="changelog_offline">当前显示上次获取的内容</string>
 
     <!-- 弹卡：为爱发电 / 捐赠 -->
     <string name="sheet_donate_title">为爱发电</string>
