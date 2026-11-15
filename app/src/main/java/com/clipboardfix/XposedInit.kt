@@ -58,10 +58,29 @@ class XposedInit : XposedModule() {
         val pkg: String? = param.getPackageName()
         if (pkg == null) return
 
-        // 系统预置输入法仅保留在作用域内：在其进程中不安装任何 hook，直接结束分发。
+        // 系统预置输入法：保留在作用域内，但跳过面板类 hook（背景/置顶/云同步），
+        // 其剪贴板面板由系统自身管理，不叠加第三方输入法下的修正。
+        // 关键：IME 列表保护（ImeUnlockHook 内的 deleteNotSupportIme / getSupportIme /
+        // isImeSupport）必须保留——若一并跳过，重载进程后系统会把第三方输入法从
+        // 「已启用」里剔除（2.0.6 无此门禁时正常，2.0.7 引入门禁后回归，见复现）。
         if (OEM_IME_PACKAGES.contains(pkg)) {
-            log(pkg + " scope-only: dispatch bypassed (variant="
+            log(pkg + " scope-only: panel hooks bypassed, ime-list kept (variant="
                     + Integer.toHexString(ROUTE_VARIANT) + ")")
+            if (imeBottomSupported()) {
+                val cl = try {
+                    param.getDefaultClassLoader()
+                } catch (t: Throwable) {
+                    log(pkg + " skip ime-list: no classloader - " + t)
+                    null
+                }
+                if (cl != null) {
+                    val imeUnlock = ModulePrefs.isImeUnlockEnabled()
+                    val timeUnlock = ModulePrefs.isUnlimitTimeEnabled()
+                    if (imeUnlock || timeUnlock) {
+                        ImeUnlockHook.init(pkg, cl, imeUnlock, timeUnlock)
+                    }
+                }
+            }
             return
         }
 
