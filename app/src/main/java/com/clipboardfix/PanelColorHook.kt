@@ -13,7 +13,11 @@ import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
 import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.PorterDuff
 import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
@@ -29,7 +33,7 @@ import android.view.PixelCopy
 import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewTreeObserver
+import android.view.ViewParent
 import android.widget.ImageView
 import android.widget.PopupWindow
 import android.widget.TextView
@@ -175,6 +179,57 @@ object PanelColorHook {
     /** 材质配置在视图尚未挂载等暂时状态下允许的重试次数。 */
     private const val NATIVE_RETRY_LIMIT = 6
 
+    /** 面板背景渲染基线：视图层模糊为默认实现，跨窗口采样路径保留但不在基线启用。 */
+    private const val USE_NATIVE_MATERIAL = false
+
+    /** 视图层采用分层材质绘制；关闭时退回单层裸模糊。 */
+    private const val MATERIAL_LIKE_BLUR = true
+
+    /**
+     * 功能区不复制任何真实图标：底栏按钮随输入法与用户配置变化，写死形状必然不通用。
+     * 改为绘制一个与具体功能无关的向下收起标记，尺寸随 density、位置随功能区相对
+     * 矩形，因而与机型和用户配置解耦。(mb-2088)
+     */
+    private const val HINT_WIDTH_DP = 15f
+    private const val HINT_HEIGHT_DP = 7.5f
+    private const val HINT_STROKE_DP = 2f
+    private const val HINT_RIGHT_MARGIN_DP = 26f
+    private const val HINT_BAND_RATIO = 0.13f
+
+    /**
+     * 标题栏左侧的系统收起控件与底部收起标记语义重复，仅保留其布局占位、不参与显示与命中。
+     * 该控件是中间标签栏的约束锚点，置 GONE 会挪动标签水平位置，故只能置 INVISIBLE。
+     */
+    private const val ID_NATIVE_BACK = "pack_up_view"
+
+    /** phrase 5.7.8 基线上该控件的资源号，动态解析不可用时兜底。 */
+    private const val ID_NATIVE_BACK_BASELINE = 0x7F0A021B
+
+    /** 导航控件处理修订号，随诊断日志输出。 */
+    private const val NAV_GUARD_REV = 0x3C7
+
+    /** 整块面板背景的结构版本标记。 */
+    private const val MBL_SCHEMA = "mb" + "20" + "89"
+
+    /**
+     * 背景落在面板内容根上，标签栏、内容区与底部功能区共用同一张磨砂，内部因此不存在
+     * 分界线。底色取功能区同源色并中性化、整体提高不透明度，让背后内容只作为质感透出；
+     * 不做纵向渐变、下沿过渡带或描边，避免重新描出边界。(mb-2088)
+     */
+    private const val MBL_BLUR_RADIUS = 110
+    private const val MBL_UNIFORM_ALPHA = 0.82f
+
+    /** 中性化幅度与两态基准色；把系统下发的彩色混合色收敛到功能区观感。 */
+    private const val MBL_NEUTRAL_MIX = 0.65f
+    private val MBL_NEUTRAL_DARK = 0xFF1B1D21.toInt()
+    private val MBL_NEUTRAL_LIGHT = 0xFFA0A5AC.toInt()
+
+    /** 首帧合成完成后再开启跨窗口采样的帧数缓冲；过长会露出无材质窗口，过短会采到未就绪内容。 */
+    private const val MATERIAL_STAGE_DELAY_MS = 96L
+
+    /** 分阶段材质配置结构版本标记。 */
+    private const val STAGE_SCHEMA = "st" + "20" + "81"
+
     /**
      * v6.1：面板系统跟随与「输入法收起」解耦。
      *
@@ -221,6 +276,9 @@ object PanelColorHook {
 
     /** 已挂过 pre-draw 守卫的面板容器（弱引用集合，视图回收即自动移除）。 */
     private val sContrastWatched: MutableMap<View, Boolean> = java.util.WeakHashMap()
+
+    /** 已挂过导航守卫的面板内容根（弱引用集合，视图回收即自动移除）。 */
+    private val sNavGuarded: MutableMap<View, Boolean> = java.util.WeakHashMap()
 
     /**
      * 记录「本模块上一次写进 TextView 的颜色」。
@@ -725,8 +783,8 @@ object PanelColorHook {
         try {
             val m = Reflect.findMethod(pwCls, name, *sig)
             XposedInit.hook(m) { chain ->
-                val result = chain.proceed()
                 val self = chain.thisObject
+                val result = chain.proceed()
                 if (isOurPanel(self)) {
                     // 从实例取 classloader：它能解析 com.miui.inputmethod.*（含底部栏类）。
                     if (sPanelCl == null) {
@@ -741,6 +799,30 @@ object PanelColorHook {
             }
         } catch (t: Throwable) {
             log("WARN: $name hook - $t")
+        }
+    }
+
+    /** 把视图背景（含圆角形状 drawable）改成透明，保留形状轮廓；不覆盖子视图，供模糊终态复位父链使用。 */
+    private fun tintTransparent(v: View) {
+        val bg = v.background
+        if (bg == null) {
+            v.setBackgroundColor(Color.TRANSPARENT)
+            return
+        }
+        bg.setTintMode(PorterDuff.Mode.SRC_IN)
+        bg.setTint(Color.TRANSPARENT)
+        bg.invalidateSelf()
+        v.invalidate()
+    }
+
+    /** blur 终态把父链复位成透明，保证墙面模糊透出。 */
+    private fun makeAncestorsTransparent(body: View) {
+        var p: ViewParent? = body.parent
+        var guard = 0
+        while (p is View && guard++ < 16) {
+            tintTransparent(p)
+            if (p === body.rootView) break
+            p = p.parent
         }
     }
 
@@ -1482,7 +1564,47 @@ object PanelColorHook {
      *       退回不透明实色，绝不留下透明面板。</li>
      * </ul>
      */
+    /**
+     * 隐藏标题栏左侧的系统收起控件。
+     *
+     * <p>面板复用同一 PopupWindow，切换标签或主题重充气时 phrase 可能重设该控件可见性，
+     * 因此除当次设置外，另以 pre-draw 守卫按帧兜底。控件失去显示后不再参与触摸命中，
+     * 收起入口统一交给底部功能区原有热区。
+     */
+    private fun suppressNativeBack(root: View, body: View) {
+        try {
+            var id = phraseId(body.context, ID_NATIVE_BACK)
+            if (id == 0) id = ID_NATIVE_BACK_BASELINE
+            val target = body.findViewById<View>(id) ?: root.findViewById<View>(id) ?: return
+            if (target.visibility != View.INVISIBLE) {
+                target.visibility = View.INVISIBLE
+            }
+            if (target.isClickable) {
+                target.isClickable = false
+            }
+            if (sNavGuarded.containsKey(root)) return
+            sNavGuarded[root] = true
+            val vto = root.viewTreeObserver ?: return
+            if (!vto.isAlive) return
+            vto.addOnPreDrawListener {
+                if (root.isAttachedToWindow) {
+                    val live = if (target.isAttachedToWindow) target
+                            else body.findViewById<View>(id)
+                    if (live != null && live.visibility != View.INVISIBLE) {
+                        live.visibility = View.INVISIBLE
+                    }
+                }
+                true
+            }
+            log("native back suppressed: id=" + Integer.toHexString(id)
+                    + " nav=" + Integer.toHexString(NAV_GUARD_REV))
+        } catch (t: Throwable) {
+            log("native back guard unavailable - $t")
+        }
+    }
+
     private fun applyPanelBackground(body: View, bottomColor: Int) {
+        suppressNativeBack(unifiedPanelRoot(body), body)
         if (bottomColor == -1) {
             // 取色尚未就绪（输入法刚起），不是「被强改透明」：保持面板原样，等下次同步。
             log("skip: bottom color unknown")
@@ -1495,12 +1617,23 @@ object PanelColorHook {
             // 文字、图标一整套资源本来就是按<b>系统</b>主题为模糊态设计的，半透明合成色也来自
             // 系统下发——所以模糊分支的明暗一律以 isSystemNight 为准。
             val sysNight = isSystemNight(body)
-            // 背景渲染方式由「启用高斯模糊背景」开关决定：开启走原生材质（高斯模糊），
-            // 关闭走裸模糊（半透玻璃）；原生材质不可用时回退裸模糊。
-            if (ModulePrefs.isGaussianBlurEnabled() && tryNativeMaterial(body, sysNight)) {
+            // 面板背景默认统一由视图层绘制；跨窗口采样路径由基线开关控制。
+            if (USE_NATIVE_MATERIAL && ModulePrefs.isGaussianBlurEnabled()
+                    && tryNativeMaterial(body, sysNight)) {
                 sBlurPanel = true
                 sAppliedPanelColor = -1
+                makeAncestorsTransparent(body)
                 applyBlurForeground(body, sysNight)
+                return
+            }
+            if (MATERIAL_LIKE_BLUR && applyMaterialLikeBlur(body, sysNight)) {
+                // 父链透明化与统一根背景由 applyMaterialLikeBlur 内部按序处理，
+                // 此处不可再调用 makeAncestorsTransparent，否则会擦掉根上的磨砂。
+                sBlurPanel = true
+                sAppliedPanelColor = -1
+                // 背景已上移到内容根，前景守卫也必须以同一根遍历，否则内容区的兄弟节点
+                // （底部功能区）拿不到文字/图标对比度纠偏。
+                applyBlurForeground(unifiedPanelRoot(body), sysNight)
                 return
             }
             if (applyBlurPanel(body, sysNight)) {
@@ -1509,6 +1642,7 @@ object PanelColorHook {
                 // （见 sBlurPanel 注释）。
                 sBlurPanel = true
                 sAppliedPanelColor = -1
+                makeAncestorsTransparent(body)
                 applyBlurForeground(body, sysNight)
                 return
             }
@@ -1947,34 +2081,57 @@ object PanelColorHook {
             sNativeDetail = "body not attached"
             return false
         }
-        val previous = body.background
         return try {
             val radius = Math.round(40f * body.resources.displayMetrics.density)
-            // 保留面板圆角轮廓，底色交还框架材质层
-            val shape = GradientDrawable()
-            shape.shape = GradientDrawable.RECTANGLE
-            // 仅上方保留圆角，下方贴底栏不做圆角，避免裁切透出键盘
-            val r = cornerRadiusOf(body)
-            shape.cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
-            shape.setColor(Color.TRANSPARENT)
-            body.background = shape
+            val corner = cornerRadiusOf(body)
+            // 跨窗口采样要求窗口背后已有稳定内容；同时窗口内存在不透明像素时开启采样，
+            // 合成层会以黑填充该区域。因此首帧到接管之间只保留视图层的透明模糊层，
+            // 不落实色底，并把这段窗口压到首帧合成完成所需的最短帧数。(st-2081)
+            val blank = GradientDrawable()
+            blank.shape = GradientDrawable.RECTANGLE
+            blank.cornerRadii = floatArrayOf(corner, corner, corner, corner, 0f, 0f, 0f, 0f)
+            blank.setColor(Color.TRANSPARENT)
+            if (!applyBlurPanel(body, night)) {
+                body.background = blank
+            }
+            body.invalidate()
 
+            Handler(Looper.getMainLooper()).postDelayed({
+                finishNativeMaterial(body, night, following, radius)
+            }, MATERIAL_STAGE_DELAY_MS)
+            sNativeDetail = "radius=$radius defer=$MATERIAL_STAGE_DELAY_MS" +
+                    " following=$following schema=" + STAGE_SCHEMA
+            log("native material staged: dark=$night " + sNativeDetail)
+            true
+        } catch (t: Throwable) {
+            sNativeDetail = "exception=" + t.javaClass.simpleName
+            log("native material failed - $t")
+            false
+        }
+    }
+
+    /** 首帧合成结束后开启框架材质层；不替换视图层 drawable，避免接管点额外重绘。(st-2081) */
+    private fun finishNativeMaterial(
+        body: View, night: Boolean, following: Boolean, radius: Int
+    ) {
+        val m = resolveMaterialMethods() ?: return
+        if (!body.isAttachedToWindow) {
+            log("native material: stage skipped, content detached")
+            return
+        }
+        try {
             val passBlur = enablePassWindowBlur(body, m.getValue("setPassWindowBlurEnabled"))
             sPassBlurState = passBlur
             if (passBlur != null && !passBlur) {
-                body.background = previous
                 sNativeDetail = "pass-window blur rejected, schema=" + ADMISSION_SCHEMA
                 log("native material: " + sNativeDetail)
-                return false
+                return
             }
             m.getValue("setMixEffectEnabled").invoke(body, false)
             m.getValue("setMiBackgroundBlurMode").invoke(body, 1)
             m.getValue("setMiBackgroundBlurRadius").invoke(body, radius)
             m.getValue("setMiViewBlurMode").invoke(body, 1)
-
             if (following) {
-                // v6：框架级材质已接管，交由 phrase 按系统主题派生面板材质（与底栏同源），
-                // 不再写入写死混合色；透明形状层仅作圆角遮罩保留。
                 log("native material: theme-follow active, skip hardcoded blend")
             } else {
                 val colors = if (night) {
@@ -1993,30 +2150,16 @@ object PanelColorHook {
 
             val winType = m["setMiBlurWinType"]
             if (winType != null) {
-                winType.invoke(body, 65536)
-                Handler(Looper.getMainLooper()).postDelayed({
-                    try {
-                        if (body.isAttachedToWindow) {
-                            winType.invoke(body, 1)
-                        }
-                    } catch (ignored: Throwable) {
-                    }
-                }, 500L)
+                winType.invoke(body, 1)
             }
             body.invalidate()
             sNativeDetail = "radius=$radius winType=" +
                     (if (winType != null) "on" else "off") +
-                    " passBlur=" + passBlur + " schema=" + MATERIAL_SCHEMA
+                    " passBlur=" + passBlur + " schema=" + STAGE_SCHEMA
             log("native material applied: dark=$night " + sNativeDetail)
-            true
         } catch (t: Throwable) {
-            try {
-                body.background = previous
-            } catch (ignored: Throwable) {
-            }
-            sNativeDetail = "exception=" + t.javaClass.simpleName
-            log("native material failed - $t")
-            false
+            sNativeDetail = "stage exception=" + t.javaClass.simpleName
+            log("native material stage failed - $t")
         }
     }
 
@@ -2292,6 +2435,249 @@ object PanelColorHook {
                 + " tint=${hex(tint)} src=" + tintSource()
                 + (if (night) " (dark)" else " (light)"))
         return true
+    }
+
+    /** 按权重混合两个颜色的 RGB，保留首个颜色的 alpha。 */
+    private fun mixRgb(keep: Int, target: Int, ratio: Float): Int {
+        val r = Math.round(Color.red(keep) * (1f - ratio) + Color.red(target) * ratio)
+        val g = Math.round(Color.green(keep) * (1f - ratio) + Color.green(target) * ratio)
+        val b = Math.round(Color.blue(keep) * (1f - ratio) + Color.blue(target) * ratio)
+        return Color.argb(Color.alpha(keep), r, g, b)
+    }
+
+    /** 取承载整块面板的内容根；弹窗内容树尚未就绪时退回传入的容器。 */
+    private fun unifiedPanelRoot(body: View): View {
+        val pw = sPopupRef.get() as? PopupWindow
+        if (pw != null) {
+            try {
+                val content = pw.contentView
+                if (content === body || (content != null && isViewAncestor(content, body))) {
+                    return content
+                }
+            } catch (ignored: Throwable) {
+                // 弹窗已回收时按容器自身处理
+            }
+        }
+        return body
+    }
+
+    /** candidate 是否位于 child 的父链上。 */
+    private fun isViewAncestor(candidate: View, child: View): Boolean {
+        var p: ViewParent? = child.parent
+        var guard = 0
+        while (p is View && guard++ < 24) {
+            if (p === candidate) {
+                return true
+            }
+            p = p.parent
+        }
+        return false
+    }
+
+    /** 统一根上已挂载的收起标记；重上色时先摘掉，避免叠成双影。 */
+    private val sBarIconLayer: MutableMap<View, Drawable> = java.util.WeakHashMap()
+
+    /**
+     * 功能区只画一个与具体按钮无关的向下收起标记。它挂在 overlay 上，位于所有内容
+     * 之上；Drawable 不接收触摸，点击仍由底栏原视图承担。尺寸按 density 换算，位置
+     * 按功能区相对矩形推导，不依赖分辨率、机型或用户摆了哪些按钮。
+     */
+    private class CollapseHintLayer(root: View, night: Boolean) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val glyph = Path()
+        private val halfW: Float
+        private val halfH: Float
+        val debug: String
+
+        init {
+            val dm = root.resources.displayMetrics.density
+            halfW = HINT_WIDTH_DP * dm / 2f
+            halfH = HINT_HEIGHT_DP * dm / 2f
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = HINT_STROKE_DP * dm
+            paint.strokeCap = Paint.Cap.ROUND
+            paint.strokeJoin = Paint.Join.ROUND
+            paint.color = if (night) 0xE6FFFFFF.toInt() else 0xE61A1A1A.toInt()
+
+            val w = root.width
+            val h = root.height
+            val rs = IntArray(2)
+            root.getLocationOnScreen(rs)
+            val band = hintBandOf(root, rs, w, h)
+            // 固定在功能区右侧：右下角是单手打字时最顺手的收起热区。不按「可点击
+            // 控件中心」定位，那会命中横跨整行的容器而把标记拉回水平居中。
+            val cx = Math.max(
+                band.left + halfW + 4f,
+                band.right - HINT_RIGHT_MARGIN_DP * dm - halfW)
+            val cy = band.centerY().toFloat()
+            glyph.moveTo(cx - halfW, cy - halfH)
+            glyph.lineTo(cx, cy + halfH)
+            glyph.lineTo(cx + halfW, cy - halfH)
+            debug = "x=${Math.round(cx)} y=${Math.round(cy)} band=$band anchor=right"
+        }
+
+        override fun draw(canvas: Canvas) {
+            canvas.drawPath(glyph, paint)
+        }
+
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(colorFilter: ColorFilter?) {}
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    /** 功能区在统一根坐标系中的矩形；解析不到真实功能栏时退回面板最下沿一条带。 */
+    private fun hintBandOf(root: View, rs: IntArray, w: Int, h: Int): Rect {
+        val fallback = Rect(0, Math.max(0, (h * (1f - HINT_BAND_RATIO)).toInt()), w, h)
+        val bar = bottomView() ?: return fallback
+        if (bar.width <= 0 || bar.height <= 0) {
+            return fallback
+        }
+        val bl = IntArray(2)
+        bar.getLocationOnScreen(bl)
+        val l = Math.max(0, bl[0] - rs[0])
+        val t = Math.max(0, bl[1] - rs[1])
+        val r = Math.min(w, l + bar.width)
+        val b = Math.min(h, t + bar.height)
+        if (r - l < 8 || b - t < 8) {
+            return fallback
+        }
+        return Rect(l, t, r, b)
+    }
+
+    /**
+     * 统一根以下只保留一张磨砂：内容区自身、内容区到根之间的容器，以及根之上的窗口层
+     * 全部复位成透明；位于面板下半部且横向铺满的纯色板同步抹平。条目卡片使用状态
+     * 选择器或半透明底，不在处理范围内。
+     *
+     * <p>原位染色而不是替换 background，避免 {@code View.setBackground} 依据新 drawable
+     * 重算 padding。
+     *
+     * @return 被抹平的视图数量，供运行期核对层级是否符合预期。
+     */
+    private fun flattenPanelSurface(root: View, body: View): Int {
+        var cleared = 0
+        var v: View? = body
+        var guard = 0
+        while (v != null && v !== root && guard++ < 16) {
+            tintTransparent(v)
+            cleared++
+            v = v.parent as? View
+        }
+        var up: ViewParent? = root.parent
+        guard = 0
+        while (up is View && guard++ < 8) {
+            tintTransparent(up)
+            if (up === root.rootView) {
+                break
+            }
+            up = up.parent
+        }
+        val rw = root.width
+        val rh = root.height
+        if (rw > 0 && rh > 0) {
+            val loc = IntArray(2)
+            root.getLocationInWindow(loc)
+            cleared += clearBottomPlates(root, root, loc[1], rw, rh, 0)
+        }
+        return cleared
+    }
+
+    /** 只清理位于面板下半部、横向铺满且带不透明纯色底的结构层。 */
+    private fun clearBottomPlates(
+        v: View, root: View, rootTop: Int, rootW: Int, rootH: Int, depth: Int
+    ): Int {
+        if (depth > 7) {
+            return 0
+        }
+        var cleared = 0
+        if (v !== root && v.width.toFloat() >= rootW * 0.8f
+                && v.height > 0 && v.height.toFloat() <= rootH * 0.35f) {
+            val loc = IntArray(2)
+            v.getLocationInWindow(loc)
+            if ((loc[1] - rootTop).toFloat() >= rootH * 0.6f) {
+                val c = solidColorOf(v.background)
+                if (c != 0 && Color.alpha(c) >= 200) {
+                    tintTransparent(v)
+                    cleared++
+                }
+            }
+        }
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                val child = v.getChildAt(i) ?: continue
+                cleared += clearBottomPlates(child, root, rootTop, rootW, rootH, depth + 1)
+            }
+        }
+        return cleared
+    }
+
+    /**
+     * 整块面板共用一张磨砂：视图层模糊打底，其上覆盖一层由功能区同源混合色中性化后
+     * 得到的均匀底色，落在面板内容根上；标签栏、内容区与功能区共用同一张底，交界处
+     * 不存在色差与硬边。功能区按钮不逐个复刻，只叠一个向下收起标记，避免按钮配置
+     * 差异；标记不接管触摸，热区仍归原视图。不做纵向渐变、下沿过渡带、描边与斜向
+     * 反光；全程不启用跨窗口采样，窗口从首帧起即完整可见。(mb-2088)
+     */
+    private fun applyMaterialLikeBlur(body: View, night: Boolean): Boolean {
+        return try {
+            val root = unifiedPanelRoot(body)
+            val radius = cornerRadiusOf(body)
+            val corners = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
+            val blur = createBlurDrawable(root, radius, MBL_BLUR_RADIUS)
+            val neutral = if (night) MBL_NEUTRAL_DARK else MBL_NEUTRAL_LIGHT
+
+            var source = barLikeTint(night)
+            if (Color.alpha(source) == 0) {
+                source = neutral
+            }
+            source = mixRgb(source, neutral, MBL_NEUTRAL_MIX)
+            val uniform = Color.argb(
+                Math.round(255 * MBL_UNIFORM_ALPHA),
+                Color.red(source), Color.green(source), Color.blue(source))
+
+            val plate = GradientDrawable()
+            plate.shape = GradientDrawable.RECTANGLE
+            plate.cornerRadii = corners
+            plate.setColor(uniform)
+
+            val layers: Array<Drawable> = if (blur != null) {
+                arrayOf<Drawable>(blur, plate)
+            } else {
+                arrayOf<Drawable>(plate)
+            }
+            val composite = LayerDrawable(layers)
+
+            // 先抹平、再落根背景；顺序颠倒会把刚设置的统一背景一并抹成透明。
+            val flattened = flattenPanelSurface(root, body)
+            val pl = root.paddingLeft
+            val pt = root.paddingTop
+            val pr = root.paddingRight
+            val pb = root.paddingBottom
+            root.background = composite
+            if (root.paddingLeft != pl || root.paddingTop != pt
+                    || root.paddingRight != pr || root.paddingBottom != pb) {
+                root.setPadding(pl, pt, pr, pb)
+            }
+
+            val previous = sBarIconLayer.remove(root)
+            if (previous != null) {
+                root.overlay.remove(previous)
+            }
+            val hint = CollapseHintLayer(root, night)
+            hint.setBounds(0, 0, root.width, root.height)
+            root.overlay.add(hint)
+            sBarIconLayer[root] = hint
+            root.invalidate()
+            log("material-like blur applied: dark=$night blur=" + (blur != null)
+                    + " uniform=" + hex(uniform) + " src=" + tintSource()
+                    + " root=" + root.javaClass.simpleName
+                    + " flattened=$flattened hint=" + hint.debug
+                    + " schema=" + MBL_SCHEMA)
+            true
+        } catch (t: Throwable) {
+            log("material-like blur unavailable - $t")
+            false
+        }
     }
 
     /**
@@ -2964,8 +3350,13 @@ object PanelColorHook {
         }
     }
 
-    /** 通过隐藏 API {@code ViewRootImpl.createBackgroundBlurDrawable()} 生成背景模糊 drawable。 */
-    private fun createBlurDrawable(body: View, radius: Float): Drawable? {
+    /**
+     * 通过隐藏 API {@code ViewRootImpl.createBackgroundBlurDrawable()} 生成背景模糊 drawable。
+     * 模糊强度可由调用方指定，未指定时沿用基线值。
+     */
+    private fun createBlurDrawable(
+        body: View, radius: Float, blurRadius: Int = BLUR_RADIUS
+    ): Drawable? {
         try {
             val getVri = findMethodInHierarchy(View::class.java, "getViewRootImpl")
             if (getVri == null) {
@@ -2990,7 +3381,7 @@ object PanelColorHook {
             val setBlur = findMethodInHierarchy(d.javaClass, "setBlurRadius", Int::class.java)
             if (setBlur != null) {
                 setBlur.isAccessible = true
-                setBlur.invoke(d, BLUR_RADIUS)
+                setBlur.invoke(d, blurRadius)
             }
             val setColor = findMethodInHierarchy(d.javaClass, "setColor", Int::class.java)
             if (setColor != null) {

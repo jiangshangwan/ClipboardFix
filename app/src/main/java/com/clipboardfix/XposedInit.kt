@@ -58,6 +58,13 @@ class XposedInit : XposedModule() {
         val pkg: String? = param.getPackageName()
         if (pkg == null) return
 
+        // 系统预置输入法仅保留在作用域内：在其进程中不安装任何 hook，直接结束分发。
+        if (OEM_IME_PACKAGES.contains(pkg)) {
+            log(pkg + " scope-only: dispatch bypassed (variant="
+                    + Integer.toHexString(ROUTE_VARIANT) + ")")
+            return
+        }
+
         // 剪贴板面板背景跟随底部功能栏配色：面板实际运行在输入法进程（如微信输入法 :hld、
         // 系统 MIUI 输入法），与 com.miui.phrase 不是同一进程。故凡是能加载到该面板类的进程
         // 都要挂（用类存在性自检兜底），不再限定 com.miui.phrase。
@@ -133,6 +140,22 @@ class XposedInit : XposedModule() {
 
         const val PKG_PHRASE = "com.miui.phrase"
         const val PKG_SETTINGS = "com.android.settings"
+
+        /**
+         * 系统预置输入法包名。这些进程保留在作用域中，但不参与进程内功能分发：其剪贴板
+         * 面板由系统实现自身管理，不叠加第三方输入法下的背景、置顶与布局修正。名单与
+         * [ImeUnlockHook] 的定制输入法判定保持一致。
+         */
+        private val OEM_IME_PACKAGES = setOf(
+            "com.sohu.inputmethod.sogou.xiaomi",
+            "com.iflytek.inputmethod.miui",
+            "com.baidu.input_mi",
+            "com.xiaomi.type",
+            "com.miui.catcherpatch",
+        )
+
+        /** 分发链修订标识，随诊断日志输出，用于区分不同构建的路由行为。 */
+        private const val ROUTE_VARIANT = 0x2B19
 
         /** 系统是否支持 MIUI 输入法底部栏，不支持就没必要 hook 全面屏优化。 */
         private const val PROP_MIUI_IME_BOTTOM = "ro.miui.support_miui_ime_bottom"
