@@ -88,6 +88,7 @@ class AboutActivity : ComponentActivity() {
     val uiSwUnlimitCount: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_UNLIMIT_COUNT)
     val uiSwUnlimitTime: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_UNLIMIT_TIME)
     val uiSwPanelColor: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_PANEL_COLOR)
+    val uiSwPanelMaterial: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_PANEL_MATERIAL)
     val uiSwClipboardPin: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_PIN)
     val uiSwClipboardGroup: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
     val uiSwClipboardGroupRemember: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
@@ -202,13 +203,14 @@ class AboutActivity : ComponentActivity() {
             BuildConfig.VERSION_NAME, uiLatestVersion, Runnable { UpdateChecker(this).showUpdateDialogIfNeeded() }, BuildConfig.BUILD_DATE,
             DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
             Build.VERSION.INCREMENTAL, phraseVersion(), abiInfo(),
-            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwClipboardPin, uiSwClipboardGroup, uiSwClipboardGroupRemember, uiIconHidden,
+            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwPanelMaterial, uiSwClipboardPin, uiSwClipboardGroup, uiSwClipboardGroupRemember, uiIconHidden,
             Runnable { doCheckUpdate() },
             Runnable { onStatusCardTap() },
             featureToggle { onToggleImeUnlock(it) },
             featureToggle { onToggleUnlimitCount(it) },
             featureToggle { onToggleUnlimitTime(it) },
             featureToggle { onTogglePanelColor(it) },
+            featureToggle { onTogglePanelMaterial(it) },
             featureToggle { onToggleClipboardPin(it) },
             featureToggle { onToggleClipboardGroup(it) },
             featureToggle { onToggleClipboardGroupRemember(it) },
@@ -610,6 +612,7 @@ class AboutActivity : ComponentActivity() {
         uiSwUnlimitCount.value = prefs.getBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT)
         uiSwUnlimitTime.value = prefs.getBoolean(ModulePrefs.KEY_UNLIMIT_TIME, ModulePrefs.DEFAULT_UNLIMIT_TIME)
         uiSwPanelColor.value = prefs.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)
+        uiSwPanelMaterial.value = prefs.getBoolean(ModulePrefs.KEY_PANEL_MATERIAL, ModulePrefs.DEFAULT_PANEL_MATERIAL)
         uiSwClipboardPin.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
         uiSwClipboardGroup.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
         uiSwClipboardGroupRemember.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
@@ -636,6 +639,11 @@ class AboutActivity : ComponentActivity() {
 
     private fun onTogglePanelColor(checked: Boolean) {
         uiSwPanelColor.value = checked
+        saveFeaturePrefs()
+    }
+
+    private fun onTogglePanelMaterial(checked: Boolean) {
+        uiSwPanelMaterial.value = checked
         saveFeaturePrefs()
     }
 
@@ -693,6 +701,7 @@ class AboutActivity : ComponentActivity() {
             .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, uiSwUnlimitCount.value)
             .putBoolean(ModulePrefs.KEY_UNLIMIT_TIME, uiSwUnlimitTime.value)
             .putBoolean(ModulePrefs.KEY_PANEL_COLOR, uiSwPanelColor.value)
+            .putBoolean(ModulePrefs.KEY_PANEL_MATERIAL, uiSwPanelMaterial.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, uiSwClipboardPin.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, uiSwClipboardGroup.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, uiSwClipboardGroupRemember.value)
@@ -718,6 +727,7 @@ class AboutActivity : ComponentActivity() {
         val unlimit = local.getBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, ModulePrefs.DEFAULT_UNLIMIT_COUNT)
         val unlimitTime = local.getBoolean(ModulePrefs.KEY_UNLIMIT_TIME, ModulePrefs.DEFAULT_UNLIMIT_TIME)
         val panelColor = local.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)
+        val panelMaterial = local.getBoolean(ModulePrefs.KEY_PANEL_MATERIAL, ModulePrefs.DEFAULT_PANEL_MATERIAL)
         val clipboardPin = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
         val clipboardGroup = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
         val clipboardGroupRemember = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
@@ -728,6 +738,7 @@ class AboutActivity : ComponentActivity() {
                     .putBoolean(ModulePrefs.KEY_UNLIMIT_COUNT, unlimit)
                     .putBoolean(ModulePrefs.KEY_UNLIMIT_TIME, unlimitTime)
                     .putBoolean(ModulePrefs.KEY_PANEL_COLOR, panelColor)
+                    .putBoolean(ModulePrefs.KEY_PANEL_MATERIAL, panelMaterial)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, clipboardPin)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, clipboardGroup)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, clipboardGroupRemember)

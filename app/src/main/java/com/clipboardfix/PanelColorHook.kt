@@ -209,20 +209,32 @@ object PanelColorHook {
     private const val NAV_GUARD_REV = 0x3C7
 
     /** 整块面板背景的结构版本标记。 */
-    private const val MBL_SCHEMA = "mb" + "20" + "89"
+    private const val MBL_SCHEMA = "mb" + "20" + "92"
+
+    /** 叠层色调修订标识，随诊断日志输出。 */
+    private const val TONE_REVISION = 90
+
+    /**
+     * 渲染链准入修订标识，随诊断日志输出。
+     * 92 = 高级材质分支改为走自带取色链、不依赖底栏换色点下发颜色，从而与是否安装
+     * 美化模块、是否微信输入法解耦（用户 2026-11-15 反馈「只对微信输入法 / 仅美化模块下生效」）。
+     */
+    private const val GATE_REV = 92
 
     /**
      * 背景落在面板内容根上，标签栏、内容区与底部功能区共用同一张磨砂，内部因此不存在
-     * 分界线。底色取功能区同源色并中性化、整体提高不透明度，让背后内容只作为质感透出；
-     * 不做纵向渐变、下沿过渡带或描边，避免重新描出边界。(mb-2088)
+     * 分界线。叠色层按明暗分别控制覆盖强度与中性化幅度：降低实色覆盖、抬高基准明度，
+     * 让底层模糊内容参与最终观感；不做纵向渐变、下沿过渡带或描边，避免重新描出边界。
      */
     private const val MBL_BLUR_RADIUS = 110
-    private const val MBL_UNIFORM_ALPHA = 0.82f
+    private const val MBL_UNIFORM_ALPHA_DARK = 0.64f
+    private const val MBL_UNIFORM_ALPHA_LIGHT = 0.60f
 
-    /** 中性化幅度与两态基准色；把系统下发的彩色混合色收敛到功能区观感。 */
-    private const val MBL_NEUTRAL_MIX = 0.65f
-    private val MBL_NEUTRAL_DARK = 0xFF1B1D21.toInt()
-    private val MBL_NEUTRAL_LIGHT = 0xFFA0A5AC.toInt()
+    /** 中性化幅度与两态基准色；收敛系统下发的混合色，同时保留足够明度层次。 */
+    private const val MBL_NEUTRAL_MIX_DARK = 0.45f
+    private const val MBL_NEUTRAL_MIX_LIGHT = 0.40f
+    private val MBL_NEUTRAL_DARK = 0xFF2C3138.toInt()
+    private val MBL_NEUTRAL_LIGHT = 0xFFE6EBF2.toInt()
 
     /** 首帧合成完成后再开启跨窗口采样的帧数缓冲；过长会露出无材质窗口，过短会采到未就绪内容。 */
     private const val MATERIAL_STAGE_DELAY_MS = 96L
@@ -279,6 +291,10 @@ object PanelColorHook {
 
     /** 已挂过导航守卫的面板内容根（弱引用集合，视图回收即自动移除）。 */
     private val sNavGuarded: MutableMap<View, Boolean> = java.util.WeakHashMap()
+
+    /** 标题栏原生收起控件当前是否应隐藏；pre-draw 守卫按帧读取，随渲染链准入变化。 */
+    @Volatile
+    private var sNativeBackHidden = false
 
     /**
      * 记录「本模块上一次写进 TextView 的颜色」。
@@ -1248,11 +1264,16 @@ object PanelColorHook {
 
                     val color = barColor(sBarBgColor)
                     if (color == -1) {
-                        // 底部栏尚未着色（如输入法刚起），推迟一拍再试。
-                        log("defer: bottom color not ready")
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            applyPanelBackground(body, barColor(sBarBgColor))
-                        }, 300L)
+                        // 底部栏尚未着色（如输入法刚起 / 未装美化模块时底栏色可能恒为 -1）。
+                        // 高级材质分支自带取色链，不依赖底栏色，这里直接套用；其余分支等底栏色就绪再刷新。
+                        if (ModulePrefs.isPanelMaterialEnabled()) {
+                            applyPanelBackground(body, -1)
+                        } else {
+                            log("defer: bottom color not ready")
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                applyPanelBackground(body, barColor(sBarBgColor))
+                            }, 300L)
+                        }
                         requestBarComposite(body, true)
                         return
                     }
@@ -1564,14 +1585,23 @@ object PanelColorHook {
      *       退回不透明实色，绝不留下透明面板。</li>
      * </ul>
      */
+    /** 未启用连续磨砂时移除右下角收起标记，避免面板复用后残留。 */
+    private fun clearCollapseHint(root: View) {
+        val previous = sBarIconLayer.remove(root) ?: return
+        root.overlay.remove(previous)
+        root.invalidate()
+    }
+
     /**
      * 隐藏标题栏左侧的系统收起控件。
      *
      * <p>面板复用同一 PopupWindow，切换标签或主题重充气时 phrase 可能重设该控件可见性，
      * 因此除当次设置外，另以 pre-draw 守卫按帧兜底。控件失去显示后不再参与触摸命中，
-     * 收起入口统一交给底部功能区原有热区。
+     * 收起入口统一交给底部功能区原有热区。仅在连续磨砂渲染链启用时接管。
      */
-    private fun suppressNativeBack(root: View, body: View) {
+    private fun suppressNativeBack(root: View, body: View, hide: Boolean) {
+        sNativeBackHidden = hide
+        if (!hide) return
         try {
             var id = phraseId(body.context, ID_NATIVE_BACK)
             if (id == 0) id = ID_NATIVE_BACK_BASELINE
@@ -1587,7 +1617,7 @@ object PanelColorHook {
             val vto = root.viewTreeObserver ?: return
             if (!vto.isAlive) return
             vto.addOnPreDrawListener {
-                if (root.isAttachedToWindow) {
+                if (sNativeBackHidden && root.isAttachedToWindow) {
                     val live = if (target.isAttachedToWindow) target
                             else body.findViewById<View>(id)
                     if (live != null && live.visibility != View.INVISIBLE) {
@@ -1597,14 +1627,43 @@ object PanelColorHook {
                 true
             }
             log("native back suppressed: id=" + Integer.toHexString(id)
-                    + " nav=" + Integer.toHexString(NAV_GUARD_REV))
+                    + " nav=" + Integer.toHexString(NAV_GUARD_REV)
+                    + " gate=r$GATE_REV")
         } catch (t: Throwable) {
             log("native back guard unavailable - $t")
         }
     }
 
     private fun applyPanelBackground(body: View, bottomColor: Int) {
-        suppressNativeBack(unifiedPanelRoot(body), body)
+        val root = unifiedPanelRoot(body)
+        val materialLike = ModulePrefs.isPanelMaterialEnabled()
+        suppressNativeBack(root, body, materialLike)
+        if (!materialLike) {
+            clearCollapseHint(root)
+        }
+        // 高级材质（连续磨砂 + ∨ + 隐藏返回）走本模块自带取色链（barLikeTint + 中性常数），
+        // 不依赖底栏换色点是否下发颜色：未装美化模块、或底栏色暂未就绪时，它仍应直接套用，
+        // 而不是被 -1 门禁挡掉（这正是「没美化模块就不生效」的根因）。因此把高级材质分支
+        // 提到 -1 校验之前，仅当它本身不可用（取色/模糊都不行）时再回落到下方依赖底栏色的逻辑。
+        if (materialLike) {
+            val sysNight = isSystemNight(body)
+            if (MATERIAL_LIKE_BLUR && applyMaterialLikeBlur(body, sysNight)) {
+                sBlurPanel = true
+                sAppliedPanelColor = -1
+                applyBlurForeground(root, sysNight)
+                return
+            }
+            if (applyBlurPanel(body, sysNight)) {
+                sBlurPanel = true
+                sAppliedPanelColor = -1
+                makeAncestorsTransparent(body)
+                applyBlurForeground(body, sysNight)
+                return
+            }
+            log("material-like path unavailable, defer (bottomColor="
+                    + Integer.toHexString(bottomColor) + ")")
+            return
+        }
         if (bottomColor == -1) {
             // 取色尚未就绪（输入法刚起），不是「被强改透明」：保持面板原样，等下次同步。
             log("skip: bottom color unknown")
@@ -1624,16 +1683,6 @@ object PanelColorHook {
                 sAppliedPanelColor = -1
                 makeAncestorsTransparent(body)
                 applyBlurForeground(body, sysNight)
-                return
-            }
-            if (MATERIAL_LIKE_BLUR && applyMaterialLikeBlur(body, sysNight)) {
-                // 父链透明化与统一根背景由 applyMaterialLikeBlur 内部按序处理，
-                // 此处不可再调用 makeAncestorsTransparent，否则会擦掉根上的磨砂。
-                sBlurPanel = true
-                sAppliedPanelColor = -1
-                // 背景已上移到内容根，前景守卫也必须以同一根遍历，否则内容区的兄弟节点
-                // （底部功能区）拿不到文字/图标对比度纠偏。
-                applyBlurForeground(unifiedPanelRoot(body), sysNight)
                 return
             }
             if (applyBlurPanel(body, sysNight)) {
@@ -2625,14 +2674,16 @@ object PanelColorHook {
             val corners = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
             val blur = createBlurDrawable(root, radius, MBL_BLUR_RADIUS)
             val neutral = if (night) MBL_NEUTRAL_DARK else MBL_NEUTRAL_LIGHT
+            val alpha = if (night) MBL_UNIFORM_ALPHA_DARK else MBL_UNIFORM_ALPHA_LIGHT
+            val mix = if (night) MBL_NEUTRAL_MIX_DARK else MBL_NEUTRAL_MIX_LIGHT
 
             var source = barLikeTint(night)
             if (Color.alpha(source) == 0) {
                 source = neutral
             }
-            source = mixRgb(source, neutral, MBL_NEUTRAL_MIX)
+            source = mixRgb(source, neutral, mix)
             val uniform = Color.argb(
-                Math.round(255 * MBL_UNIFORM_ALPHA),
+                Math.round(255 * alpha),
                 Color.red(source), Color.green(source), Color.blue(source))
 
             val plate = GradientDrawable()
@@ -2672,7 +2723,7 @@ object PanelColorHook {
                     + " uniform=" + hex(uniform) + " src=" + tintSource()
                     + " root=" + root.javaClass.simpleName
                     + " flattened=$flattened hint=" + hint.debug
-                    + " schema=" + MBL_SCHEMA)
+                    + " tone=r$TONE_REVISION gate=r$GATE_REV schema=" + MBL_SCHEMA)
             true
         } catch (t: Throwable) {
             log("material-like blur unavailable - $t")

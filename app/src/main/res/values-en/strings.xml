@@ -49,6 +49,8 @@
     <string name="sw_unlimit_time_sub">Remove the official 72-hour retention limit</string>
     <string name="sw_panel">Optimize Clipboard Panel BG</string>
     <string name="sw_panel_sub">Unify the clipboard panel tone with the function bar below</string>
+    <string name="sw_panel_material">Enable Advanced Material BG</string>
+    <string name="sw_panel_material_sub">Use a continuous frosted panel with a collapse hint</string>
     <string name="sw_clipboard_pin">Enable Clipboard Entry Pinning</string>
     <string name="sw_clipboard_pin_sub">Swipe right on an entry to pin it</string>
     <string name="sw_clipboard_group">Enable Clipboard Grouping</string>

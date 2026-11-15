@@ -46,6 +46,7 @@ fun FeaturePage(
     swUnlimitCount: Boolean,
     swUnlimitTime: Boolean,
     swPanelColor: Boolean,
+    swPanelMaterial: Boolean,
     swClipboardPin: Boolean,
     swClipboardGroup: Boolean,
     swClipboardGroupRemember: Boolean,
@@ -53,6 +54,7 @@ fun FeaturePage(
     onToggleUnlimitCount: (Boolean) -> Unit,
     onToggleUnlimitTime: (Boolean) -> Unit,
     onTogglePanelColor: (Boolean) -> Unit,
+    onTogglePanelMaterial: (Boolean) -> Unit,
     onToggleClipboardPin: (Boolean) -> Unit,
     onToggleClipboardGroup: (Boolean) -> Unit,
     onToggleClipboardGroupRemember: (Boolean) -> Unit,
@@ -158,6 +160,17 @@ fun FeaturePage(
                         enabled = subSwitchesEnabled,
                         onClickWhenDisabled = disabledHint,
                     )
+                    // 连续磨砂背景：仅当「优化剪贴板面板背景」打开时才显示（子选项），默认关闭
+                    if (swImeUnlock && swPanelColor) {
+                        FeatureSwitch(
+                            checked = swPanelMaterial,
+                            onCheckedChange = onTogglePanelMaterial,
+                            title = stringResource(R.string.sw_panel_material),
+                            summary = stringResource(R.string.sw_panel_material_sub),
+                            enabled = switchesEnabled,
+                            onClickWhenDisabled = disabledHint,
+                        )
+                    }
                     FeatureSwitch(
                         checked = swImeUnlock && swClipboardPin,
                         onCheckedChange = onToggleClipboardPin,

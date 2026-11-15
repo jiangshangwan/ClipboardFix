@@ -38,6 +38,9 @@ object ModulePrefs {
     /** 剪贴板/常用语面板背景跟随底部功能栏取色，默认关闭。 */
     const val KEY_PANEL_COLOR = "clipboard_panel_color"
 
+    /** 面板连续磨砂背景（「优化剪贴板面板背景」的子选项），默认关闭。 */
+    const val KEY_PANEL_MATERIAL = "clipboard_panel_advanced_material"
+
     /** 剪贴板条目置顶（右滑置顶、清空保留），默认关闭。 */
     const val KEY_CLIPBOARD_PIN = "clipboard_pin_entry"
 
@@ -60,6 +63,7 @@ object ModulePrefs {
     const val DEFAULT_UNLIMIT_COUNT = false
     const val DEFAULT_UNLIMIT_TIME = false
     const val DEFAULT_PANEL_COLOR = false
+    const val DEFAULT_PANEL_MATERIAL = false
     const val DEFAULT_CLIPBOARD_PIN = false
     const val DEFAULT_CLIPBOARD_GROUP = false
     const val DEFAULT_CLIPBOARD_GROUP_REMEMBER = false
@@ -112,10 +116,16 @@ object ModulePrefs {
         return p != null && p.getBoolean(KEY_PANEL_COLOR, DEFAULT_PANEL_COLOR)
     }
 
+    /** 面板连续磨砂背景是否启用（hook 侧）。默认关闭；父开关未开启时不会走到这里。 */
+    @JvmStatic
+    fun isPanelMaterialEnabled(): Boolean {
+        val p = hookPrefs() ?: return false
+        return p.getBoolean(KEY_PANEL_MATERIAL, DEFAULT_PANEL_MATERIAL)
+    }
+
     /**
-     * 面板背景渲染方式（hook 侧）：由「优化剪贴板面板背景」的实际生效状态派生——
-     * 主开关与该背景开关同时开启时走系统级高级材质，否则回落裸模糊。不单独落库，
-     * 避免两份开关状态在跨进程读写之间出现漂移。(mp-26b)
+     * 系统级材质探测路径的准入条件（hook 侧）。该路径当前停用，保留判定入口以便
+     * 后续按框架能力重新评估；与 [isPanelMaterialEnabled] 是两条独立渲染链。
      */
     @JvmStatic
     fun isGaussianBlurEnabled(): Boolean {
