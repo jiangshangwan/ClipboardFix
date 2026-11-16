@@ -284,6 +284,9 @@ object CrossDeviceClipboardHook {
 
     /** 每个面板实例只合并一次：立即一次 + 600ms 后再一次（覆盖本地列表异步填充时序）。 */
     private fun scheduleMerge(self: Any) {
+        // v4.27：无条件记录面板实例（分组开/关均需）——setClipboardList 钩子依赖它把
+        // mCurrentImeClipboardList 与 adapter 列表钉成同一对象（syncPanelListField）。
+        sPopupRef = java.lang.ref.WeakReference(self)
         if (sMerged.containsKey(self)) return
         sMerged[self] = true
         // 每次打开都是新会话：重置「已见到云端数据」标志，供重试窗口判断。
@@ -299,7 +302,6 @@ object CrossDeviceClipboardHook {
         val grpEnabled = ModulePrefs.isClipboardGroupEnabled()
         log("group gate = $grpEnabled (panel ${self.javaClass.name})")
         if (grpEnabled) {
-            sPopupRef = java.lang.ref.WeakReference(self)
             // v2.0.5：面板打开时恢复分组位置（记忆开启时）/回「全部」（记忆关闭时），
             // 主恢复在 showAtLocation 钩子内先于列表灌入执行，这里再兜一次保险。
             resetGroupToAll((self as? PopupWindow)?.contentView?.context)
@@ -421,6 +423,9 @@ object CrossDeviceClipboardHook {
                                     sCloudCache = ArrayList<Any?>(r)
                                     log("cloud cache updated: ${r.size} rows"
                                             + " (uncapped, count-unlock on)")
+                                    // [CF-JSW-2611c] 逐条记录云端身份与时间：用于比对删除记账键
+                                    // 与重推副本键是否一致，定位跨设备复制后的显示复活来源。
+                                    for (cc in r) log("cloud row: " + diagEntry(cc))
                                     mergeCloudIntoDisplay()
                                     return@hook ArrayList<Any?>()
                                 }
@@ -521,7 +526,7 @@ object CrossDeviceClipboardHook {
                                     if (cache.isNotEmpty() && !sSuppressCloudPrepend) {
                                         prependMissingCloud(d, cache)
                                     }
-                                    // 已删条目在展示快照层剔除（不碰 phrase 底层列表）。
+                                    // 已删条目剔除（写回后面板字段与适配器列表同步生效，见下）。
                                     dropBlockedEntries(d)
                                     if (ModulePrefs.isClipboardGroupEnabled()) {
                                         hookGroupAdapterMethods(chain.thisObject)
@@ -531,12 +536,34 @@ object CrossDeviceClipboardHook {
                                             recomputeGroupVisible()
                                         }
                                     }
-                                    display = d
+                                    // v4.27【关键不变量】popup 的 mCurrentImeClipboardList 与 adapter
+                                    // 持有的 mClipboardList 必须是【同一对象】：原生 onItemClick 三条点击
+                                    // 链路（复制/类型布局/删除）都按显示位置对 mCurrentImeClipboardList
+                                    // get(p) 取模型，而删除只移除 adapter 列表侧、从不回写该字段——
+                                    // 全靠引用共享隐式同步。此前把补全结果灌进【副本】再 proceed，
+                                    // 云端条目插到副本头部后两列表同位置指向不同模型：get(p) 越界闪退、
+                                    // 删除记账标错条目（真删的那条进不了屏蔽表，经云端缓存/本地库
+                                    // 任一通道复活）。这里把最终内容写回入参本体（入参通常即该字段
+                                    // 本身）；定长视图写不进时退回副本，proceed 后再统一把面板字段
+                                    // 指到实际灌入的列表兜底（restoreMissingRows 等传临时副本也覆盖）。
+                                    display = try {
+                                        phraseList.clear()
+                                        phraseList.addAll(d)
+                                        phraseList
+                                    } catch (t: Throwable) {
+                                        log("in-place list sync fallback - $t")
+                                        d
+                                    }
                                 }
                             } catch (t: Throwable) {
                                 log("prepend error - $t")
                             }
-                            if (display != null) chain.proceed(arrayOf<Any?>(display)) else chain.proceed()
+                            if (display != null) {
+                                syncPanelListField(chain.thisObject, display)
+                                chain.proceed(arrayOf<Any?>(display))
+                            } else {
+                                chain.proceed()
+                            }
                         }
                         log("OK: hooked adapter setClipboardList")
                         break
@@ -639,6 +666,7 @@ object CrossDeviceClipboardHook {
                                                     // 刚按映射标的条目其实还在列表里 → 误标，撤销，
                                                     // 否则这条内容此后会被当成「已删」持续吞掉。
                                                     sWipedKeys.remove(mk)
+                                                    sWipedKeys.remove(normalizeKey(mk))
                                                     persistDeletedKeys()
                                                 }
                                             } else {
@@ -656,32 +684,13 @@ object CrossDeviceClipboardHook {
                                         // 下次查库（切分组/周期同步/关面板重开）会把已删条目从库里捞回 → 复活。
                                         // 这里把「当前列表去掉所有已屏蔽条目」覆盖式写回本地库（与一键清空同机制），
                                         // 让删除真正落库、无法复活。mData 此时已是删后的干净列表。
-                                        try {
-                                            val ctxDel = objField(chain.thisObject, "mContext") as? Context
-                                            val mgrDel = Reflect.findClassIfExists(MIUI_CLIPBOARD_MANAGER, chain.thisObject.javaClass.classLoader)
-                                            if (mgrDel != null && ctxDel != null) {
-                                                val cur = adapterDataList(adapter)
-                                                if (cur != null) {
-                                                    val cleaned = ArrayList<Any?>()
-                                                    for (e in cur) {
-                                                        val k = entryKey(e)
-                                                        if (k != null && sWipedKeys.containsKey(k)) continue
-                                                        cleaned.add(e)
-                                                    }
-                                                    for (sm in mgrDel.methods) {
-                                                        if (sm.name == "setClipboardModelList" && sm.parameterTypes.size == 2) {
-                                                            sm.isAccessible = true
-                                                            sm.invoke(null, ctxDel, cleaned)
-                                                            break
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        } catch (t: Throwable) { log("delete persist failed - $t") }
+                                        persistListMinusBlocked(chain.thisObject)
                                     } else {
                                         markDeletedEntry(model)
                                         removeFromGroupSnapshot(model)
                                         chain.proceed()
+                                        // 非分组路径同样落库（与分组路径同机制），堵「原生删除不落库」复活源
+                                        persistListMinusBlocked(chain.thisObject)
                                     }
                                 } catch (t: Throwable) {
                                     log("delete track capture failed - $t")
@@ -1101,23 +1110,24 @@ object CrossDeviceClipboardHook {
             // v4.14：精确跳过「已被一键清空」的条目（按 entryKey 屏蔽），防复活。
             // 不再按时间一刀切——正常云端/新条目（entryKey 不同）照常实时显示，
             // 修 v4.13 回归（云端条目面板开着时不显示、关面板重开才有）。
-            // v4.16：只屏蔽「被清空那一代副本」——time <= 记账值才算旧副本；
-            // 新一次复制的推送 time 刷新（变大）→ 放行并解除屏蔽（图片稳定键不再被永久拦）。
+            // v4.26：只屏蔽「被删那一代旧副本」——time <= 记账值才算旧副本；
+            // 用户重新复制的 time 刷新（变大）→ 放行并解封。源头（缓存/master/本地库）
+            // 在删除时已物理清干净，这里只兜删除瞬间的竞态残留。
             val k = entryKey(c)
             if (k != null) {
-                val wt = sWipedKeys[k]
+                val wt = wipedTimeOf(k)
                 if (wt != null) {
-                    if (k.startsWith("c:")) {
-                        // 云端内容指纹键：记过即永久拦，云端重复推送同内容不复活
-                        blocked++
-                        continue
-                    }
+                    // v4.26：只拦「被删那一代旧副本」(time <= 记账值)。源头已物理清干净，
+                    // 这里只兜删除瞬间的竞态残留；用户重新复制同一张图 time 刷新变大 → 放行。
                     val t = entryTime(c) ?: 0L
                     if (t <= wt) {
                         blocked++
+                        log("BLOCK cloud: $k t=$t wt=$wt diff=${t - wt}")
                         continue
                     }
-                    sWipedKeys.remove(k)
+                    log("UNBLOCK cloud: $k t=$t wt=$wt (t>wt -> release)")
+                    // time 刷新 = 用户重新复制的新副本，解封（记账键是归一化形态）
+                    sWipedKeys.remove(normalizeKey(k) ?: k)
                     log("wipe block lifted: $k (new copy t=$t > wiped t=$wt)")
                 }
             }
@@ -1128,6 +1138,8 @@ object CrossDeviceClipboardHook {
                 // 与关面板重开显示一致。
                 list.add(added, normalizeEntryType(c))
                 added++
+                // [CF-JSW-2611c] 记录真正补回的云端条目身份，识别「删除键≠重推键」导致的复活。
+                log("prepend row " + diagEntry(c) + " blocked=" + (if (wipedTimeOf(k) != null) "Y" else "N"))
                 if (k != null) {
                     present.add(k)
                 }
@@ -1175,18 +1187,15 @@ object CrossDeviceClipboardHook {
             while (it.hasNext()) {
                 val e = it.next()
                 val k = entryKey(e) ?: continue
-                val wt = sWipedKeys[k] ?: continue
-                if (k.startsWith("c:")) {
-                    it.remove()
-                    removed++
-                    continue
-                }
+                val wt = wipedTimeOf(k) ?: continue
+                // v4.26：只拦被删那一代旧副本(time <= 记账值)；重新复制的 time 更大 → 放行并解封
                 val t = entryTime(e) ?: 0L
                 if (t <= wt) {
                     it.remove()
                     removed++
+                    log("BLOCK display: $k t=$t wt=$wt diff=${t - wt}")
                 } else {
-                    sWipedKeys.remove(k)
+                    sWipedKeys.remove(normalizeKey(k) ?: k)
                     log("wipe block lifted (display): $k (t=$t > wiped t=$wt)")
                 }
             }
@@ -1265,6 +1274,35 @@ object CrossDeviceClipboardHook {
     }
 
     /**
+     * 归一化图片条目身份键：去掉 deviceId 前缀，使本地副本与云端副本命中同一屏蔽键。
+     *
+     * <p>图片键 img:dev:type:size 中 deviceId 不稳定——本地条目为空、云端条目非空，
+     * 同一张图的本地/云端副本会算出不同 key，导致删除记账只拦其中一种、另一种复活。
+     * 归一化后统一按 img:type:size 匹配，屏蔽表查询时同时匹配原始键与归一化键。
+     */
+    private fun normalizeKey(k: String?): String? {
+        if (k == null || !k.startsWith("img:")) return k
+        val parts = k.split(":")
+        // img:dev:uriType:size → img:uriType:size（去掉 dev 段）
+        return if (parts.size == 4) "img:" + parts[2] + ":" + parts[3] else k
+    }
+
+    /**
+     * 屏蔽表查值：先查归一化键（记账统一形态），未命中再查原键（兼容旧落盘形态）。
+     * 记账侧统一写归一化键后，云端副本 img:DEV:type:size 与本地副本 img::type:size
+     * 都经归一化命中同一条记录，任一形态删除即全形态生效。
+     *
+     * <p>v4.26：屏蔽值为「被删条目的 time」，按 time 代际判定（见各拦截点）：旧副本
+     * time <= 记账值才拦，重新复制的 time 更大即放行。历史遗留记录的 time 早已过时，
+     * 新图 time 必然更大 → 自动放行，不会误杀，故无需 TTL。
+     */
+    private fun wipedTimeOf(k: String?): Long? {
+        if (k == null) return null
+        val nk = normalizeKey(k)
+        return sWipedKeys[nk] ?: if (nk == k) null else sWipedKeys[k]
+    }
+
+    /**
      * 该条目是否云端/跨设备来源（isAcrossDevices）。
      * 云端条目会被以【新 time 重复推送同内容】重新合入面板，屏蔽必须按内容指纹而非 time。
      * 反射失败回退 deviceId 非空判定（云端条目 deviceId 非空，本机条目为空）。
@@ -1319,6 +1357,28 @@ object CrossDeviceClipboardHook {
             f.get(self)
         } catch (_: Throwable) {
             null
+        }
+    }
+
+    /**
+     * v4.27：把面板 popup 的 mCurrentImeClipboardList 指到「实际灌给 adapter 的列表」，
+     * 保证两者是同一对象（onItemClick 按显示位置对该字段 get(p) 取模型，与 adapter
+     * 显示位置必须一一对应）。仅当面板记录的 adapter 就是本次灌入目标时才写，
+     * 防止异步回调串台写坏其它面板实例。
+     */
+    private fun syncPanelListField(adapter: Any, display: Any?) {
+        try {
+            val pw = sPopupRef?.get() ?: return
+            if (objField(pw, "mInputMethodClipboardAdapter") !== adapter) return
+            val cur = objField(pw, "mCurrentImeClipboardList")
+            if (cur !== display) {
+                Reflect.setField(pw, "mCurrentImeClipboardList", display)
+                // [CF-JSW-2611d] 面板列表引用重定向记录（cur 与 display 不同对象时才落笔）
+                log("panel list ref re-pointed (" + System.identityHashCode(cur) +
+                        " -> " + System.identityHashCode(display) + ")")
+            }
+        } catch (t: Throwable) {
+            log("panel list ref sync skipped - $t")
         }
     }
 
@@ -1633,9 +1693,14 @@ object CrossDeviceClipboardHook {
                 val k = it.next()
                 val t = obj.optLong(k, 0L)
                 if (t > 0L) {
-                    val old = sWipedKeys[k]
+                    // v4.23：并入时归一化键（旧版落盘的 img:dev:type:size 统一成 img:type:size），
+                    // 否则历史屏蔽项与新记账形态对不上、查询侧漏拦。
+                    // v4.26：不做 TTL/墙钟过滤——屏蔽值是条目 time，历史记录 time 很旧，
+                    // 按 time 代际判定时新图 time 必然更大→自动放行，不会误杀。
+                    val nk = normalizeKey(k) ?: k
+                    val old = sWipedKeys[nk]
                     if (old == null || t > old) {
-                        sWipedKeys[k] = t
+                        sWipedKeys[nk] = t
                         n++
                     }
                 }
@@ -1733,15 +1798,42 @@ object CrossDeviceClipboardHook {
             log("single delete: entryKey unresolved, skip - " + diagEntry(e))
             return
         }
-        val old = sWipedKeys[k]
+        // v4.23：记账键统一归一化（图片去掉 deviceId，本地空/云端非空同图命中同一键），
+        // 否则本地删除记 img::type:size、云端副本 img:DEV:type:size，屏蔽表永远对不上。
+        val nk = normalizeKey(k) ?: k
+        // v4.26：记账值回到「被删条目的 time」——配合源头清理（sMasterList 等已物理剔除），
+        // 屏蔽表只需拦「删除瞬间还残留在缓存里的那一代旧副本」（time <= 该值）；
+        // 用户重新复制同一张图时 time 刷新变大 → 自动放行，不再误杀。
+        // v4.24 曾用墙钟+TTL+一律拦，导致删除后主动重复制的同图也显示不出来（key 相同无从区分）。
+        val old = sWipedKeys[nk]
         if (old == null || t > old) {
-            sWipedKeys[k] = t
+            sWipedKeys[nk] = t
         }
+        log("MARK DELETE: key=$nk t=$t old=$old diag=" + diagEntry(e))
         while (sWipedKeys.size > 400) {
             val it = sWipedKeys.keys.iterator()
             if (it.hasNext()) sWipedKeys.remove(it.next())
         }
         sSeenCloud.remove(k)
+        sSeenCloud.remove(nk)
+        // v4.25：从 master 并集里物理剔除被删条目——这是第三条复活源。
+        // 不清它则 restoreMissingRows 切分组时把已删条目当「缺失」补回，只能靠屏蔽表
+        // 长期拦，导致用户删除后主动重新复制同一张图也显示不出来（key 完全相同）。
+        // 源头清干净后，屏蔽表只覆盖删除执行期的竞态窗口即可，TTL 可大幅缩短。
+        val master = sMasterList
+        if (master != null) {
+            var hit = false
+            val mit = master.iterator()
+            while (mit.hasNext()) {
+                val me = mit.next()
+                val mk = entryKey(me)
+                if (mk != null && normalizeKey(mk) == nk) {
+                    mit.remove()
+                    hit = true
+                }
+            }
+            if (hit) log("single delete: purged master rows for $nk")
+        }
         val base = sCloudCache
         if (base != null) {
             val filtered = ArrayList<Any?>()
@@ -1749,7 +1841,10 @@ object CrossDeviceClipboardHook {
                 val ck = entryKey(c)
                 val ct = entryTime(c) ?: 0L
                 // v4.22：内容指纹键（c:）记过即剔除该内容所有副本，不再限 time 代际
-                if (ck == k && (ck.startsWith("c:") || ct <= t)) {
+                // v4.23：图片稳定键(img:)同策略，无论 time 都剔除（time 刷新不复活）；
+                // 匹配改归一化键——本地删除(img::t:s)也剔得掉云端副本(img:DEV:t:s)。
+                if (ck != null && normalizeKey(ck) == nk &&
+                    (ck.startsWith("c:") || ck.startsWith("img:") || ct <= t)) {
                     continue
                 }
                 filtered.add(c)
@@ -1760,6 +1855,40 @@ object CrossDeviceClipboardHook {
         }
         persistDeletedKeys()
         log("single delete marked: " + diagEntry(e) + " (blocked ${sWipedKeys.size} keys)")
+    }
+
+    /**
+     * 单条删除的本地库落库：把「当前列表去掉所有已屏蔽条目」覆盖式写回本地库
+     * （与一键清空同机制）。phrase 原生删除往往只改内存列表、不落本地库，下次查库
+     * （切分组/周期同步/关面板重开）会把已删条目从库里捞回 → 复活。
+     *
+     * <p>屏蔽判定按归一化双键匹配（v4.23）：记账侧已统一写归一化键，这里原键与
+     * 归一化键任一命中即剔除，本地/云端同图共用一条屏蔽记录、都不得写回本地库。
+     */
+    private fun persistListMinusBlocked(host: Any?) {
+        if (host == null) return
+        try {
+            val ctxDel = objField(host, "mContext") as? Context
+            val mgrDel = Reflect.findClassIfExists(MIUI_CLIPBOARD_MANAGER, host.javaClass.classLoader)
+            if (mgrDel != null && ctxDel != null) {
+                val cur = adapterDataList(host)
+                if (cur != null) {
+                    val cleaned = ArrayList<Any?>()
+                    for (e in cur) {
+                        val k = entryKey(e)
+                        if (k != null && (sWipedKeys.containsKey(k) || sWipedKeys.containsKey(normalizeKey(k)))) continue
+                        cleaned.add(e)
+                    }
+                    for (sm in mgrDel.methods) {
+                        if (sm.name == "setClipboardModelList" && sm.parameterTypes.size == 2) {
+                            sm.isAccessible = true
+                            sm.invoke(null, ctxDel, cleaned)
+                            break
+                        }
+                    }
+                }
+            }
+        } catch (t: Throwable) { log("delete persist failed - $t") }
     }
 
     /**
@@ -1779,9 +1908,10 @@ object CrossDeviceClipboardHook {
         ensureDeletedKeysLoaded()
         // v4.14：先把「当前被清空的这些条目」的 entryKey 记入 sWipedKeys，之后任何补回路径
         // 都不得再塞回它们。关键：此时刷新尚未跑，adapter 显示列表仍是清空前内容，正是要屏蔽的集合。
-        // v4.16：值记该条目的 time（屏蔽「这一代副本」，不是永久屏蔽同一内容）。
-        // v4.23：置顶条目豁免记账——清空后由 restorePinnedAfterClear 写回，进了屏蔽表会被
-        // dropBlockedEntries 拦掉导致置顶失效；按 time 识别（与置顶自身的身份判定一致）。
+        // v4.26：记账值回到条目 time（与 markDeletedEntry 一致）——一键清空源头已全部作废，
+        // 屏蔽表只兜删除瞬间的竞态残留；重新复制 time 更大即放行。
+        // 置顶条目豁免记账——清空后由 restorePinnedAfterClear 写回，进了屏蔽表会被
+        // dropBlockedEntries 拦掉导致置顶失效；豁免判定仍按条目 time（与置顶自身身份一致）。
         val pinT = ClipboardPinHook.pinnedTime()
         val wiped = java.util.LinkedHashMap<String, Long>()
         fun mark(key: String?, e: Any?) {
@@ -1824,8 +1954,10 @@ object CrossDeviceClipboardHook {
             }
         }
         for ((k, t) in wiped) {
-            val old = sWipedKeys[k]
-            if (old == null || t > old) sWipedKeys[k] = t
+            // v4.23：与单条删除记账一致，写入前归一化键（本地/云端同图共用一条屏蔽记录）
+            val nk = normalizeKey(k) ?: k
+            val old = sWipedKeys[nk]
+            if (old == null || t > old) sWipedKeys[nk] = t
         }
         while (sWipedKeys.size > 400) {
             val it = sWipedKeys.keys.iterator()
@@ -2200,14 +2332,12 @@ object CrossDeviceClipboardHook {
         return result
     }
 
-    /** 该条目是否已被单条删除/清空记账屏蔽（沿用 sWipedKeys 的「一次复制一代」语义）。 */
+    /** 该条目是否已被单条删除/清空记账屏蔽（TTL 由 [wipedTimeOf] 统一裁决）。 */
     private fun isEntryBlocked(e: Any?): Boolean {
         val k = entryKey(e) ?: return false
-        val wt = sWipedKeys[k] ?: return false
-        if (k.startsWith("c:")) {
-            // 云端内容指纹键：记过即永久拦（云端会重复推送同内容，time 已不可用）
-            return true
-        }
+        val wt = wipedTimeOf(k) ?: return false
+        // v4.26：只拦被删那一代旧副本；重新复制(time 更大)放行
+        if (k.startsWith("c:")) return true  // 云端文本按内容指纹识别，重推同内容即永久拦
         val t = entryTime(e) ?: 0L
         return t <= wt
     }
