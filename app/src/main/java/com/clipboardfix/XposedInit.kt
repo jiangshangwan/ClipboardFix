@@ -187,7 +187,7 @@ class XposedInit : XposedModule() {
 
         // ---------------- 供各 Hook 类使用的静态入口 ----------------
 
-        /** 统一打日志。 */
+        /** 统一打日志：送框架日志，汇聚于 LSPosed 模块日志（诊断导出的数据源）。cf/lg-2611 */
         @JvmStatic
         fun log(msg: String) {
             val inst = instance

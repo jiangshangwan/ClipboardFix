@@ -554,6 +554,7 @@ object CrossDeviceClipboardHook {
                                         log("in-place list sync fallback - $t")
                                         d
                                     }
+                                    logListSnapshot(d)
                                 }
                             } catch (t: Throwable) {
                                 log("prepend error - $t")
@@ -1630,7 +1631,71 @@ object CrossDeviceClipboardHook {
     private fun diagEntry(e: Any?): String {
         val k = entryKey(e)
         val t = entryTime(e)
-        return (e?.javaClass?.simpleName ?: "null") + "|key=" + k + "|t=" + t
+        return (e?.javaClass?.simpleName ?: "null") + "|key=" + k + "|t=" + t + "|c=" + contentBrief(e)
+    }
+
+    /**
+     * 条目内容短摘要（诊断导出用）：文本取前段字符、图片/文件记类型标记。
+     * 只进日志，不参与任何逻辑判断；单行化防日志断裂。cf/ct-2611
+     */
+    private fun contentBrief(e: Any?): String {
+        if (e == null) return "null"
+        return try {
+            val dc = determineContent(e)
+            if (!dc.isNullOrEmpty()) {
+                val arr = org.json.JSONArray(dc)
+                val parts = ArrayList<String>()
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val txt = o.optString("text").ifEmpty { o.optString("textItemData") }
+                    val ut = o.optString("uriType")
+                    when {
+                        txt.isNotEmpty() -> parts.add(briefText(txt))
+                        ut.contains("image") -> parts.add("[img]")
+                        ut.isNotEmpty() -> parts.add("[" + ut + "]")
+                        o.optString("thumbImage").isNotEmpty() -> parts.add("[thumb]")
+                    }
+                }
+                if (parts.isEmpty()) "-" else parts.joinToString("+")
+            } else {
+                val raw = stringField(e, "getContent")
+                if (raw.isNullOrEmpty()) "-" else briefText(raw)
+            }
+        } catch (_: Throwable) {
+            "?"
+        }
+    }
+
+    /** 内容摘要文本：压成单行并截断到 24 字符。 */
+    private fun briefText(s: String): String {
+        val one = s.replace('\n', ' ').replace('\r', ' ').trim()
+        return if (one.length <= 24) one else one.substring(0, 24) + "…"
+    }
+
+    /**
+     * 显示列表快照（诊断导出用）：位置→内容摘要，用于核对「点击 A 上屏 B」
+     * 类位置错位问题——日志里每个显示位置实际挂的是哪条内容一目了然。
+     * 单条一行、超过 30 条只记前后段。cf/ct-2611
+     */
+    private fun logListSnapshot(list: List<Any?>) {
+        try {
+            val n = list.size
+            if (n == 0) {
+                log("list snapshot: empty")
+                return
+            }
+            val head = if (n > 30) 15 else n
+            val sb = StringBuilder("list snapshot n=").append(n).append(" ::")
+            for (i in 0 until head) {
+                sb.append(" [").append(i).append(']').append(contentBrief(list[i]))
+            }
+            if (n > 30) {
+                sb.append(" …[").append(n - 1).append(']').append(contentBrief(list[n - 1]))
+            }
+            log(sb.toString())
+        } catch (_: Throwable) {
+            // 诊断通道失败静默
+        }
     }
 
     /**

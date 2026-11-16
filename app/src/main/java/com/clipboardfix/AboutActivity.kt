@@ -411,10 +411,11 @@ class AboutActivity : ComponentActivity() {
     }
 
     /**
-     * 状态卡连续点击 10 次切换「标识」显隐（Root 标识 + 已启用的功能行）。
+     * 状态卡连续点击 10 次导出诊断报告（机型 / 版本 / 开关 / 剪贴板内容 / hook 日志）。
+     * 连点过程中给出剩余次数提示；完成后立即清零并触发后台生成 + 系统分享。
      */
     private fun onStatusCardTap() {
-        // 点状态卡即做一次实时探测（10 连击隐藏标识的逻辑保持不变）
+        // 点状态卡即做一次实时探测
         refreshModuleStatus()
         val now = System.currentTimeMillis()
         if (now - mLastTapTime > TAP_RESET_MS) {
@@ -422,17 +423,35 @@ class AboutActivity : ComponentActivity() {
         }
         mLastTapTime = now
         mTapCount++
-        val visible = uiBadgesVisible.value
         if (mTapCount < TAP_TARGET) {
-            showSnack(if (visible) getString(R.string.tap_hide_hint) else getString(R.string.tap_show_hint))
+            val left = TAP_TARGET - mTapCount
+            showSnack(getString(R.string.tap_export_hint, left))
         } else {
             mTapCount = 0
-            val shown = !visible
-            uiBadgesVisible.value = shown
-            // 持久化：隐藏后重启仍保持隐藏，直到再次 10 连击显示
-            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                .putBoolean(KEY_BADGES_VISIBLE, shown).apply()
-            showSnack(if (shown) getString(R.string.badges_shown) else getString(R.string.badges_hidden))
+            showSnack(getString(R.string.tap_exporting))
+            LogExport.export(this, LogExport.Snapshot(
+                statusText = uiStatusText.value,
+                imeCountText = uiImeCountText.value,
+                statusEnabled = uiStatusEnabled.value,
+                rootGranted = uiRootGranted.value,
+                enabledFeatures = uiEnabledFeatures.value,
+                moduleEnabled = sModuleBound,
+                imeUnlock = uiSwImeUnlock.value,
+                unlimitCount = uiSwUnlimitCount.value,
+                unlimitTime = uiSwUnlimitTime.value,
+                panelColor = uiSwPanelColor.value,
+                panelMaterial = uiSwPanelMaterial.value,
+                clipboardPin = uiSwClipboardPin.value,
+                sinkLayout = uiSwSinkLayout.value,
+                clipboardGroup = uiSwClipboardGroup.value,
+                groupRemember = uiSwClipboardGroupRemember.value,
+                settingsIconMode = uiSettingsIconMode.value,
+                themeMode = uiThemeMode.value,
+                updateDisabled = uiUpdateDisabled.value,
+                badgesVisible = uiBadgesVisible.value,
+                latestVersion = uiLatestVersion.value,
+                clipboardText = LogExport.readClipboardText(this),
+            ))
         }
     }
 

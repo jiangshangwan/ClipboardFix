@@ -21,6 +21,8 @@
     <string name="tap_show_hint">Tap 10 times in a row to show the badge</string>
     <string name="badges_hidden">Badge hidden</string>
     <string name="badges_shown">Badge shown</string>
+    <string name="tap_export_hint">Tap %1$d more times to export logs</string>
+    <string name="tap_exporting">Generating diagnostic report…</string>
     <string name="info_app_version">App Version</string>
     <string name="info_device">Device Model</string>
     <string name="info_android">Android Version</string>

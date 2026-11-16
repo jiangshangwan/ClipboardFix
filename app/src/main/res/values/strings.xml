@@ -21,6 +21,8 @@
     <string name="tap_show_hint">连续点击10次显示标识</string>
     <string name="badges_hidden">标识已隐藏</string>
     <string name="badges_shown">标识已显示</string>
+    <string name="tap_export_hint">再点 %1$d 次导出日志</string>
+    <string name="tap_exporting">正在生成诊断报告…</string>
     <string name="info_app_version">应用版本</string>
     <string name="info_device">设备机型</string>
     <string name="info_android">Android 版本</string>
