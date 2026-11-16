@@ -55,7 +55,7 @@
     <string name="sw_panel_material_sub">Use a continuous frosted panel with a collapse hint</string>
     <string name="sw_clipboard_pin">Enable Clipboard Entry Pinning</string>
     <string name="sw_clipboard_pin_sub">Swipe right on an entry to pin it</string>
-    <string name="sw_sink_layout">Keyboard Sink Layout Tuning</string>
+    <string name="sw_sink_layout">Disable IME Layout Sinking</string>
     <string name="sw_sink_layout_sub">Enable if a gap appears under the input field; off by default</string>
     <string name="sw_clipboard_group">Enable Clipboard Grouping</string>
     <string name="sw_clipboard_group_sub">Double-tap the ⌈Clipboard⌋ tab to enable grouping</string>

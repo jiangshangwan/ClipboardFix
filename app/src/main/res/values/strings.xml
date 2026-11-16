@@ -55,7 +55,7 @@
     <string name="sw_panel_material_sub">使剪贴板面板呈现连续磨砂背景与收起标记</string>
     <string name="sw_clipboard_pin">开启剪贴板条目置顶</string>
     <string name="sw_clipboard_pin_sub">面板内右滑可对内容置顶</string>
-    <string name="sw_sink_layout">下沉方案布局优化</string>
+    <string name="sw_sink_layout">关闭输入法布局下沉</string>
     <string name="sw_sink_layout_sub">键盘与输入框有间隙时可开启，默认关闭</string>
     <string name="sw_clipboard_group">开启剪贴板分组功能</string>
     <string name="sw_clipboard_group_sub">双击⌈剪贴板⌋标签开启分组功能</string>

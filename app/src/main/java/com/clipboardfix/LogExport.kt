@@ -127,7 +127,7 @@ object LogExport {
             line(sb, "优化面板背景", s.panelColor.toString())
             line(sb, "高级材质背景", s.panelMaterial.toString())
             line(sb, "条目置顶", s.clipboardPin.toString())
-            line(sb, "下沉方案布局优化", s.sinkLayout.toString())
+            line(sb, "关闭输入法布局下沉", s.sinkLayout.toString())
             line(sb, "剪贴板分组", s.clipboardGroup.toString())
             line(sb, "记忆分组位置", s.groupRemember.toString())
             line(sb, "设置图标位置", s.settingsIconMode.toString())
