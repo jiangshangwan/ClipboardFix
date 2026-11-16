@@ -134,7 +134,7 @@ object ImeUnlockHook {
             // 校准基准：小米小爱（com.xiaomi.type）按键行→图标行实测 42px（@1080，密度 2.625）。
             // 各输入法实测 gap 减去 42px 即为需下沉的像素数，再换算成 dp。
             "com.bytedance.android.doubaoime" to 5,      // 死空间 25px@1440，收边带距栏顶保留 ~3px margin
-            "com.tencent.wetype" to 3,                   // 死空间 20px@1440，收边带距栏顶保留 ~2px margin
+            "com.tencent.wetype" to 4,                   // 无下沉 gap ~78px；4dp(15px) 收至 ~63px，键帽圆角完整；5dp 触及 inputFrame 裁剪线致底排平切
             "com.iflytek.inputmethod" to 7,              // gap 61 → 下沉 19px
             "com.sohu.inputmethod.sogou" to 16,          // gap 85 → 下沉 43px
             "com.google.android.inputmethod.latin" to 12, // gap 73 → 下沉 31px
@@ -154,19 +154,28 @@ object ImeUnlockHook {
      * @param cl         默认 classloader
      * @param imeUnlock  全面屏优化解锁开关（控制本类其余全部安装）
      * @param timeUnlock 剪贴板时间限制解锁开关（走 loadDex 回调装读取路径 hook）
+     * @param sinkLayout 键盘下沉布局优化开关（默认关闭；开启时消除缝隙，即不下沉）
      */
     @JvmStatic
-    fun init(pkg: String, cl: ClassLoader, imeUnlock: Boolean, timeUnlock: Boolean) {
+    fun init(pkg: String, cl: ClassLoader, imeUnlock: Boolean, timeUnlock: Boolean,
+             sinkLayout: Boolean) {
         // cf/jsW/26
-        // 按输入法包名解析下沉量并固化成像素；未校准的包不改动，避免覆盖已解析的值
+        // 按输入法包名解析下沉量并固化成像素；未校准的包不改动，避免覆盖已解析的值。
+        // 开关语义=缝隙优化：开启则不下沉（消除下沉带来的顶部空带/缝隙），关闭则保留
+        // 校准下沉（按键贴近底栏但可能出现缝隙）。命中校准表时显式取值，清掉残留偏移。
         val sinkDp = KEYBOARD_SINK_DP[pkg]
-        if (sinkDp != null && sinkDp > 0) {
-            val density: Float = try {
-                Resources.getSystem().displayMetrics.density
-            } catch (t: Throwable) {
-                2.625f // 420dpi 兜底
+        if (sinkDp != null) {
+            if (imeUnlock && !sinkLayout && sinkDp > 0) {
+                val density: Float = try {
+                    Resources.getSystem().displayMetrics.density
+                } catch (t: Throwable) {
+                    2.625f // 420dpi 兜底
+                }
+                sSinkOffsetPx = sinkDp * density
+            } else {
+                sSinkOffsetPx = 0f
+                restoreKeyboardSink()
             }
-            sSinkOffsetPx = sinkDp * density
         }
         // Gboard：键盘视图自带约 1 个导航栏 inset 的底部 padding（键帽圆角靠它完整显示），
         // 不按通用逻辑剥离（详见 sPreserveContentPadding 字段注释）。仅赋值不重置。
@@ -872,7 +881,9 @@ object ImeUnlockHook {
             restoreNavigationPadding(inputFrame)
             // 下沉已按几何判据生效时，不能被下面这条 inset 门控的还原路径清掉：
             // 15 Pro 上 inset=0 会走到这里，而底栏其实照常注入。
-            if (!sinkDocked) restoreKeyboardSink()
+            if (!sinkDocked) {
+                restoreKeyboardSink()
+            }
             return
         }
         if (contentView == null) {

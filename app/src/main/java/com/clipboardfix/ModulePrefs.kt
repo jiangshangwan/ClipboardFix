@@ -44,6 +44,9 @@ object ModulePrefs {
     /** 剪贴板条目置顶（右滑置顶、清空保留），默认关闭。 */
     const val KEY_CLIPBOARD_PIN = "clipboard_pin_entry"
 
+    /** 键盘下沉布局优化（缩小按键区与底栏间距），默认关闭。 */
+    const val KEY_SINK_LAYOUT = "ime_sink_layout"
+
     /** 剪贴板分组筛选（面板内「全部 / 链接 / 图片 / 文字」切换），默认关闭。 */
     const val KEY_CLIPBOARD_GROUP = "clipboard_group_filter"
 
@@ -65,6 +68,7 @@ object ModulePrefs {
     const val DEFAULT_PANEL_COLOR = false
     const val DEFAULT_PANEL_MATERIAL = false
     const val DEFAULT_CLIPBOARD_PIN = false
+    const val DEFAULT_SINK_LAYOUT = false
     const val DEFAULT_CLIPBOARD_GROUP = false
     const val DEFAULT_CLIPBOARD_GROUP_REMEMBER = false
     const val DEFAULT_SETTINGS_ICON = 0
@@ -139,6 +143,13 @@ object ModulePrefs {
     fun isClipboardPinEnabled(): Boolean {
         val p = hookPrefs()
         return p != null && p.getBoolean(KEY_CLIPBOARD_PIN, DEFAULT_CLIPBOARD_PIN)
+    }
+
+    /** 键盘下沉布局优化是否启用（hook 侧）。默认关闭，避免非宿主环境出现空带横缝。 */
+    @JvmStatic
+    fun isSinkLayoutEnabled(): Boolean {
+        val p = hookPrefs()
+        return p != null && p.getBoolean(KEY_SINK_LAYOUT, DEFAULT_SINK_LAYOUT)
     }
 
     /** 剪贴板分组筛选是否启用（hook 侧）。默认关闭，需用户在「功能设置」里手动开启。 */

@@ -11,6 +11,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -168,8 +169,6 @@ private const val SHEET_PAD_V_DP = 18
 private const val SHEET_TITLE_SP = 20
 /** 二维码边长。 */
 private const val QR_SIZE_DP = 220
-/** 行圆角（按压反馈的裁切形状）。 */
-private const val SHEET_ROW_CORNER_DP = 12
 
 /**
  * 覆盖层：全屏点击即关（不压暗背景，保持玻璃「轻盈」）+ 居中柔光玻璃弹卡。
@@ -303,16 +302,25 @@ private fun GlassSheetCard(
                     onDrawSurface = { drawRect(tint) },
                 ),
         ) {
+            // 动作列表（捐赠菜单）整行按压高亮需铺满卡片宽度，故内容区不加横向内缩；
+            // 其余内容仍沿用左右内边距。标题与底部按钮自行补回横向内缩。
+            val actionMenu = request.content is GlassSheetContent.Actions
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = SHEET_PAD_H_DP.dp, vertical = SHEET_PAD_V_DP.dp),
+                    .padding(
+                        horizontal = if (actionMenu) 0.dp else SHEET_PAD_H_DP.dp,
+                        vertical = SHEET_PAD_V_DP.dp,
+                    ),
             ) {
                 Text(
                     text = request.title,
                     fontSize = SHEET_TITLE_SP.sp,
                     fontWeight = FontWeight.Bold,
                     color = colors.onSurface,
+                    modifier = Modifier.padding(
+                        horizontal = if (actionMenu) SHEET_PAD_H_DP.dp else 0.dp,
+                    ),
                 )
                 Spacer(Modifier.height(12.dp))
                 // 内容区：超过卡片最大高度时内部滚动
@@ -396,14 +404,14 @@ private fun BlocksBody(content: GlassSheetContent.Blocks) {
 private fun ActionsBody(content: GlassSheetContent.Actions) {
     val colors = MiuixTheme.colorScheme
     Column(modifier = Modifier.fillMaxWidth()) {
-        content.actions.forEachIndexed { i, action ->
-            if (i > 0) SheetDivider()
+        content.actions.forEach { action ->
+            // 按压高亮铺满整行：indication 直接画在满宽 Row 上，不加圆角裁切；
+            // 横向内边距放在 clickable 之后，只内缩图文内容、不内缩高亮。
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(SHEET_ROW_CORNER_DP.dp))
-                    .rowPressClickable { action.onClick() }
-                    .padding(vertical = 14.dp),
+                    .clickable { action.onClick() }
+                    .padding(horizontal = SHEET_PAD_H_DP.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(

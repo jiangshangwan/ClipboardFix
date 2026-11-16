@@ -90,6 +90,7 @@ class AboutActivity : ComponentActivity() {
     val uiSwPanelColor: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_PANEL_COLOR)
     val uiSwPanelMaterial: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_PANEL_MATERIAL)
     val uiSwClipboardPin: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_PIN)
+    val uiSwSinkLayout: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_SINK_LAYOUT)
     val uiSwClipboardGroup: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
     val uiSwClipboardGroupRemember: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
     val uiIconHidden: MutableState<Boolean> = stateOf(false)
@@ -203,7 +204,7 @@ class AboutActivity : ComponentActivity() {
             BuildConfig.VERSION_NAME, uiLatestVersion, Runnable { UpdateChecker(this).showUpdateDialogIfNeeded() }, BuildConfig.BUILD_DATE,
             DeviceNames.marketName(), "Android " + Build.VERSION.RELEASE,
             Build.VERSION.INCREMENTAL, phraseVersion(), abiInfo(),
-            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwPanelMaterial, uiSwClipboardPin, uiSwClipboardGroup, uiSwClipboardGroupRemember, uiIconHidden,
+            uiSwImeUnlock, uiSwUnlimitCount, uiSwUnlimitTime, uiSwPanelColor, uiSwPanelMaterial, uiSwClipboardPin, uiSwSinkLayout, uiSwClipboardGroup, uiSwClipboardGroupRemember, uiIconHidden,
             Runnable { doCheckUpdate() },
             Runnable { onStatusCardTap() },
             featureToggle { onToggleImeUnlock(it) },
@@ -212,6 +213,7 @@ class AboutActivity : ComponentActivity() {
             featureToggle { onTogglePanelColor(it) },
             featureToggle { onTogglePanelMaterial(it) },
             featureToggle { onToggleClipboardPin(it) },
+            featureToggle { onToggleSinkLayout(it) },
             featureToggle { onToggleClipboardGroup(it) },
             featureToggle { onToggleClipboardGroupRemember(it) },
             BoolAction { onToggleHideIcon(it) },
@@ -614,6 +616,7 @@ class AboutActivity : ComponentActivity() {
         uiSwPanelColor.value = prefs.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)
         uiSwPanelMaterial.value = prefs.getBoolean(ModulePrefs.KEY_PANEL_MATERIAL, ModulePrefs.DEFAULT_PANEL_MATERIAL)
         uiSwClipboardPin.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
+        uiSwSinkLayout.value = prefs.getBoolean(ModulePrefs.KEY_SINK_LAYOUT, ModulePrefs.DEFAULT_SINK_LAYOUT)
         uiSwClipboardGroup.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
         uiSwClipboardGroupRemember.value = prefs.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
         uiUpdateDisabled.value = prefs.getBoolean(AppConfig.KEY_DISABLE_UPDATE, false)
@@ -649,6 +652,11 @@ class AboutActivity : ComponentActivity() {
 
     private fun onToggleClipboardPin(checked: Boolean) {
         uiSwClipboardPin.value = checked
+        saveFeaturePrefs()
+    }
+
+    private fun onToggleSinkLayout(checked: Boolean) {
+        uiSwSinkLayout.value = checked
         saveFeaturePrefs()
     }
 
@@ -703,6 +711,7 @@ class AboutActivity : ComponentActivity() {
             .putBoolean(ModulePrefs.KEY_PANEL_COLOR, uiSwPanelColor.value)
             .putBoolean(ModulePrefs.KEY_PANEL_MATERIAL, uiSwPanelMaterial.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, uiSwClipboardPin.value)
+            .putBoolean(ModulePrefs.KEY_SINK_LAYOUT, uiSwSinkLayout.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, uiSwClipboardGroup.value)
             .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, uiSwClipboardGroupRemember.value)
             .apply()
@@ -729,6 +738,7 @@ class AboutActivity : ComponentActivity() {
         val panelColor = local.getBoolean(ModulePrefs.KEY_PANEL_COLOR, ModulePrefs.DEFAULT_PANEL_COLOR)
         val panelMaterial = local.getBoolean(ModulePrefs.KEY_PANEL_MATERIAL, ModulePrefs.DEFAULT_PANEL_MATERIAL)
         val clipboardPin = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, ModulePrefs.DEFAULT_CLIPBOARD_PIN)
+        val sinkLayout = local.getBoolean(ModulePrefs.KEY_SINK_LAYOUT, ModulePrefs.DEFAULT_SINK_LAYOUT)
         val clipboardGroup = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, ModulePrefs.DEFAULT_CLIPBOARD_GROUP)
         val clipboardGroupRemember = local.getBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, ModulePrefs.DEFAULT_CLIPBOARD_GROUP_REMEMBER)
         Thread({
@@ -740,6 +750,7 @@ class AboutActivity : ComponentActivity() {
                     .putBoolean(ModulePrefs.KEY_PANEL_COLOR, panelColor)
                     .putBoolean(ModulePrefs.KEY_PANEL_MATERIAL, panelMaterial)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_PIN, clipboardPin)
+                    .putBoolean(ModulePrefs.KEY_SINK_LAYOUT, sinkLayout)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP, clipboardGroup)
                     .putBoolean(ModulePrefs.KEY_CLIPBOARD_GROUP_REMEMBER, clipboardGroupRemember)
                     .apply()

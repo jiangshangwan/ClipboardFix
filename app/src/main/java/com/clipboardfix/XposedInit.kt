@@ -76,8 +76,9 @@ class XposedInit : XposedModule() {
                 if (cl != null) {
                     val imeUnlock = ModulePrefs.isImeUnlockEnabled()
                     val timeUnlock = ModulePrefs.isUnlimitTimeEnabled()
+                    val sinkLayout = ModulePrefs.isSinkLayoutEnabled()
                     if (imeUnlock || timeUnlock) {
-                        ImeUnlockHook.init(pkg, cl, imeUnlock, timeUnlock)
+                        ImeUnlockHook.init(pkg, cl, imeUnlock, timeUnlock, sinkLayout)
                     }
                 }
             }
@@ -149,8 +150,9 @@ class XposedInit : XposedModule() {
         // 剪贴板时间限制解锁同样经 loadDex 回调在输入法进程内安装（面板跑在这里）
         val imeUnlock = ModulePrefs.isImeUnlockEnabled()
         val timeUnlock = ModulePrefs.isUnlimitTimeEnabled()
+        val sinkLayout = ModulePrefs.isSinkLayoutEnabled()
         if (imeUnlock || timeUnlock) {
-            ImeUnlockHook.init(pkg, cl, imeUnlock, timeUnlock)
+            ImeUnlockHook.init(pkg, cl, imeUnlock, timeUnlock, sinkLayout)
         }
     }
 

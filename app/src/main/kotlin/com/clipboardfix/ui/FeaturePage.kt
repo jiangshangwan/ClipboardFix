@@ -25,12 +25,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipboardfix.R
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -48,6 +49,7 @@ fun FeaturePage(
     swPanelColor: Boolean,
     swPanelMaterial: Boolean,
     swClipboardPin: Boolean,
+    swSinkLayout: Boolean,
     swClipboardGroup: Boolean,
     swClipboardGroupRemember: Boolean,
     onToggleImeUnlock: (Boolean) -> Unit,
@@ -56,12 +58,19 @@ fun FeaturePage(
     onTogglePanelColor: (Boolean) -> Unit,
     onTogglePanelMaterial: (Boolean) -> Unit,
     onToggleClipboardPin: (Boolean) -> Unit,
+    onToggleSinkLayout: (Boolean) -> Unit,
     onToggleClipboardGroup: (Boolean) -> Unit,
     onToggleClipboardGroupRemember: (Boolean) -> Unit,
 ) {
     val colors = MiuixTheme.colorScheme
     // 玻璃折射源：整页内容登记进 layerBackdrop，供 Snackbar 的柔光玻璃面板实时折射
     val snackbarBackdrop = rememberLayerBackdrop()
+    // 页面底色预取（顶栏磨砂叠加用）+ Haze 状态：滚动内容作模糊源，顶栏条消费
+    val pageBg = pageBackgroundColor()
+    val hazeState = rememberHazeState()
+    val scrollState = rememberScrollState()
+    // 功能页没有关于页那种大头部占位，标题一滚就出视野；顶栏须从首帧滑动即开始淡入。
+    val topAlpha = rememberScrollTopAlpha(scrollState, startDp = 0f, endDp = 24f)
 
     // 预取文案：避免在事件回调 lambda 内调用 stringResource（其需在组合作用域调用）
     val strConfirmTitle = stringResource(R.string.dialog_ime_unlock_title)
@@ -114,13 +123,16 @@ fun FeaturePage(
             modifier = Modifier
                 .fillMaxSize()
                 .layerBackdrop(snackbarBackdrop)
-                .background(pageBackgroundColor())
-                .statusBarsPadding()
-                .verticalScroll(rememberScrollState())
+                .hazeSource(hazeState)
+                .background(pageBg)
+                // 视口铺满全屏（含状态栏），让卡片滚到状态栏下方成为模糊源；
+                // 状态栏高度由内容首部的 Spacer 顶开，标题位置交给 MorphTopTitle 单独绘制。
+                .verticalScroll(scrollState)
                 .padding(horizontal = 22.dp)
                 .padding(top = 8.dp, bottom = 120.dp),
         ) {
-            Text(text = stringResource(R.string.feature_title), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = colors.onSurface)
+            Spacer(Modifier.statusBarsPadding())
+            Spacer(Modifier.height(40.dp))
             Spacer(Modifier.height(16.dp))
 
             SectionLabel(stringResource(R.string.sec_feature))
@@ -180,6 +192,14 @@ fun FeaturePage(
                         onClickWhenDisabled = disabledHint,
                     )
                     FeatureSwitch(
+                        checked = swImeUnlock && swSinkLayout,
+                        onCheckedChange = onToggleSinkLayout,
+                        title = stringResource(R.string.sw_sink_layout),
+                        summary = stringResource(R.string.sw_sink_layout_sub),
+                        enabled = subSwitchesEnabled,
+                        onClickWhenDisabled = disabledHint,
+                    )
+                    FeatureSwitch(
                         checked = swImeUnlock && swClipboardGroup,
                         onCheckedChange = onToggleClipboardGroup,
                         title = stringResource(R.string.sw_clipboard_group),
@@ -201,6 +221,21 @@ fun FeaturePage(
                 }
             }
         }
+        // 上滑淡入的顶栏：只画模糊，状态栏一并覆盖。标题不在这里画第二份。
+        ScrollTopBlurBar(
+            hazeState = hazeState,
+            pageBg = pageBg,
+            alpha = topAlpha,
+            barHeight = topBlurBarHeight(),
+            // 功能页底材是纯色卡片，关于页那套 0.30 叠色在此几乎看不出磨砂，适度加强。
+            tintAlpha = 0.46f,
+            blurDp = 20f,
+        )
+        // 唯一的「功能」标题：固定在首屏原位不动；上滑仅由背后磨砂层淡入承载。
+        MorphTopTitle(
+            title = stringResource(R.string.feature_title),
+            titleTopDp = 8f,
+        )
         // Snackbar 宿主：玻璃面板折射本页内容，浮在底部导航条上方
         PageSnackbarHost(backdrop = snackbarBackdrop)
         // 柔光玻璃弹卡：与更新日志弹卡同材质（同一 drawBackdrop 效果链）

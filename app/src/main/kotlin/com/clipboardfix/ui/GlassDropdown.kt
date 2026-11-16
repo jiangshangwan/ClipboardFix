@@ -356,10 +356,12 @@ private fun GlassCard(
                     onDrawSurface = { drawRect(tint) },
                 ),
         ) {
+            // 内容整体按卡片圆角裁切：行的按压高亮铺满整行、首尾行自然贴合卡片弧形，
+            // 不在行内单独裁小圆角，避免高亮四周露出卡片底色的白边。
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 6.dp),
+                    .clip(shape),
             ) {
                 request.items.forEachIndexed { i, item ->
                     val selected = i == request.selectedIndex
@@ -367,7 +369,6 @@ private fun GlassCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = DROPDOWN_ITEM_MIN_DP.dp)
-                            .clip(RoundedCornerShape(12.dp))
                             .clickable {
                                 request.onSelected(i)
                                 onDismiss()
