@@ -58,6 +58,19 @@ class XposedInit : XposedModule() {
         val pkg: String? = param.getPackageName()
         if (pkg == null) return
 
+        // 互联跨设备剪贴板文件提供方：放行作用域内第三方输入法作为调用方，
+        // 使面板点击云端图片时 Continuity provider 不再以「不支持超级剪贴板」拒绝。
+        if (PKG_MILINK == pkg) {
+            val cl = try {
+                param.getDefaultClassLoader()
+            } catch (t: Throwable) {
+                log(pkg + " no classloader for super clipboard gate - " + t)
+                null
+            }
+            if (cl != null) SuperClipboardGateHook.init(cl)
+            return
+        }
+
         // 系统预置输入法：保留在作用域内，但跳过面板类 hook（背景/置顶/云同步），
         // 其剪贴板面板由系统自身管理，不叠加第三方输入法下的修正。
         // 关键：IME 列表保护（ImeUnlockHook 内的 deleteNotSupportIme / getSupportIme /
@@ -66,6 +79,8 @@ class XposedInit : XposedModule() {
         if (OEM_IME_PACKAGES.contains(pkg)) {
             log(pkg + " scope-only: panel hooks bypassed, ime-list kept (variant="
                     + Integer.toHexString(ROUTE_VARIANT) + ")")
+            // 写入系统剪贴板的内容快照（系统输入法作对照，验证 URI 授权差异）
+            ClipboardCopyDiag.init()
             if (imeBottomSupported()) {
                 val cl = try {
                     param.getDefaultClassLoader()
@@ -134,6 +149,9 @@ class XposedInit : XposedModule() {
         }
 
         // 其余按第三方输入法处理（system / android 等无关包直接忽略）
+        // 写入系统剪贴板的内容快照：复制发生时记录 URI 与授权，定位云端图片粘贴问题
+        ClipboardCopyDiag.init()
+
         if (!imeBottomSupported()) {
             log(pkg + " skip: " + PROP_MIUI_IME_BOTTOM + " != 1")
             return
@@ -161,6 +179,7 @@ class XposedInit : XposedModule() {
 
         const val PKG_PHRASE = "com.miui.phrase"
         const val PKG_SETTINGS = "com.android.settings"
+        const val PKG_MILINK = "com.milink.service"
 
         /**
          * 系统预置输入法包名。这些进程保留在作用域中，但不参与进程内功能分发：其剪贴板
