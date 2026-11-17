@@ -894,6 +894,8 @@ class AboutActivity : ComponentActivity() {
                 // 目标进程：剪贴板/常用短语宿主 + 所有已安装输入法（按包名去重）
                 val pkgs = LinkedHashSet<String>()
                 pkgs.add("com.miui.phrase")
+                // 互联跨设备剪贴板文件提供方：新增作用域或模块更新后，随重载重新注入门禁放行。
+                // 该进程被 force-stop 后由系统自动拉起，LSPosed 在其重启时重新注入，无需重启手机。rld-2611ml
                 // 系统设置暂不纳入重载范围（设置入口功能暂缓，无需随重载生效）
                 // pkgs.add("com.android.settings")
                 val imm = getSystemService(InputMethodManager::class.java)
