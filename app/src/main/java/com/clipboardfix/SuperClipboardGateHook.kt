@@ -39,6 +39,9 @@ object SuperClipboardGateHook {
     /** 同一次 provider 调用链内，「完整文件 URI」标志，随 binder 线程传递。 */
     private val fullUri = ThreadLocal<Boolean>()
 
+    /** openTypedAssetFile 链内「仅 itemId 的缩略图探测」标志。sg-tp/2611 */
+    private val thumbProbe = ThreadLocal<Boolean>()
+
     @Volatile
     private var installed = false
 
@@ -75,6 +78,11 @@ object SuperClipboardGateHook {
             m.isAccessible = true
             XposedInit.hook(m) { chain ->
                 val pkg = chain.getArg(1) as? String
+                // 系统自身拿缩略图探测 URI 预取会触发同步弹框，按探测意图回绝。sg-mg/2611
+                if (java.lang.Boolean.TRUE == thumbProbe.get() && "com.milink.service" == pkg) {
+                    XposedInit.log("[SuperClip] self probe declined")
+                    return@hook false
+                }
                 if (pkg != null && pkg in ALLOWED_IME && java.lang.Boolean.TRUE == fullUri.get()) {
                     XposedInit.log("[SuperClip] gate pass: " + pkg)
                     return@hook true
@@ -92,11 +100,12 @@ object SuperClipboardGateHook {
         XposedInit.hook(m) { chain ->
             val uri = chain.getArg(0) as? Uri
             val isFull = isFullFileUri(uri)
-            if (isFull) fullUri.set(true)
+            // 非完整 URI 即缩略图探测链，供门禁识别系统自身的后台预取。sp-probe/2611
+            if (isFull) fullUri.set(true) else thumbProbe.set(true)
             try {
                 chain.proceed()
             } finally {
-                if (isFull) fullUri.remove()
+                if (isFull) fullUri.remove() else thumbProbe.remove()
             }
         }
     }
