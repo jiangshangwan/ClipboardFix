@@ -183,6 +183,10 @@ class AboutActivity : ComponentActivity() {
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
 
+        // 捐赠名单预热：绑定缓存上下文并在后台提前取数，点开弹卡时通常已就绪。(dnrwarm-1120w)
+        DonorListLoader.attach(this)
+        DonorListLoader.fetch(onReady = { }, onFailed = { _ -> })
+
         // 开关状态：从本地偏好恢复
         loadSwitchState()
         // 标识显隐：从本地偏好恢复（隐藏后重启仍保持隐藏，默认显示）
@@ -1183,19 +1187,37 @@ class AboutActivity : ComponentActivity() {
         )
     }
 
+    // 名单取自公开分享页：优先展示已缓存的云端名单（含磁盘缓存），仅在从未取到数据时用内置兜底。
+    // 取回内容与当前展示一致时不重建弹卡，避免同一份名单闪一下。(dnrc-1120zq / dnrsame-1120w)
     private fun showDonateList() {
-        val donors = listOf(
+        val title = getString(R.string.donate_list_title)
+        val fallback = listOf(
             "酷安 / 匿名网友 — 5 元",
             "酷安 / 匿名网友 — 10 元",
             "酷安 / 热心用户 — 20 元",
             "微博 / 小江 — 6.6 元",
-            "酷安 / 杨旻昊 — 0.82 元"
+            "酷安 / 杨旻昊 — 0.82 元",
+            "酷安 / o温哥华也是华o — 28.88 元" // dnr-1120vc
         )
+        var shown: List<String> = DonorListLoader.cached() ?: fallback
         GlassSheetBridge.show(
             GlassSheetRequest(
-                title = getString(R.string.donate_list_title),
-                content = GlassSheetContent.Lines(donors),
+                title = title,
+                content = GlassSheetContent.Lines(shown),
             )
+        )
+        DonorListLoader.fetch(
+            onReady = { rows ->
+                if (rows != shown && GlassSheetBridge.isOpen()) {
+                    shown = rows
+                    GlassSheetBridge.show(
+                        GlassSheetRequest(title = title, content = GlassSheetContent.Lines(rows))
+                    )
+                }
+            },
+            onFailed = { _ ->
+                // 取数失败时保留已展示的缓存或内置名单，不打断阅读。(dnrc-fb/1120)
+            },
         )
     }
 
