@@ -553,6 +553,15 @@ object ImeUnlockHook {
                     XposedInit.hook(m) { chain ->
                         val r = chain.proceed()
                         customizeBottomViewColor(injectorClass)
+                        // 第三方输入法走此注入路径，补齐底栏左右按钮触摸焦点。(a11yadd2-1120v)
+                        try {
+                            val loader = injectorClass.classLoader
+                            val bc = Reflect.findClassIfExists(
+                                "com.miui.inputmethod.InputMethodBottomManager", loader)
+                            if (bc != null) alignBottomA11y(bc)
+                        } catch (t: Throwable) {
+                            log("a11y: injector align err - " + t)
+                        }
                         r
                     }
                     log("OK: addMiuiBottomView")
@@ -740,6 +749,8 @@ object ImeUnlockHook {
                         val rootView = chain.getArg(4) as View
                         val bottomArea = chain.getArg(5) as View
                         registerMiuiBottomFrame(fullscreenArea, inputFrame, rootView, bottomArea)
+                        // 补齐底栏左右功能区块的触摸焦点。(a11yfix-1120v)
+                        alignBottomA11y(clazz)
                     } catch (t: Throwable) {
                         log("bottom-inset: register err - " + t)
                     }
@@ -760,6 +771,8 @@ object ImeUnlockHook {
                         val r = chain.proceed()
                         try {
                             reconcileCurrentImeFrame(clazz)
+                            // 底栏视图变更后（含面板展开）重新补齐触摸焦点。(a11yfix-1120v)
+                            alignBottomA11y(clazz)
                         } catch (t: Throwable) {
                             log("bottom-inset: lifecycle err - " + t)
                         }
@@ -772,6 +785,21 @@ object ImeUnlockHook {
             }
         } catch (t: Throwable) {
             log("FAIL: hookMiuiBottomInsetCompatibility - " + t)
+        }
+    }
+
+    /**
+     * 无障碍触摸焦点：第三方输入法底栏左右区块缺少触摸模式焦点，读屏手势探索时命不中。
+     * 只补触摸焦点，不改动点击监听与语义描述。(a11yfix-1120v)
+     */
+    private fun alignBottomA11y(clazz: Class<*>) {
+        try {
+            for (n in arrayOf("sLeftLayout", "sRightLayout")) {
+                val v = Reflect.getStaticField(clazz, n) as? View ?: continue
+                if (!v.isFocusableInTouchMode) v.isFocusableInTouchMode = true
+            }
+        } catch (t: Throwable) {
+            log("a11y: align err - " + t)
         }
     }
 
