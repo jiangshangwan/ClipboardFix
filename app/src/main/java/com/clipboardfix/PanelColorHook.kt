@@ -193,7 +193,7 @@ object PanelColorHook {
     private const val HINT_WIDTH_DP = 15f
     private const val HINT_HEIGHT_DP = 7.5f
     private const val HINT_STROKE_DP = 2f
-    private const val HINT_RIGHT_MARGIN_DP = 26f
+    private const val HINT_RIGHT_MARGIN_DP = 28.5f
     private const val HINT_BAND_RATIO = 0.13f
 
     /**
@@ -2553,8 +2553,9 @@ object PanelColorHook {
             val rs = IntArray(2)
             root.getLocationOnScreen(rs)
             val band = hintBandOf(root, rs, w, h)
-            // 固定在功能区右侧：右下角是单手打字时最顺手的收起热区。不按「可点击
-            // 控件中心」定位，那会命中横跨整行的容器而把标记拉回水平居中。
+            // 与标签行的一键清空图标对齐：固定相对功能区右缘的边距。原生面板里存在
+            // 多个 delete_* 条目按钮，按资源名动态锚定会误命中并随条目跳动，故用
+            // 实测校准的边距，落点与清空图标同一竖线且稳定。(clr-align-1121w)
             val cx = Math.max(
                 band.left + halfW + 4f,
                 band.right - HINT_RIGHT_MARGIN_DP * dm - halfW)
