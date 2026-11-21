@@ -528,6 +528,10 @@ object CrossDeviceClipboardHook {
                                     }
                                     // 已删条目剔除（写回后面板字段与适配器列表同步生效，见下）。
                                     dropBlockedEntries(d)
+                                    // 截图跨设备同步会落两份内容相同、仅文件名/time 不同的图片，
+                                    // 原生 getClipboardData 一次查出两行 → 面板出现重复图。按稳定
+                                    // entryKey 去重、每键保留 time 最新的一条。(dupimg-1121f)
+                                    dedupImageRows(d)
                                     if (ModulePrefs.isClipboardGroupEnabled()) {
                                         hookGroupAdapterMethods(chain.thisObject)
                                         synchronized(sGroupFullSnapshot) {
@@ -1210,6 +1214,56 @@ object CrossDeviceClipboardHook {
             persistDeletedKeys()
         }
         return removed > 0
+    }
+
+    /**
+     * 图片条目按稳定身份去重：同一张图的重复副本只保留 time 最新的一条。
+     *
+     * <p>跨设备截图同步会把同一张图落两份（内容相同、uriFileName 带不同到达时间戳），
+     * phrase 原生 getClipboardData 一次查出两行、本模块只读不改地灌入列表，
+     * 于是面板出现两条一模一样的图。本方法只对图片条目（entryKey 以 img: 开头）按
+     * 归一化键判重；同键多份保留 time 最大的一条（最新副本），移除其余。非图片条目、
+     * 取不到键的条目一律保留，不影响文本/链接的多次手动复制。(dupimg-1121f)
+     */
+    private fun dedupImageRows(list: MutableList<Any?>) {
+        if (list.size < 2) return
+        try {
+            val bestIndex = HashMap<String, Int>()
+            val bestTime = HashMap<String, Long>()
+            for (i in list.indices) {
+                val e = list[i]
+                val k = entryKey(e) ?: continue
+                if (!k.startsWith("img:")) continue
+                val nk = normalizeKey(k) ?: k
+                val t = entryTime(e) ?: 0L
+                val prev = bestIndex[nk]
+                if (prev == null || t > (bestTime[nk] ?: 0L)) {
+                    bestIndex[nk] = i
+                    bestTime[nk] = t
+                }
+            }
+            if (bestIndex.isEmpty()) return
+            var removed = 0
+            val it = list.iterator()
+            var idx = 0
+            while (it.hasNext()) {
+                val e = it.next()
+                val k = entryKey(e)
+                if (k != null && k.startsWith("img:")) {
+                    val nk = normalizeKey(k) ?: k
+                    val keep = bestIndex[nk]
+                    if (keep != null && keep != idx) {
+                        it.remove()
+                        removed++
+                        log("dedup image row: $k t=${entryTime(e)} keep=${bestTime[nk]}")
+                    }
+                }
+                idx++
+            }
+            if (removed > 0) log("dedup removed $removed duplicate image rows")
+        } catch (t: Throwable) {
+            log("dedupImageRows skipped - $t")
+        }
     }
 
     /** 取条目 time（{@code ClipboardContentModel.getTime()}，long）；反射失败返回 null。 */
