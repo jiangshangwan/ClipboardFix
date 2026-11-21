@@ -183,9 +183,12 @@ class AboutActivity : ComponentActivity() {
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
 
-        // 捐赠名单预热：绑定缓存上下文并在后台提前取数，点开弹卡时通常已就绪。(dnrwarm-1120w)
+        // 名单与更新日志预热：绑定缓存上下文并在后台提前取数，点开弹卡时通常已就绪。
+        // (dnrwarm-1120w / clg-warm-1121w)
         DonorListLoader.attach(this)
         DonorListLoader.fetch(onReady = { }, onFailed = { _ -> })
+        ChangelogLoader.attach(this)
+        ChangelogLoader.fetch(onReady = { }, onFailed = { _ -> })
 
         // 开关状态：从本地偏好恢复
         loadSwitchState()
@@ -1113,18 +1116,21 @@ class AboutActivity : ComponentActivity() {
     // ---------------- 弹卡：更新日志（读取仓库 Release 列表） ----------------
     // 走柔光玻璃弹卡（GlassSheetBridge）：与功能页语言 / 主题下拉同一套玻璃材质与弹簧动画，
     // 折射源是本页内容，故必须画在页面 Compose 覆盖层里而不是独立弹窗。
-    // 版本说明来自远端发布记录；加载中先占位，取回后替换同一张弹卡的内容。(ab-26b)
+    // 版本说明来自远端发布记录：优先展示缓存（含磁盘），无缓存才用加载占位；
+    // 取回内容与当前展示一致时不重建弹卡，消除冷启动首次的闪烁。(ab-26b / clg-noflash-1121w)
     private fun showChangelog() {
         val title = getString(R.string.sheet_changelog_title)
-        GlassSheetBridge.show(
-            GlassSheetRequest(
-                title = title,
-                content = GlassSheetContent.Message(getString(R.string.changelog_loading)),
-            )
-        )
+        var shown: List<Pair<String, String>>? = ChangelogLoader.cached()
+        val initial: GlassSheetContent = if (shown != null) {
+            GlassSheetContent.Blocks(shown)
+        } else {
+            GlassSheetContent.Message(getString(R.string.changelog_loading))
+        }
+        GlassSheetBridge.show(GlassSheetRequest(title = title, content = initial))
         ChangelogLoader.fetch(
             onReady = { blocks ->
-                if (GlassSheetBridge.isOpen()) {
+                if (blocks != shown && GlassSheetBridge.isOpen()) {
+                    shown = blocks
                     GlassSheetBridge.show(
                         GlassSheetRequest(title = title, content = GlassSheetContent.Blocks(blocks))
                     )
@@ -1133,9 +1139,13 @@ class AboutActivity : ComponentActivity() {
             onFailed = { cached ->
                 if (GlassSheetBridge.isOpen()) {
                     if (cached != null) {
-                        GlassSheetBridge.show(
-                            GlassSheetRequest(title = title, content = GlassSheetContent.Blocks(cached))
-                        )
+                        // 打开时已用同一份缓存渲染则不再重建，仅提示离线。(clg-offline-1121w)
+                        if (cached != shown) {
+                            shown = cached
+                            GlassSheetBridge.show(
+                                GlassSheetRequest(title = title, content = GlassSheetContent.Blocks(cached))
+                            )
+                        }
                         showSnack(getString(R.string.changelog_offline))
                     } else {
                         GlassSheetBridge.show(

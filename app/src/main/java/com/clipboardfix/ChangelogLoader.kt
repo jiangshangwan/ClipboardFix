@@ -5,6 +5,8 @@
  */
 package com.clipboardfix
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
 import java.io.BufferedReader
@@ -25,10 +27,79 @@ internal object ChangelogLoader {
         "https://api.github.com/repos/jiangshangwan/ClipboardFix/releases?per_page=100"
     private const val CLIENT = "ClipboardFix-Changelog/2.1"
 
+    // 更新日志磁盘缓存：冷启动即可直接展示上次成功取得的内容，不再先闪加载占位。(clg-dsk-1121w)
+    private const val PREFS_NAME = "cf_changelog_cache"
+    private const val KEY_BLOCKS = "blocks"
+    private const val KEY_AT = "saved_at"
+    private const val SEP = "\u0001"
+    private const val KV = "\u0002"
+
     private val main = Handler(Looper.getMainLooper())
 
     @Volatile
     private var lastGood: List<Pair<String, String>>? = null
+
+    @Volatile
+    private var appCtx: Context? = null
+
+    /** 绑定上下文并回读磁盘缓存；进关于页时调用，使取数失败或冷启动仍能立即展示。(clg-ctx-1121w) */
+    fun attach(context: Context) {
+        appCtx = try {
+            context.applicationContext
+        } catch (_: Throwable) {
+            null
+        }
+        if (lastGood == null) lastGood = readDisk()
+    }
+
+    /** 返回上次成功的版本说明：内存优先，冷启动内存为空则回读磁盘。(clg-cache-1121w) */
+    fun cached(): List<Pair<String, String>>? {
+        val mem = lastGood
+        if (mem != null) return mem
+        val disk = readDisk()
+        if (disk != null) lastGood = disk
+        return disk
+    }
+
+    private fun prefs(): SharedPreferences? {
+        val c = appCtx ?: return null
+        return try {
+            c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun readDisk(): List<Pair<String, String>>? {
+        val p = prefs() ?: return null
+        return try {
+            val raw = p.getString(KEY_BLOCKS, null) ?: return null
+            if (raw.isEmpty()) return null
+            val out = ArrayList<Pair<String, String>>()
+            for (part in raw.split(SEP)) {
+                if (part.isEmpty()) continue
+                val k = part.indexOf(KV)
+                if (k <= 0) continue
+                out.add(part.substring(0, k) to part.substring(k + 1))
+            }
+            if (out.isEmpty()) null else out
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun writeDisk(blocks: List<Pair<String, String>>) {
+        val p = prefs() ?: return
+        try {
+            val raw = blocks.joinToString(SEP) { it.first + KV + it.second }
+            p.edit()
+                .putString(KEY_BLOCKS, raw)
+                .putLong(KEY_AT, System.currentTimeMillis())
+                .apply()
+        } catch (_: Throwable) {
+            // 落盘失败不影响本次展示，内存缓存仍有效。(clg-dskerr-1121w)
+        }
+    }
 
     /**
      * 异步取回版本说明。[onReady] 收到可直接投递给弹卡的分段；[onFailed] 在取数或解析
@@ -44,6 +115,7 @@ internal object ChangelogLoader {
                 val blocks = parse(text)
                 if (blocks.isEmpty()) throw IllegalStateException("no usable release")
                 lastGood = blocks
+                writeDisk(blocks) // 成功结果落盘，供下次冷启动直接展示。(clg-save-1121w)
                 main.post { onReady(blocks) }
             } catch (ignored: Throwable) {
                 val hit = lastGood
