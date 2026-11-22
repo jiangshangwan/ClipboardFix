@@ -5,12 +5,14 @@
  */
 package com.clipboardfix
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.os.Build
 import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import java.io.File
@@ -139,7 +141,11 @@ object LogExport {
             appendClipboard(s, sb)
         }
 
-        section(sb, "六、Hook 运行日志（LSPosed 模块日志，root 采集）") {
+        section(sb, "六、运行环境快照（无障碍 / 关键进程）") {
+            appendRuntimeSnapshot(ctx, sb)
+        }
+
+        section(sb, "七、Hook 运行日志（LSPosed 模块日志，root 采集）") {
             val lsp = captureLspLogs()
             if (lsp.isBlank()) {
                 sb.append("（未取得：无 root 授权、无 LSPosed 日志，或模块尚未运行）\n")
@@ -149,7 +155,7 @@ object LogExport {
             }
         }
 
-        section(sb, "七、系统日志 logcat（需 root，补充崩溃栈）") {
+        section(sb, "八、系统日志 logcat（需 root，补充崩溃栈）") {
             val crash = suRun("logcat -b crash -d -v time -t 500")
             sb.append("-- crash 缓冲 --\n")
             sb.append(if (crash.isBlank()) "（无崩溃记录或未取得）\n" else crash)
@@ -184,6 +190,58 @@ object LogExport {
         val limited = if (text.length > 4000) text.substring(0, 4000) + "\n…(已截断，共 ${text.length} 字)" else text
         line(sb, "文本内容", limited)
         sb.append("（更完整的复制历史见下方 Hook 日志中的内容指纹/条目记录）\n")
+    }
+
+    /**
+     * 运行环境快照：已启用的无障碍服务（TalkBack/第三方服务会改变点击时的焦点行为）
+     * 与关键进程存活状态（面板宿主、互联宿主被杀后重新 fork 会触发冷启动）。无障碍
+     * 用系统 API 直接读，进程存活优先 su 读 ps，无 root 退回活动管理器尽力采集。
+     * cf/env-1122g
+     */
+    private fun appendRuntimeSnapshot(ctx: Context, sb: StringBuilder) {
+        line(sb, "无障碍服务", safe { enabledA11y(ctx) })
+        val ps = suRun("ps -A -o PID,COMM 2>/dev/null")
+        if (ps.isNotBlank()) {
+            val keys = arrayOf("phrase", "milink", "talkback", "inputmethod")
+            val hits = ArrayList<String>()
+            for (l in ps.lines()) {
+                val low = l.lowercase(Locale.US)
+                if (keys.any { low.contains(it) }) hits.add(l.trim())
+            }
+            line(sb, "关键进程（su ps）", if (hits.isEmpty()) "（无匹配）" else hits.joinToString(" | "))
+        } else {
+            line(sb, "关键进程（活动管理器）", safe { runningProcs(ctx) })
+        }
+    }
+
+    /** 已启用无障碍服务：输出 serviceId 列表，空则返回「未启用」。cf/a11y-1122g */
+    private fun enabledA11y(ctx: Context): String {
+        val am = ctx.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+            ?: return "未知（无 AccessibilityManager）"
+        val list = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            ?: return "未启用"
+        if (list.isEmpty()) return "未启用"
+        val ids = ArrayList<String>()
+        for (info in list) {
+            val id = info.id ?: continue
+            ids.add(id.substringAfterLast('/').substringAfterLast('.'))
+        }
+        return if (ids.isEmpty()) "未启用（无 serviceId）" else ids.joinToString(", ")
+    }
+
+    /** 无 root 时的进程存活兜底：只列本模块可见的进程名。cf/proc-1122g */
+    private fun runningProcs(ctx: Context): String {
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+            ?: return "未知（无 ActivityManager）"
+        val procs = am.runningAppProcesses ?: return "未知（不可读）"
+        val keys = arrayOf("phrase", "milink", "talkback", "inputmethod")
+        val hits = ArrayList<String>()
+        for (p in procs) {
+            val n = p.processName ?: continue
+            val low = n.lowercase(Locale.US)
+            if (keys.any { low.contains(it) }) hits.add(n)
+        }
+        return if (hits.isEmpty()) "（无匹配或系统隐藏）" else hits.joinToString(", ")
     }
 
     /** 主线程点击瞬间读取系统剪贴板文本；失败返回 null。 */
@@ -223,10 +281,15 @@ object LogExport {
             if (l.isEmpty()) continue
             // 启动横幅行与报告前两节信息重复，跳过
             if (l.contains(ModulePrefs.AUTHOR_SIGNATURE) || l.contains("HyperClipFix v")) continue
+            // 过滤词覆盖全部 hook 进程：云端图片门禁、面板材质、数量解锁、复制链路、
+            // 设置入口与系统中继的诊断行都写进模块日志，需一并纳入才不会在导出时被丢。(cf/blind-1122k)
             if (l.contains("com.clipboardfix") || l.contains("[ClipboardFix]") ||
                 l.contains("[CrossDevice]") || l.contains("[PanelColor]") ||
                 l.contains("[Pin]") || l.contains("[IME]") || l.contains("[Perm]") ||
-                l.contains("[DexKit]") || l.contains("[Group]")
+                l.contains("[DexKit]") || l.contains("[Group]") ||
+                l.contains("[SuperClip]") || l.contains("[PhraseMaterial]") ||
+                l.contains("[Unlimit]") || l.contains("[CopyDiag]") ||
+                l.contains("SettingsEntry") || l.contains("system hub")
             ) {
                 kept.add(l)
             }
@@ -262,8 +325,10 @@ object LogExport {
         val sb = StringBuilder()
         var count = 0
         for (l in raw.lines()) {
-            // 保留模块 TAG、崩溃/异常、以及系统关键行；丢弃大量无关应用日志
+            // 保留模块 TAG、App 取数 TAG（名单/更新日志）、崩溃/异常与系统关键行；
+            // App 自身 TAG 与 hook 进程 TAG 不同，漏掉会看不到云端取数失败细节。(cf/cat-1122t)
             if (l.contains("ClipboardFix") || l.contains("LSPosed") ||
+                l.contains("CFDonor") || l.contains("ChangelogLoader") ||
                 l.contains("AndroidRuntime") || l.contains("FATAL") ||
                 l.contains("Exception") || l.contains(" ANR ")
             ) {

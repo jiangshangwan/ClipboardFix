@@ -136,7 +136,10 @@ object ImeUnlockHook {
             "com.bytedance.android.doubaoime" to 5,      // 死空间 25px@1440，收边带距栏顶保留 ~3px margin
             "com.tencent.wetype" to 4,                   // 无下沉 gap ~78px；4dp(15px) 收至 ~63px，键帽圆角完整；5dp 触及 inputFrame 裁剪线致底排平切
             "com.iflytek.inputmethod" to 7,              // gap 61 → 下沉 19px
-            "com.sohu.inputmethod.sogou" to 16,          // gap 85 → 下沉 43px
+            // 官方搜狗按键距 inputFrame 裁剪线的可用死空间不足按 gap 85 推算的 43px：
+            // 16dp 时底排按键越过裁剪线被切平（圆角丢失）。下调到 9dp 保留下沉收益
+            // （避免关闭时整体高一截），又不触碰底排。cf/sgdp-1122p
+            "com.sohu.inputmethod.sogou" to 9,           // 原 16dp 致底排裁剪，收敛到 9dp
             "com.google.android.inputmethod.latin" to 12, // gap 73 → 下沉 31px
             // 未列入的输入法：
             //  · com.xiaomi.type / com.sohu.inputmethod.sogou.xiaomi —— 小米定制输入法，走
@@ -148,6 +151,10 @@ object ImeUnlockHook {
 
     /** 被下沉的键盘内容视图 → 原始 translationY（弱键，视图重建后自动失效）。 */
     private val ORIGINAL_CONTENT_TRANSLATIONS: MutableMap<View, Float> = java.util.WeakHashMap()
+
+    /** 下沉几何诊断：每个视图只记一次（弱键），核对裁剪层级与溢出量。cf/sggeo-1122p */
+    private val sSinkDiagSeen: MutableSet<View> =
+            Collections.newSetFromMap(java.util.WeakHashMap<View, Boolean>())
 
     /**
      * @param pkg        输入法包名
@@ -1111,6 +1118,16 @@ object ImeUnlockHook {
     private fun applyKeyboardSink(contentView: View) {
         val offsetPx = sSinkOffsetPx
         if (offsetPx <= 0f) return
+        // 一次性几何快照：记录下沉量、内容视图与父容器边界、父容器裁剪开关，
+        // 用于核对底排是否仍会越过裁剪线；每个视图只记一次。cf/sggeo2-1122p
+        if (sSinkDiagSeen.add(contentView)) {
+            val p = contentView.parent
+            val pInfo = if (p is View) {
+                " parent=${p.javaClass.simpleName} pBot=${p.bottom} clip=" +
+                        (if (p is ViewGroup) p.clipChildren.toString() else "?")
+            } else " parent=$p"
+            log("sink geo: off=$offsetPx cvBot=${contentView.bottom} cvH=${contentView.height}$pInfo")
+        }
         val stored = ORIGINAL_CONTENT_TRANSLATIONS[contentView]
         val orig = stored ?: contentView.translationY
         if (stored == null) {

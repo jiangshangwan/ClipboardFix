@@ -220,6 +220,9 @@ object CrossDeviceClipboardHook {
     /** 面板类（动态 dex）的两个 hook 是否已装：进程内只装一次。 */
     private var panelClassHooksInited = false
 
+    /** 诊断：已见过的 popup 类名（主线程访问，去重上限 64），用于核对内置输入法面板是否命中识别。cf/inipop-1122n */
+    private val sSeenPopupClasses = HashSet<String>()
+
     /**
      * 显示层修复（v4）入口：装在所有被 hook 的进程（含输入法进程），面板在哪出现就在哪生效。
      * 进程内只装一次。
@@ -256,6 +259,14 @@ object CrossDeviceClipboardHook {
             showAtLocation.isAccessible = true
             XposedInit.hook(showAtLocation) { chain ->
                 val self = chain.thisObject
+                // 诊断：每个 popup 类名只记一次，核对内置输入法面板是否与第三方共用
+                // 同一面板类（决定是否需扩展 isOurPanel）。上限保护，避免类名爆炸。cf/inipop2-1122n
+                if (self != null && sSeenPopupClasses.size < 64) {
+                    val cn = self.javaClass.name
+                    if (sSeenPopupClasses.add(cn)) {
+                        log("popup seen: $cn ours=" + isOurPanel(self))
+                    }
+                }
                 // v2.0.5：面板显示时恢复分组——「记忆剪贴板分组位置」开启则回到上次分组，
                 // 否则回到「全部」。必须排在 proceed 之前——面板显示后会立刻灌列表，
                 // 此时分组已就绪，快照/可见下标一次算对，不会先闪一下旧分组。

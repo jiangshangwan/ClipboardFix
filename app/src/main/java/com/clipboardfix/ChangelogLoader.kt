@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -26,6 +27,8 @@ internal object ChangelogLoader {
     private const val LIST_URL =
         "https://api.github.com/repos/jiangshangwan/ClipboardFix/releases?per_page=100"
     private const val CLIENT = "ClipboardFix-Changelog/2.1"
+    // 取数诊断 TAG：与名单读取对称，落 logcat 供诊断导出采集失败细节。(clglog-1122h)
+    private const val TAG = "ChangelogLoader"
 
     // 更新日志磁盘缓存：冷启动即可直接展示上次成功取得的内容，不再先闪加载占位。(clg-dsk-1121w)
     private const val PREFS_NAME = "cf_changelog_cache"
@@ -111,13 +114,22 @@ internal object ChangelogLoader {
     ) {
         Thread({
             try {
-                val text = get(LIST_URL) ?: throw IllegalStateException("empty response")
+                // 取数诊断：区分网络层空响应、HTTP 非 200 与解析层无有效版本。(clgdiag-1122h)
+                Log.d(TAG, "fetch begin: " + LIST_URL)
+                val text = get(LIST_URL) ?: run {
+                    Log.w(TAG, "fetch abort: empty response / non-200")
+                    throw IllegalStateException("empty response")
+                }
+                Log.d(TAG, "fetch json len=" + text.length)
                 val blocks = parse(text)
+                Log.d(TAG, "parsed blocks=" + blocks.size)
                 if (blocks.isEmpty()) throw IllegalStateException("no usable release")
                 lastGood = blocks
                 writeDisk(blocks) // 成功结果落盘，供下次冷启动直接展示。(clg-save-1121w)
                 main.post { onReady(blocks) }
-            } catch (ignored: Throwable) {
+            } catch (t: Throwable) {
+                // 失败细节落 logcat：异常类型与摘要，缓存命中情况随回调传给调用方。(clgfail-1122h)
+                Log.w(TAG, "fetch failed: " + t.javaClass.simpleName + " / " + t.message)
                 val hit = lastGood
                 main.post { onFailed(hit) }
             }
@@ -132,7 +144,10 @@ internal object ChangelogLoader {
             conn.setRequestProperty("User-Agent", CLIENT)
             conn.connectTimeout = 10000
             conn.readTimeout = 15000
-            if (conn.responseCode != 200) {
+            val code = conn.responseCode
+            // 状态码入诊断日志：配额耗尽(403)、限流(429) 与网络失败据此区分。(clghttp-1122h)
+            Log.d(TAG, "http code=" + code)
+            if (code != 200) {
                 null
             } else {
                 BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
@@ -251,8 +266,33 @@ internal object ChangelogLoader {
             val body = plain(field(obj, "body"))
             if (body.isEmpty()) continue
             val clean = tag.removePrefix("v").removePrefix("V").trim()
-            blocks.add(("V" + clean) to body)
+            // 只展示不高于当前安装版本的发布记录：更高版本升级后才能解锁可见。
+            // 解析不出数字的旧式 tag 保守保留，避免误删历史说明。cf/clgcap-1122s
+            if (notHigherThanCurrent(clean)) {
+                blocks.add(("V" + clean) to body)
+            }
         }
         return blocks
+    }
+
+    /**
+     * 版本 [candidate] 是否不高于当前安装版本。按点分段取前导数字逐段比较，段数不足补 0；
+     * 任一段判出大小即返回，全等视为不高于。tag 带 v/V 前缀或非数字尾巴时先归一。
+     * cf/clgcmp-1122s
+     */
+    private fun notHigherThanCurrent(candidate: String): Boolean {
+        val cur = BuildConfig.VERSION_NAME.trim().trimStart('v', 'V')
+        val seg = { s: String ->
+            s.split('.').map { part -> part.takeWhile { it.isDigit() }.toIntOrNull() ?: 0 }
+        }
+        val c = seg(candidate)
+        val l = seg(cur)
+        for (i in 0 until Math.max(c.size, l.size)) {
+            val cv = c.getOrElse(i) { 0 }
+            val lv = l.getOrElse(i) { 0 }
+            if (cv > lv) return false
+            if (cv < lv) return true
+        }
+        return true
     }
 }

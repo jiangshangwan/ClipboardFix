@@ -71,13 +71,15 @@ class XposedInit : XposedModule() {
             return
         }
 
-        // 系统预置输入法：保留在作用域内，但跳过面板类 hook（背景/置顶/云同步），
-        // 其剪贴板面板由系统自身管理，不叠加第三方输入法下的修正。
+        // 系统预置输入法（内置输入法）：其剪贴板面板同样运行在输入法进程并加载同一套
+        // phrase 面板类，故数量上限、分组与跨设备显示层修复在此进程安装；面板视觉修正
+        // （背景/置顶）仍不叠加。功能是否命中由面板类识别与类存在性自检兜底，不匹配即空转。
         // 关键：IME 列表保护（ImeUnlockHook 内的 deleteNotSupportIme / getSupportIme /
-        // isImeSupport）必须保留——若一并跳过，重载进程后系统会把第三方输入法从
-        // 「已启用」里剔除（2.0.6 无此门禁时正常，2.0.7 引入门禁后回归，见复现）。
+        // isImeSupport）必须保留——若跳过，重载进程后系统会把第三方输入法从「已启用」剔除
+        // （2.0.6 无此门禁正常，2.0.7 引入后回归）。时间限制解锁也经其 loadDex 回调安装。
+        // cf/biime-1122n
         if (OEM_IME_PACKAGES.contains(pkg)) {
-            log(pkg + " scope-only: panel hooks bypassed, ime-list kept (variant="
+            log(pkg + " built-in ime: functional hooks on, ime-list kept (variant="
                     + Integer.toHexString(ROUTE_VARIANT) + ")")
             // 写入系统剪贴板的内容快照（系统输入法作对照，验证 URI 授权差异）
             ClipboardCopyDiag.init()
@@ -97,6 +99,10 @@ class XposedInit : XposedModule() {
                     }
                 }
             }
+            // 显示层修复：数量上限（20 条修剪绕过）、分组、跨设备合并/去重都集中在
+            // initPanelMerge；面板类不匹配时 isOurPanel 返回 false，钩子空转无副作用。
+            // cf/biimerge-1122n
+            CrossDeviceClipboardHook.initPanelMerge(param)
             return
         }
 
