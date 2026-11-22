@@ -21,13 +21,19 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.FileProvider
 import com.clipboardfix.ui.showSnack
+import java.io.DataOutputStream
+import java.util.concurrent.TimeUnit
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.ArrayList
+import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicLong
 import java.util.regex.Pattern
 
 /**
@@ -181,56 +187,147 @@ class UpdateChecker(private val context: Context) {
         )
     }
 
+    /**
+     * 下载并安装：先用 Range 探测 CDN 是否支持分片，支持则多路并行拉取各自分片再拼接，
+     * 不支持则退回单连接；分片进度落盘，取消/失败后再次下载可续传。
+     * APK 来源始终是 GitHub 官方 Release，不经过任何第三方中转。
+     */
     private fun downloadAndInstall(release: ReleaseInfo) {
         val activity = context as Activity
         val token = CancelToken()
         val sheet = BottomSheet.showProgress(
             activity, activity.getString(R.string.uc_downloading), "HyperClipFix " + release.tagName
-        ) {
-            token.cancelled = true
-            val c = token.conn
-            if (c != null) c.disconnect()
-        }
+        ) { token.cancelAll() }
 
         Thread({
             val apkFile = File(context.cacheDir, "clipboardfix_update.apk")
+            val metaFile = File(context.cacheDir, "clipboardfix_update.meta")
             try {
-                val sizeKnown = booleanArrayOf(false)
-                downloadFile(release.downloadUrl, apkFile, token) { read, total ->
-                    if (total > 0 && !sizeKnown[0]) {
-                        sizeKnown[0] = true
-                        sheet.setSubTitle("HyperClipFix " + release.tagName + " · 共 " + BottomSheet.formatMb(total))
-                    }
-                    sheet.setProgress(if (total > 0) (read * 100 / total).toInt() else 0, read, total)
-                }
-                if (token.cancelled) {
-                    apkFile.delete()
+                if (release.downloadUrl.isEmpty()) throw Exception("下载链接为空")
+                // 复用已下好的完整包：跳转授权页返回后再次点更新，不该重下。
+                // 校验 tag/meta 与 sha256 任一不符都作废重下，防止版本错配装坏包。cf/reuseapk-1122z
+                if (apkFile.exists() && isDownloadedApkValid(apkFile, metaFile, release)) {
+                    android.util.Log.d("ClipboardFix", "reuse already-downloaded apk, skip download")
+                    handler.post { dispatchInstall(apkFile) }
                     return@Thread
                 }
+                val probe = probeDownload(release.downloadUrl, token)
+                if (token.cancelled) return@Thread
+
+                val total = probe.total
+                val parallel = probe.supportsRange && total >= PARALLEL_MIN_BYTES
+                val chunks = if (parallel) PARALLEL_CHUNKS else 1
+                val chunkSize = if (chunks == 1) total else ceilDiv(total, chunks.toLong())
+                android.util.Log.d("ClipboardFix",
+                    "download probe: range=" + probe.supportsRange + " total=" + total +
+                            " chunks=" + chunks + " etag=" + probe.etag)
+
+                // 校验元数据：URL/tag/总长/etag 任一不符即作废旧分片，从头下载
+                val metaKey = listOf(release.downloadUrl, release.tagName, total.toString(), probe.etag).joinToString("\u0001")
+                val resumable = isMetaValid(metaFile, metaKey)
+                val parts = Array(chunks) { File(context.cacheDir, PART_PREFIX + it) }
+                if (!resumable) {
+                    for (p in parts) p.delete()
+                    apkFile.delete()
+                    writeMeta(metaFile, metaKey)
+                }
+
+                // 每个分片的已完成字节（续传时读实际文件大小，并夹到本片区间内）
+                val done = LongArray(chunks)
+                for (i in 0 until chunks) {
+                    val start = i * chunkSize
+                    val end = if (i == chunks - 1) total - 1 else (start + chunkSize - 1).coerceAtMost(total - 1)
+                    val span = end - start + 1
+                    val have = if (resumable && parts[i].exists()) parts[i].length() else 0L
+                    done[i] = if (have in 1..span) have else 0L
+                    if (done[i] == 0L) parts[i].delete()
+                }
+                val doneRef = AtomicLong(0)
+                for (v in done) doneRef.addAndGet(v)
+
+                val sizeKnown = booleanArrayOf(false)
+                val sink = ProgressSink { read, sumTotal ->
+                    val known = if (sumTotal > 0) sumTotal else total
+                    if (known > 0 && !sizeKnown[0]) {
+                        sizeKnown[0] = true
+                        handler.post {
+                            sheet.setSubTitle("HyperClipFix " + release.tagName + " · 共 " + BottomSheet.formatMb(known))
+                        }
+                    }
+                    sheet.setProgress(if (known > 0) (read * 100 / known).toInt() else 0, read, known)
+                }
+
+                if (total > 0) sink.onProgress(doneRef.get(), total)
+                val latch = CountDownLatch(chunks)
+                val failed = AtomicLong(0)
+                for (i in 0 until chunks) {
+                    val start = i * chunkSize
+                    val end = if (i == chunks - 1) total - 1 else (start + chunkSize - 1).coerceAtMost(total - 1)
+                    Thread({
+                        try {
+                            // 复用探测拿到的 CDN 签名直链：不再逐块重走 API，整次下载只耗 1 次配额。
+                            downloadChunk(probe.directUrl, start + done[i], end, parts[i], probe.supportsRange, token, doneRef, sink, total)
+                        } catch (e: Exception) {
+                            failed.incrementAndGet()
+                            android.util.Log.e("ClipboardFix", "chunk " + i + " failed", e)
+                        } finally {
+                            latch.countDown()
+                        }
+                    }, "cf-chunk-$i").start()
+                }
+                latch.await()
+
+                if (token.cancelled) return@Thread
+                if (failed.get() > 0 || doneRef.get() != total) {
+                    throw Exception("分片下载不完整（" + doneRef.get() + "/" + total + "）")
+                }
+
+                // 拼接前先按 URL 顺序合并分片到目标文件
+                mergeParts(parts, apkFile)
+                if (apkFile.length() != total) {
+                    throw Exception("APK 大小不符（" + apkFile.length() + "/" + total + "）")
+                }
+                if (release.digest.isNotEmpty() && !verifySha256(apkFile, release.digest)) {
+                    throw Exception("校验失败，已丢弃本次下载")
+                }
+
+                for (p in parts) p.delete()
+                // meta 保留：静默安装若因授权/权限失败需要回退系统安装器，
+                // 用户返回后再次点更新可直接复用已下好的包而不重下。cf/keepmeta-1122z
                 handler.post {
                     sheet.showCompleted()
-                    handler.postDelayed({ sheet.dismiss(); installApk(apkFile) }, 800)
+                    handler.postDelayed({ sheet.dismiss(); dispatchInstall(apkFile) }, 800)
                 }
             } catch (e: Exception) {
-                apkFile.delete()
-                if (token.cancelled) return@Thread
-                android.util.Log.e("ClipboardFix", "downloadAndInstall failed", e)
-                handler.post {
-                    sheet.dismiss()
-                    showMessage(
-                        context.getString(R.string.uc_download_fail) + e.javaClass.simpleName + ": " + e.message
-                    )
+                if (!token.cancelled) {
+                    android.util.Log.e("ClipboardFix", "downloadAndInstall failed", e)
+                    // 分片保留供下次续传，仅清掉拼接产物
+                    apkFile.delete()
+                    handler.post {
+                        sheet.dismiss()
+                        showMessage(
+                            context.getString(R.string.uc_download_fail) + e.javaClass.simpleName + ": " + e.message
+                        )
+                    }
                 }
             }
         }, "cf-apk-download").start()
     }
 
-    /** 下载取消令牌：标志位 + 连接引用（取消时 disconnect 让读循环立刻抛错退出）。 */
+    /** 下载取消令牌：标志位 + 全部在途连接（取消时逐个 disconnect 让读循环立刻退出）。 */
     private class CancelToken {
         @Volatile
         var cancelled = false
-        @Volatile
-        var conn: HttpURLConnection? = null
+        private val conns = java.util.Collections.synchronizedList(ArrayList<HttpURLConnection>())
+        fun track(c: HttpURLConnection) { conns.add(c) }
+        fun cancelAll() {
+            cancelled = true
+            synchronized(conns) {
+                for (c in conns) {
+                    try { c.disconnect() } catch (_: Throwable) {}
+                }
+            }
+        }
     }
 
     /** 进度回调（下载线程触发；UI 刷新由调用方自行切主线程）。 */
@@ -238,52 +335,264 @@ class UpdateChecker(private val context: Context) {
         fun onProgress(read: Long, total: Long)
     }
 
+    /** Range 探测结果：总长 + 是否支持分片 + 版本标识 + 302 后的最终 CDN 直链。 */
+    private class ProbeResult {
+        var total: Long = -1L
+        var supportsRange: Boolean = false
+        var etag: String = ""
+        /** 跟随重定向后的实际文件地址（带签名的 CDN 链接），分块复用它以免每次重走 API 配额。 */
+        var directUrl: String = ""
+    }
+
+    /**
+     * 探测下载地址：先请求 0-0 一字节。206 + Content-Range 表示支持分片并拿到总长；
+     * 否则退回单连接，总长取 Content-Length。GitHub → Azure blob 的重定向由 followRedirects 处理。
+     */
     @Throws(Exception::class)
-    private fun downloadFile(urlStr: String, outputFile: File, token: CancelToken, sink: ProgressSink) {
-        android.util.Log.d("ClipboardFix", "downloadFile URL: $urlStr")
-        if (urlStr.isEmpty()) {
-            throw Exception("下载链接为空")
-        }
-        // 让 HttpURLConnection 自动跟重定向（GitHub → Azure blob → 最终文件）
+    private fun probeDownload(urlStr: String, token: CancelToken): ProbeResult {
+        val r = ProbeResult()
         val conn = URL(urlStr).openConnection() as HttpURLConnection
-        token.conn = conn
+        token.track(conn)
         conn.setRequestProperty("User-Agent", "ClipboardFix-Updater")
+        // API asset 直链必须声明 octet-stream 才会 302 到文件本体，否则返回 JSON 元数据。
+        // 普通 CDN 链接带此头无副作用。cf/octet-1122y
+        conn.setRequestProperty("Accept", "application/octet-stream")
+        conn.setRequestProperty("Range", "bytes=0-0")
         conn.instanceFollowRedirects = true
         conn.connectTimeout = 15000
         conn.readTimeout = 30000
-        conn.connect()
-        val code = conn.responseCode
-        android.util.Log.d("ClipboardFix", "HTTP response: $code")
-        if (code != 200) {
-            conn.disconnect()
-            throw Exception("HTTP $code")
-        }
-
-        val contentLength = conn.contentLength
-        val input = conn.inputStream
-        val fos = FileOutputStream(outputFile)
-
-        val buffer = ByteArray(8192)
-        var bytesRead: Int
-        var totalRead = 0L
-
-        while ((input.read(buffer).also { bytesRead = it }) != -1) {
-            if (token.cancelled) {
-                fos.close()
-                input.close()
-                conn.disconnect()
-                throw Exception("cancelled")
+        try {
+            conn.connect()
+            val code = conn.responseCode
+            r.etag = conn.getHeaderField("ETag") ?: (conn.getHeaderField("Last-Modified") ?: "")
+            // 取 302 后的实际文件地址：API asset 直链每次请求都生成新签名 URL，
+            // 分块若各自重走 API 会耗尽未认证配额（60/h），复用这条即可只花 1 次。
+            r.directUrl = conn.url.toString()
+            if (code == 206) {
+                val cr = conn.getHeaderField("Content-Range") ?: ""
+                val slash = cr.lastIndexOf('/')
+                if (slash >= 0) {
+                    r.total = cr.substring(slash + 1).trim().toLongOrNull() ?: -1L
+                }
+                r.supportsRange = r.total > 0
+            } else {
+                r.total = conn.contentLength.toLong()
             }
-            fos.write(buffer, 0, bytesRead)
-            totalRead += bytesRead.toLong()
-            val read = totalRead
-            sink.onProgress(read, contentLength.toLong())
+            android.util.Log.d("ClipboardFix", "probe code=" + code + " cr=" + crSafe(conn) + " total=" + r.total)
+        } finally {
+            try { conn.inputStream?.close() } catch (_: Throwable) {}
+            conn.disconnect()
         }
+        if (r.total <= 0) throw Exception("无法获取文件大小（HTTP 探测失败）")
+        return r
+    }
 
-        fos.flush()
-        fos.close()
-        input.close()
-        conn.disconnect()
+    private fun crSafe(conn: HttpURLConnection): String = conn.getHeaderField("Content-Range") ?: ""
+
+    /** 单分片下载：带 Range 拉取 [begin, end]，追加写入分片文件，实时累加全局进度。 */
+    @Throws(Exception::class)
+    private fun downloadChunk(urlStr: String, begin: Long, end: Long, part: File, expectRange: Boolean,
+                              token: CancelToken, done: AtomicLong, sink: ProgressSink, total: Long) {
+        if (begin > end) return
+        val conn = URL(urlStr).openConnection() as HttpURLConnection
+        token.track(conn)
+        conn.setRequestProperty("User-Agent", "ClipboardFix-Updater")
+        conn.setRequestProperty("Accept", "application/octet-stream")
+        conn.setRequestProperty("Range", "bytes=$begin-$end")
+        conn.instanceFollowRedirects = true
+        conn.connectTimeout = 15000
+        conn.readTimeout = 30000
+        try {
+            conn.connect()
+            val code = conn.responseCode
+            if (expectRange) {
+                // 探测已确认支持 Range（206），此处若返回 200 说明服务端行为不一致，
+                // 该片会拿到整份文件而污染拼接，直接失败；分片保留、下次续传时按区间夹取自愈。
+                if (code != 206) {
+                    if (code == 200) part.delete()
+                    throw Exception("分片未响应 Range（HTTP $code）")
+                }
+            } else if (code != 200 && code != 206) {
+                throw Exception("单连接 HTTP $code")
+            } else if (code == 200) {
+                // 单连接且服务端返回整份文件：从头覆盖，不叠加旧分片
+                part.delete()
+            }
+            val append = code != 200 && part.exists()
+            val fos = FileOutputStream(part, append)
+            val input = conn.inputStream
+            val buffer = ByteArray(16384)
+            var n: Int
+            while ((input.read(buffer).also { n = it }) != -1) {
+                if (token.cancelled) throw Exception("cancelled")
+                fos.write(buffer, 0, n)
+                done.addAndGet(n.toLong())
+                sink.onProgress(done.get(), total)
+            }
+            fos.flush()
+            fos.close()
+            input.close()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** 按序合并分片到目标 APK。 */
+    @Throws(Exception::class)
+    private fun mergeParts(parts: Array<File>, out: File) {
+        val fos = FileOutputStream(out)
+        val buffer = ByteArray(16384)
+        try {
+            for (p in parts) {
+                val input = java.io.FileInputStream(p)
+                try {
+                    var n: Int
+                    while ((input.read(buffer).also { n = it }) != -1) fos.write(buffer, 0, n)
+                } finally {
+                    input.close()
+                }
+            }
+        } finally {
+            fos.flush()
+            fos.close()
+        }
+    }
+
+    /** 计算文件 SHA-256 并与 asset digest（sha256:hex）比对。 */
+    private fun verifySha256(file: File, digest: String): Boolean {
+        val expected = digest.removePrefix("sha256:").trim().lowercase(Locale.US)
+        if (expected.isEmpty()) return true
+        val md = MessageDigest.getInstance("SHA-256")
+        val input = java.io.FileInputStream(file)
+        val buffer = ByteArray(16384)
+        try {
+            var n: Int
+            while ((input.read(buffer).also { n = it }) != -1) md.update(buffer, 0, n)
+        } finally {
+            input.close()
+        }
+        val sb = StringBuilder()
+        for (b in md.digest()) sb.append(String.format(Locale.US, "%02x", b.toInt() and 0xff))
+        val actual = sb.toString()
+        android.util.Log.d("ClipboardFix", "sha256 expected=" + expected + " actual=" + actual)
+        return actual.equals(expected, ignoreCase = true)
+    }
+
+    /** 续传元数据：内容 URL/tag/总长/etag 拼接成 key，任一变化即作废旧分片。 */
+    private fun isMetaValid(meta: File, key: String): Boolean {
+        if (!meta.exists()) return false
+        return try {
+            meta.readText(Charsets.UTF_8) == key
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun writeMeta(meta: File, key: String) {
+        try { meta.writeText(key, Charsets.UTF_8) } catch (_: Throwable) {}
+    }
+
+    private fun ceilDiv(a: Long, b: Long): Long = (a + b - 1) / b
+
+    /**
+     * 复用已下载包的校验：meta 记录的 tag 与本次一致，且文件 sha256 与 asset digest 吻合。
+     * 任一项不成立都返回 false（触发重新下载）。cf/reusecheck-1122z
+     */
+    private fun isDownloadedApkValid(apkFile: File, metaFile: File, release: ReleaseInfo): Boolean {
+        if (release.digest.isEmpty()) return false
+        val meta = try { metaFile.readText(Charsets.UTF_8) } catch (_: Throwable) { return false }
+        if (!meta.contains(release.tagName)) return false
+        return verifySha256(apkFile, release.digest)
+    }
+
+    /**
+     * 安装调度：优先 root 静默安装（免「安装未知应用」授权、免跳设置页），
+     * 失败或无 root 时回退系统安装器。静默成功后自动重载进程并提示。cf/dispatch-1122z
+     */
+    private fun dispatchInstall(apkFile: File) {
+        if (RootCheck.isModuleRootGranted()) {
+            handler.post { showMessage(context.getString(R.string.uc_installing)) }
+        }
+        Thread({
+            val ok = silentInstall(apkFile)
+            if (ok) {
+                val reloaded = reloadProcesses()
+                handler.post {
+                    showMessage(context.getString(R.string.uc_install_ok_reloading))
+                    if (!reloaded) showMessage(context.getString(R.string.reload_fail) + "process")
+                }
+            } else {
+                android.util.Log.w("ClipboardFix", "silent install failed, fallback to system installer")
+                handler.post { installApk(apkFile) }
+            }
+        }, "cf-install").start()
+    }
+
+    /**
+     * root 静默安装：把 APK 复制到 /data/local/tmp 并放开读权限，再 pm install -r。
+     * app 私有 cacheDir 对 pm 子进程不可读，故必须先复制到公共可访问位置。
+     * 返回 true 仅当 pm 返回 success；任何异常/拒绝都返回 false 交给调用方回退。
+     */
+    private fun silentInstall(apkFile: File): Boolean {
+        if (!RootCheck.isModuleRootGranted()) {
+            android.util.Log.d("ClipboardFix", "silent install skip: no root grant")
+            return false
+        }
+        val target = "/data/local/tmp/cf_update_install.apk"
+        val cmd = StringBuilder()
+        cmd.append("cp ").append(apkFile.absolutePath).append(" ").append(target).append("\n")
+        cmd.append("chmod 644 ").append(target).append("\n")
+        cmd.append("pm install -r ").append(target).append("\n")
+        cmd.append("rm -f ").append(target).append("\n")
+        cmd.append("exit\n")
+        var p: Process? = null
+        return try {
+            p = Runtime.getRuntime().exec("su")
+            val os = DataOutputStream(p.outputStream)
+            os.writeBytes(cmd.toString())
+            os.flush()
+            val out = StringBuilder()
+            val reader = java.io.BufferedReader(java.io.InputStreamReader(p.inputStream))
+            var line: String?
+            while (reader.readLine().also { line = it } != null) out.append(line).append('\n')
+            val done = p.waitFor(30, TimeUnit.SECONDS)
+            val result = out.toString()
+            android.util.Log.d("ClipboardFix", "silent install output=" + result.trim())
+            done && p.exitValue() == 0 && result.lowercase(Locale.US).contains("success")
+        } catch (t: Throwable) {
+            android.util.Log.w("ClipboardFix", "silent install error", t)
+            false
+        } finally {
+            if (p != null) try { p.destroy() } catch (_: Throwable) {}
+        }
+    }
+
+    /**
+     * 自动重载进程：force-stop 剪贴板宿主、所有输入法与互联服务，使新版本随重启注入生效。
+     * 与设置页「重载所有进程」同一套目标清单。cf/reload-1122z
+     */
+    private fun reloadProcesses(): Boolean {
+        if (!RootCheck.isModuleRootGranted()) return false
+        val pkgs = LinkedHashSet<String>()
+        pkgs.add("com.miui.phrase")
+        pkgs.add("com.milink.service")
+        try {
+            val imm = context.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+            if (imm != null) for (info in imm.inputMethodList) pkgs.add(info.packageName)
+        } catch (_: Throwable) {}
+        var allOk = true
+        for (pkg in pkgs) {
+            var p: Process? = null
+            try {
+                p = Runtime.getRuntime().exec(arrayOf("su", "-c", "am force-stop " + pkg))
+                if (!p.waitFor(6, TimeUnit.SECONDS) || p.exitValue() != 0) allOk = false
+            } catch (_: Throwable) {
+                allOk = false
+            } finally {
+                if (p != null) try { p.destroy() } catch (_: Throwable) {}
+            }
+        }
+        return allOk
     }
 
     private fun installApk(apkFile: File) {
@@ -352,6 +661,7 @@ class UpdateChecker(private val context: Context) {
         info.tagName = extractString(json, "tag_name")
         info.name = extractString(json, "name")
         info.body = extractString(json, "body")
+        info.digest = extractString(json, "digest")
         info.currentVersion = getCurrentVersion()
 
         val cleanTag = info.tagName.replace("v", "").replace("V", "").trim()
@@ -365,6 +675,14 @@ class UpdateChecker(private val context: Context) {
         )
         if (assets != null) {
             info.downloadUrl = selectDownloadUrl(assets)
+            // 优先走 API 直链：api.github.com 可达而 github.com 下载域常超时；
+            // API 直链带 octet-stream 接受头会 302 到官方 CDN 并支持 Range 分片。
+            // 取不到 id 时才回退上面的 browser_download_url。cf/apilink-1122y
+            val assetId = extractAssetApkId(assets)
+            if (assetId > 0) {
+                info.downloadUrl = "https://api.github.com/repos/jiangshangwan/ClipboardFix/releases/assets/" + assetId
+                android.util.Log.d("ClipboardFix", "download via asset API id=" + assetId)
+            }
         }
         // Fallback: 如果 API 解析失败，用 tag 构造下载 URL（保留 v 前缀）
         if (info.downloadUrl.isEmpty()) {
@@ -486,6 +804,40 @@ class UpdateChecker(private val context: Context) {
         return if (urls.isEmpty()) "" else urls[0]
     }
 
+    /**
+     * 从 assets 中取首个非 debug 的 APK 的数字 id，用于拼 API 下载直链。
+     * 按最外层 {...} 分块解析，避开 uploader 子对象里的同名字段。
+     * api.github.com 在本机网络可达而 github.com 下载域常不可达，故优先走 API 直链。
+     */
+    private fun extractAssetApkId(assets: String): Long {
+        var depth = 0
+        var objStart = -1
+        var i = 0
+        while (i < assets.length) {
+            val c = assets[i]
+            if (c == '{') {
+                if (depth == 0) objStart = i
+                depth++
+            } else if (c == '}') {
+                depth--
+                if (depth == 0 && objStart >= 0) {
+                    val block = assets.substring(objStart, i + 1)
+                    val name = extractString(block, "name").lowercase(Locale.US)
+                    if (name.endsWith(".apk") && !name.contains("debug")) {
+                        val m = Pattern.compile("\"id\"\\s*:\\s*(\\d+)").matcher(block)
+                        if (m.find()) {
+                            val id = m.group(1)?.toLongOrNull() ?: 0L
+                            if (id > 0) return id
+                        }
+                    }
+                    objStart = -1
+                }
+            }
+            i++
+        }
+        return 0L
+    }
+
     /** 剥离 markdown 标记（AlertDialog 不支持渲染 markdown） */
     private fun stripMarkdown(text: String?): String {
         if (text == null) return ""
@@ -506,11 +858,17 @@ class UpdateChecker(private val context: Context) {
         var downloadUrl: String = ""
         var currentVersion: String = ""
         var hasUpdate: Boolean = false
+        /** asset 的 sha256 校验值（sha256:hex），分片拼接后校验完整性。 */
+        var digest: String = ""
     }
 
     companion object {
         private const val API_URL =
             "https://api.github.com/repos/jiangshangwan/ClipboardFix/releases/latest"
+        /** 分片并行下载参数：小于阈值用单连接，避免小文件多连接握手反而更慢。 */
+        private const val PARALLEL_CHUNKS = 4
+        private const val PARALLEL_MIN_BYTES = 1024L * 1024L
+        private const val PART_PREFIX = "clipboardfix_update.part"
         /** 缓存记录的结构标识，供解析结果复用时做一致性校验。 */
         private val RELEASE_SCHEMA = String(charArrayOf('u', 'c', '2', '6', 'r', '4'))
         /** 最近一次解析到的最新 Release（供主页点击版本号时复用更新弹窗）。 */

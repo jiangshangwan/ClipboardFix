@@ -29,6 +29,8 @@
     <string name="info_system">系统版本</string>
     <string name="info_clipboard_version">剪贴板版本</string>
     <string name="info_outdated">非最新</string>
+    <!-- 剪贴板版本标签独立维护，不随应用版本标签文案调整。cf/clipneed-1122u -->
+    <string name="info_clipboard_outdated">需更新</string>
     <string name="info_arch">系统架构</string>
     <string name="info_lsposed">LSPosed API</string>
     <string name="info_build">构建日期</string>
@@ -190,6 +192,9 @@
     <string name="uc_download_fail">下载失败：</string>
     <string name="uc_install_perm">请先开启「安装未知应用」权限</string>
     <string name="uc_download_done">下载完成，正在调起安装…</string>
+    <!-- 静默安装流程提示：root 安装与自动重载。cf/silent-1122z -->
+    <string name="uc_installing">正在静默安装…</string>
+    <string name="uc_install_ok_reloading">安装完成，正在重载进程…</string>
     <string name="uc_cancel_dl">取消下载</string>
 
     <!-- ============ 首次进入欢迎引导（三页） ============ -->

@@ -151,8 +151,11 @@ object BottomSheet {
     }
 
     /**
-     * 双按钮操作行（如更新提醒的「稍后 / 立即更新」）：左侧次要纯文字、右侧强调蓝填充，
+     * 双按钮操作行（如更新提醒的「稍后 / 立即更新」）：左侧次要描边填充、右侧强调蓝填充，
      * 等宽并排；点击后均自动关闭弹卡。leftAction 可为 null（仅关闭）。
+     * 次要按钮需有可辨识的按钮轮廓，纯文字在深浅两色弹卡上都不像按钮。cf/twobtn-1122v
+     * 必须先关闭本卡再执行动作：动作若再弹新卡（如下载进度），先弹后关会把新卡误关、
+     * 栈错位，表现为旧卡残留、取消键关错层。cf/orderfix-1122x
      */
     @JvmStatic
     fun buildTwoButtonRow(activity: Activity,
@@ -166,17 +169,18 @@ object BottomSheet {
         val padV = Math.round(14 * density)
         val gap = Math.round(8 * density)
 
-        // 左：次要纯文字按钮
+        // 左：次要描边按钮
         val left = TextView(activity)
         left.text = leftText
-        left.setTextColor(activity.getColor(R.color.text_tertiary))
+        left.setTextColor(activity.getColor(R.color.text_secondary))
         left.textSize = 16f
         left.gravity = Gravity.CENTER
         left.setPadding(0, padV, 0, padV)
+        left.setBackgroundResource(R.drawable.btn_secondary_bg)
         val leftLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         leftLp.setMargins(0, 0, gap, 0)
         left.layoutParams = leftLp
-        left.setOnClickListener { leftAction?.run(); dismissTop() }
+        left.setOnClickListener { dismissTop(); leftAction?.run() }
 
         // 右：强调蓝填充按钮
         val right = TextView(activity)
@@ -189,7 +193,7 @@ object BottomSheet {
         val rightLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         rightLp.setMargins(gap, 0, 0, 0)
         right.layoutParams = rightLp
-        right.setOnClickListener { rightAction?.run(); dismissTop() }
+        right.setOnClickListener { dismissTop(); rightAction?.run() }
 
         row.addView(left)
         row.addView(right)

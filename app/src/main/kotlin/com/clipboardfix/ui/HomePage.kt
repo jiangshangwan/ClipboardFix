@@ -54,7 +54,7 @@ private val StatusBgDisabledLight = androidx.compose.ui.graphics.Color(0xFFFFE5E
 private val StatusBgEnabledDark = androidx.compose.ui.graphics.Color(0xFF16321F)
 private val StatusBgDisabledDark = androidx.compose.ui.graphics.Color(0xFF35191A)
 
-/** 剪贴板版本低于此值时显示「非最新」标识并可点击跳转 QQ 群。 */
+/** 剪贴板版本低于此值时显示「需更新」标识并可点击跳转 QQ 群。cf/clipbadge-1122u */
 private const val MIN_PHRASE_VERSION = "5.7.8"
 private const val QQ_GROUP_URL = "https://qun.qq.com/universal-share/share?ac=1&authKey=D6%2Bsr8ESnWMpidmOM9sPD%2B5C3rEgsv0fJzrW%2BxckjZsKXHyqa6CUZN23Pxh4Qcrk&busi_data=eyJncm91cENvZGUiOiIxMTI0MTgwNjM1IiwidG9rZW4iOiJ6bFVRTHlxbWZ2aVF4dm9TbzFydnVWSlJNcXlhZnp5OXNwVU9NWWpCMS9EYS9DNUhOYUdnN3AwaVNUZnVHakNiIiwidWluIjoiOTAzNzU1MzQ1In0%3D&data=KKf7DI6zD10IEIYHGyj5J84Kbi-Fq8wH1n1m0yE0MHq4Ij_Koe2YsfBVzWAae7Njw5FAllnZpy0gwA499nT1Lg&svctype=4&tempid=h5_group_info"
 
@@ -279,7 +279,7 @@ private fun InfoRow(title: String, value: String, topPad: Dp = 12.dp, bottomPad:
     }
 }
 
-/** 剪贴板版本行：版本号低于 5.7.8 时后面显示「非最新」小标签，整行可点击跳转 QQ 群；否则无标签、不可点击。 */
+/** 剪贴板版本行：版本号低于 5.7.8 时后面显示「需更新」小标签，整行可点击跳转 QQ 群；否则无标签、不可点击。cf/clipbadge2-1122u */
 @Composable
 private fun ClipboardVersionRow(version: String) {
     val outdated = isVersionOutdated(version)
@@ -299,7 +299,7 @@ private fun ClipboardVersionRow(version: String) {
             Text(text = version, fontSize = 15.sp, color = colors.onSurfaceVariantSummary)
             if (outdated) {
                 Spacer(Modifier.width(6.dp))
-                RootBadge(text = stringResource(R.string.info_outdated), accent = StatusOrange)
+                RootBadge(text = stringResource(R.string.info_clipboard_outdated), accent = StatusOrange)
             }
         }
     }

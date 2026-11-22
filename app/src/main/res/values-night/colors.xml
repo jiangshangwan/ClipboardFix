@@ -41,6 +41,10 @@
     <color name="about_title_1">#E8E0FF</color>
     <color name="about_title_2">#9FC0FF</color>
 
+    <!-- 弹卡次要按钮：深底描边，与强调按钮同为可见按钮但保持主次。cf/secbtn-night-1122v -->
+    <color name="btn_secondary_fill">#3A3A40</color>
+    <color name="btn_secondary_stroke">#55555C</color>
+
     <!-- 功能页开关：轨道开启蓝 / 关闭灰，滑块恒为纯白 -->
     <color name="switch_track_on">#4078EF</color>
     <color name="switch_track_off">#4C4C52</color>

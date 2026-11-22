@@ -29,6 +29,8 @@
     <string name="info_system">System Version</string>
     <string name="info_clipboard_version">Clipboard Version</string>
     <string name="info_outdated">Outdated</string>
+    <!-- Clipboard-only version badge kept independent from the app badge. cf/clipneed-en-1122u -->
+    <string name="info_clipboard_outdated">Update available</string>
     <string name="info_arch">Architecture</string>
     <string name="info_lsposed">LSPosed API</string>
     <string name="info_build">Build Date</string>
@@ -190,6 +192,9 @@
     <string name="uc_download_fail">Download failed: </string>
     <string name="uc_install_perm">Please enable \"Install unknown apps\" permission</string>
     <string name="uc_download_done">Download complete, launching installer…</string>
+    <!-- Silent install flow prompts: root install and auto reload. cf/silent-en-1122z -->
+    <string name="uc_installing">Installing silently…</string>
+    <string name="uc_install_ok_reloading">Installed, reloading processes…</string>
     <string name="uc_cancel_dl">Cancel Download</string>
 
     <!-- ============ First-run welcome (3 pages) ============ -->
