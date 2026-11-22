@@ -1043,12 +1043,17 @@ object CrossDeviceClipboardHook {
         val present = HashSet<String>()
         for (e in list) {
             val k = entryKey(e)
-            if (k != null) present.add(k)
+            if (k != null) {
+                present.add(k)
+                // 与补回/去重同口径：归一化键一并计入，避免同图双副本被当缺失误判。cf/normcnt-1122p
+                normalizeKey(k)?.let { present.add(it) }
+            }
         }
         var n = 0
         for (c in cache) {
             val k = entryKey(c)
-            if (k == null || k !in present) n++
+            val nk = if (k == null) null else normalizeKey(k)
+            if (k == null || (k !in present && (nk == null || nk !in present))) n++
         }
         return n
     }
@@ -1116,6 +1121,10 @@ object CrossDeviceClipboardHook {
             val k = entryKey(e)
             if (k != null) {
                 present.add(k)
+                // 同一张图的本地副本（deviceId 空）与云端副本（deviceId 非空）原始键不同，
+                // 但去重层按归一化键只保留一条；补回层也纳入归一化键判存在，避免刚被去重
+                // 删除的云端副本判为缺失再插回头部、与去重交替造成列表反复增删抖动。cf/normkey-1122p
+                normalizeKey(k)?.let { present.add(it) }
             }
         }
         var added = 0
@@ -1147,7 +1156,9 @@ object CrossDeviceClipboardHook {
                     log("wipe block lifted: $k (new copy t=$t > wiped t=$wt)")
                 }
             }
-            if (k == null || k !in present) {
+            // 判存在同样对齐去重口径：原始键或归一化键任一命中即视为已在列表。cf/normkey2-1122p
+            val nk = if (k == null) null else normalizeKey(k)
+            if (k == null || (k !in present && (nk == null || nk !in present))) {
                 // v4.16：云端条目直出（未经 buildRecyclerViewDisplayList）可能未定型或
                 // 类型被误判成文本，补进列表也渲染不出图片行。这里按「重开面板」那条的
                 // 处理流程归一类型（type==0 走原生定型 + 修正图文误判），保证实时合入
@@ -1158,6 +1169,8 @@ object CrossDeviceClipboardHook {
                 log("prepend row " + diagEntry(c) + " blocked=" + (if (wipedTimeOf(k) != null) "Y" else "N"))
                 if (k != null) {
                     present.add(k)
+                    // 补回后同样登记归一化形态，防缓存内同图双副本陆续补入。cf/normadd-1122p
+                    normalizeKey(k)?.let { present.add(it) }
                 }
             }
         }
