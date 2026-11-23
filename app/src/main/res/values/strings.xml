@@ -75,6 +75,8 @@
     <string name="toast_enable_first">请启用全面屏键盘优化后尝试</string>
     <string name="toast_module_inactive">请先启用模块后重试</string>
     <string name="toast_enabled_reboot">已启用，请重启设备</string>
+    <!-- 开启前置校验：系统键盘模式未就绪时的引导文案。cf/multikb-zh-1123d -->
+    <string name="toast_need_multi_keyboard">请先在系统「全面屏键盘优化」中选择【多功能键盘】</string>
 
     <!-- 设置页 -->
     <string name="settings_title">设置</string>
@@ -211,6 +213,9 @@
     <string name="prep_android">Android 版本</string>
     <string name="prep_activate">在 LSPosed 管理器中激活模块</string>
     <string name="prep_root">给予模块超级用户权限</string>
+    <!-- 准备工作自检：多功能键盘前置项，与功能页开关同口径。cf/mkprep-zh-1123l -->
+    <string name="prep_multi_keyboard">开启多功能键盘</string>
+    <string name="prep_multi_keyboard_sub">请在系统设置全面屏键盘优化内开启</string>
     <string name="prep_gesture_line">关闭手势提示线(建议)</string>
     <string name="prep_gesture_line_sub">避免输入法键盘被异常抬高、底部留白</string>
     <string name="prep_language">语言</string>

@@ -75,6 +75,8 @@
     <string name="toast_enable_first">Please enable Fullscreen Keyboard Optimization first</string>
     <string name="toast_module_inactive">Enable the module first</string>
     <string name="toast_enabled_reboot">Enabled, please restart device</string>
+    <!-- Prerequisite hint shown when the system keyboard mode is not ready. cf/multikb-en-1123d -->
+    <string name="toast_need_multi_keyboard">Please select [Multi-function Keyboard] in system Fullscreen Keyboard Optimization first</string>
 
     <!-- Settings page -->
     <string name="settings_title">Settings</string>
@@ -211,6 +213,9 @@
     <string name="prep_android">Android version</string>
     <string name="prep_activate">Enable the module in LSPosed</string>
     <string name="prep_root">Grant superuser permission</string>
+    <!-- Prep checklist: multi-function keyboard prerequisite, aligned with the feature toggle. cf/mkprep-en-1123l -->
+    <string name="prep_multi_keyboard">Enable Multi-function Keyboard</string>
+    <string name="prep_multi_keyboard_sub">Enable it under system Fullscreen Keyboard Optimization</string>
     <string name="prep_gesture_line">Disable gesture hint bar (Recommended)</string>
     <string name="prep_gesture_line_sub">Prevents the IME keyboard from being raised with a bottom gap</string>
     <string name="prep_language">Language</string>

@@ -5,6 +5,8 @@
  */
 package com.clipboardfix.ui
 
+import android.content.Context
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -20,10 +22,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,6 +47,15 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+
+/**
+ * 读取系统「全面屏键盘优化」当前是否选中【多功能键盘】。
+ * 系统键 enable_miui_ime_bottom_view=1 表示启用输入法底部功能区（即多功能键盘），
+ * 0 或缺省表示默认键盘；读取异常一律按未选中处理，避免误放行。cf/mkbgate-1123a
+ */
+private fun isMultiFunctionKeyboardSelected(context: Context): Boolean = runCatching {
+    Settings.Secure.getInt(context.contentResolver, "enable_miui_ime_bottom_view", 0) == 1
+}.getOrDefault(false)
 
 @Composable
 fun FeaturePage(
@@ -63,6 +80,23 @@ fun FeaturePage(
     onToggleClipboardGroupRemember: (Boolean) -> Unit,
 ) {
     val colors = MiuixTheme.colorScheme
+    // 系统设置读取入口：主开关开启前核验键盘模式。cf/mkbgate-1123e
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // 系统键盘模式记忆：默认键盘下主开关强制显示关闭且不可开启；切回多功能键盘后自动恢复。
+    // 每次页面回到前台重新读取——用户去系统设置切换后返回即可即时反映。cf/mkbgate-1123f
+    var multiKeyboardOk by remember { mutableStateOf(isMultiFunctionKeyboardSelected(context)) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                multiKeyboardOk = isMultiFunctionKeyboardSelected(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // 生效开关值：持久开关与系统键盘模式取交集，仅影响本页显示，不改写持久化配置。cf/mkbgate-1123g
+    val imeUnlockVisible = swImeUnlock && multiKeyboardOk
     // 玻璃折射源：整页内容登记进 layerBackdrop，供 Snackbar 的柔光玻璃面板实时折射
     val snackbarBackdrop = rememberLayerBackdrop()
     // 页面底色预取（顶栏磨砂叠加用）+ Haze 状态：滚动内容作模糊源，顶栏条消费
@@ -81,12 +115,18 @@ fun FeaturePage(
     val strEnableFirst = stringResource(R.string.toast_enable_first)
     val strModuleInactive = stringResource(R.string.toast_module_inactive)
     val strEnabledReboot = stringResource(R.string.toast_enabled_reboot)
+    val strNeedMultiKeyboard = stringResource(R.string.toast_need_multi_keyboard)
 
-    // 两级只读：模块未激活时整页置灰；主开关未开启时子项置灰。提示按实际阻塞原因分流（fs-207u）
+    // 两级只读：模块未激活时整页置灰；主开关未开启（含系统非多功能键盘）时子项置灰。
+    // 提示按实际阻塞原因分流：系统键盘模式不符时给出专门引导，否则沿用通用文案。cf/mkbgate-1123h
     val switchesEnabled = moduleEnabled
-    val subSwitchesEnabled = moduleEnabled && swImeUnlock
+    val subSwitchesEnabled = moduleEnabled && imeUnlockVisible
     val disabledHint: () -> Unit = {
-        showSnack(if (moduleEnabled) strEnableFirst else strModuleInactive)
+        if (!multiKeyboardOk) {
+            showSnack(strNeedMultiKeyboard)
+        } else {
+            showSnack(if (moduleEnabled) strEnableFirst else strModuleInactive)
+        }
     }
 
     // 柔光玻璃弹卡（关闭主开关二次确认）请求槽位：与 Snackbar 同风格，由本页渲染
@@ -96,11 +136,17 @@ fun FeaturePage(
         onDispose { GlassSheetBridge.unbind(sheetReq) }
     }
 
-    // 主开关：开启即提示重启生效；关闭需二次确认（不立即翻转，确认后才落库）
+    // 主开关：开启前须系统已选多功能键盘（否则功能区不存在，开了也无意义），通过即提示重启生效；
+    // 关闭需二次确认（不立即翻转，确认后才落库）。cf/mkbgate-1123b
     val handleImeUnlock: (Boolean) -> Unit = { checked ->
         if (checked) {
-            onToggleImeUnlock(true)
-            showSnack(strEnabledReboot)
+            // 系统停在默认键盘模式下无底部功能区可接入，拦截开启并提示。cf/mkbgate-1123c
+            if (!multiKeyboardOk) {
+                showSnack(strNeedMultiKeyboard)
+            } else {
+                onToggleImeUnlock(true)
+                showSnack(strEnabledReboot)
+            }
         } else {
             GlassSheetBridge.show(
                 GlassSheetRequest(
@@ -142,14 +188,14 @@ fun FeaturePage(
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     SwitchPreference(
-                        checked = swImeUnlock,
+                        checked = imeUnlockVisible,
                         onCheckedChange = handleImeUnlock,
                         title = stringResource(R.string.sw_ime_unlock),
                         summary = stringResource(R.string.sw_ime_unlock_sub),
                         enabled = switchesEnabled,
                     )
                     FeatureSwitch(
-                        checked = swImeUnlock && swUnlimitCount,
+                        checked = imeUnlockVisible &&swUnlimitCount,
                         onCheckedChange = onToggleUnlimitCount,
                         title = stringResource(R.string.sw_unlimit),
                         summary = stringResource(R.string.sw_unlimit_sub),
@@ -157,7 +203,7 @@ fun FeaturePage(
                         onClickWhenDisabled = disabledHint,
                     )
                     FeatureSwitch(
-                        checked = swImeUnlock && swUnlimitTime,
+                        checked = imeUnlockVisible &&swUnlimitTime,
                         onCheckedChange = onToggleUnlimitTime,
                         title = stringResource(R.string.sw_unlimit_time),
                         summary = stringResource(R.string.sw_unlimit_time_sub),
@@ -165,7 +211,7 @@ fun FeaturePage(
                         onClickWhenDisabled = disabledHint,
                     )
                     FeatureSwitch(
-                        checked = swImeUnlock && swPanelColor,
+                        checked = imeUnlockVisible &&swPanelColor,
                         onCheckedChange = onTogglePanelColor,
                         title = stringResource(R.string.sw_panel),
                         summary = stringResource(R.string.sw_panel_sub),
@@ -173,7 +219,7 @@ fun FeaturePage(
                         onClickWhenDisabled = disabledHint,
                     )
                     // 连续磨砂背景：仅当「优化剪贴板面板背景」打开时才显示（子选项），默认关闭
-                    if (swImeUnlock && swPanelColor) {
+                    if (imeUnlockVisible && swPanelColor) {
                         FeatureSwitch(
                             checked = swPanelMaterial,
                             onCheckedChange = onTogglePanelMaterial,
@@ -184,7 +230,7 @@ fun FeaturePage(
                         )
                     }
                     FeatureSwitch(
-                        checked = swImeUnlock && swClipboardPin,
+                        checked = imeUnlockVisible &&swClipboardPin,
                         onCheckedChange = onToggleClipboardPin,
                         title = stringResource(R.string.sw_clipboard_pin),
                         summary = stringResource(R.string.sw_clipboard_pin_sub),
@@ -192,7 +238,7 @@ fun FeaturePage(
                         onClickWhenDisabled = disabledHint,
                     )
                     FeatureSwitch(
-                        checked = swImeUnlock && swSinkLayout,
+                        checked = imeUnlockVisible &&swSinkLayout,
                         onCheckedChange = onToggleSinkLayout,
                         title = stringResource(R.string.sw_sink_layout),
                         summary = stringResource(R.string.sw_sink_layout_sub),
@@ -200,7 +246,7 @@ fun FeaturePage(
                         onClickWhenDisabled = disabledHint,
                     )
                     FeatureSwitch(
-                        checked = swImeUnlock && swClipboardGroup,
+                        checked = imeUnlockVisible &&swClipboardGroup,
                         onCheckedChange = onToggleClipboardGroup,
                         title = stringResource(R.string.sw_clipboard_group),
                         summary = stringResource(R.string.sw_clipboard_group_sub),
@@ -208,7 +254,7 @@ fun FeaturePage(
                         onClickWhenDisabled = disabledHint,
                     )
                     // 【记忆剪贴板分组位置】：仅当「开启剪贴板分组功能」打开时才显示（子选项），默认关闭
-                    if (swImeUnlock && swClipboardGroup) {
+                    if (imeUnlockVisible && swClipboardGroup) {
                         FeatureSwitch(
                             checked = swClipboardGroupRemember,
                             onCheckedChange = onToggleClipboardGroupRemember,
@@ -249,9 +295,9 @@ fun FeaturePage(
 
 /**
  * 功能开关行：模块未激活或主开关关闭时，子开关被强制显示为关闭
- * （checked=swImeUnlock && 实际值）、置灰且不可拨动；此时点击整行触发
+ * （checked=imeUnlockVisible && 实际值）、置灰且不可拨动；此时点击整行触发
  * [onClickWhenDisabled]。主开关重新开启后，子开关恢复各自保存的真实开关状态
- * （非破坏性，仅视觉跟随）。(fs-207u)
+ * （非破坏性，仅视觉跟随）。(fs-207u / cf/mkbgate-1123i)
  */
 @Composable
 private fun FeatureSwitch(

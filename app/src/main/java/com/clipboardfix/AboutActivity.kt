@@ -109,10 +109,14 @@ class AboutActivity : ComponentActivity() {
     val uiWelcomeRoot: MutableState<Boolean> = stateOf(false)
     /** 手势提示线（小白条）是否已关闭。 */
     val uiWelcomeGestureLineHidden: MutableState<Boolean> = stateOf(false)
+    /** 系统是否选中多功能键盘（全面屏键盘优化）。cf/mkprep-live-1123p */
+    val uiWelcomeMultiKeyboard: MutableState<Boolean> = stateOf(false)
     private var welcomeOverlay: ComposeView? = null
     private var welcomeBackCallback: OnBackPressedCallback? = null
     /** 实时监听手势提示线开关（引导展示期间注册，完成后注销）。 */
     private var gestureLineObserver: ContentObserver? = null
+    /** 实时监听系统键盘模式（引导展示期间注册，完成后注销）。cf/mkprep-live-1123q */
+    private var multiKeyboardObserver: ContentObserver? = null
     /** 引导展示期间的轻量轮询：实时重查「模块激活」状态。 */
     private var welcomeStatusPoller: Runnable? = null
 
@@ -989,6 +993,9 @@ class AboutActivity : ComponentActivity() {
         // 手势提示线状态：先读一次初值，并注册实时监听
         uiWelcomeGestureLineHidden.value = isGestureLineHidden()
         registerGestureLineObserver()
+        // 系统键盘模式：读初值并注册实时监听，系统设置里一改即刻反映。cf/mkprep-live-1123r
+        uiWelcomeMultiKeyboard.value = isMultiFunctionKeyboard()
+        registerMultiKeyboardObserver()
         // 启动模块激活状态的轻量轮询
         startWelcomeStatusPoller()
 
@@ -997,6 +1004,7 @@ class AboutActivity : ComponentActivity() {
             hyperOsVersion(),
             "Android " + Build.VERSION.RELEASE + " / API " + Build.VERSION.SDK_INT,
             uiStatusEnabled, uiWelcomeRoot, uiWelcomeGestureLineHidden,
+            uiWelcomeMultiKeyboard,
             AppConfig.getLangMode(this),
             IntAction { selectLanguage(it) },
             Runnable { finishWelcome() }
@@ -1025,6 +1033,7 @@ class AboutActivity : ComponentActivity() {
         e.apply()
         sWelcomePage = 0
         unregisterGestureLineObserver()
+        unregisterMultiKeyboardObserver()
         stopWelcomeStatusPoller()
 
         welcomeBackCallback?.isEnabled = false
@@ -1065,16 +1074,15 @@ class AboutActivity : ComponentActivity() {
 
     /**
      * 注册对手势提示线开关的实时监听（仅引导展示期间）。
+     * 不过滤回调 URI：系统对 settings 变更的回调形态各机型不一，统一重读实际值更可靠。
+     * cf/mkprep-live-1123x
      */
     private fun registerGestureLineObserver() {
         if (gestureLineObserver != null) return
         val obs = object : ContentObserver(mStatusHandler) {
             override fun onChange(selfChange: Boolean, uri: Uri?) {
                 super.onChange(selfChange, uri)
-                val seg = uri?.lastPathSegment
-                if (seg == null || seg == "hide_gesture_line") {
-                    uiWelcomeGestureLineHidden.value = isGestureLineHidden()
-                }
+                uiWelcomeGestureLineHidden.value = isGestureLineHidden()
             }
         }
         gestureLineObserver = obs
@@ -1089,14 +1097,51 @@ class AboutActivity : ComponentActivity() {
         gestureLineObserver = null
     }
 
+    /** 系统是否选中多功能键盘：enable_miui_ime_bottom_view=1。cf/mkprep-live-1123s */
+    private fun isMultiFunctionKeyboard(): Boolean {
+        return try {
+            Settings.Secure.getInt(contentResolver, "enable_miui_ime_bottom_view", 0) == 1
+        } catch (t: Throwable) {
+            false
+        }
+    }
+
+    /** 实时监听系统键盘模式（仅引导展示期间）；不筛回调 URI，统一重读实际值。cf/mkprep-live-1123y */
+    private fun registerMultiKeyboardObserver() {
+        if (multiKeyboardObserver != null) return
+        val obs = object : ContentObserver(mStatusHandler) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                super.onChange(selfChange, uri)
+                uiWelcomeMultiKeyboard.value = isMultiFunctionKeyboard()
+            }
+        }
+        multiKeyboardObserver = obs
+        contentResolver.registerContentObserver(
+            Settings.Secure.CONTENT_URI, true, obs
+        )
+    }
+
+    /** 注销系统键盘模式实时监听。cf/mkprep-live-1123u */
+    private fun unregisterMultiKeyboardObserver() {
+        multiKeyboardObserver?.let { contentResolver.unregisterContentObserver(it) }
+        multiKeyboardObserver = null
+    }
+
     /**
-     * 启动引导期间的轻量状态轮询：每 WELCOME_POLL_MS 重新向 libxposed 服务查询模块激活。
+     * 启动引导期间的状态轮询：重查模块激活 + 系统键盘模式 + 手势提示线。
+     * 系统设置的 ContentObserver 在 HyperOS 上回调被节流（实测 8~10s），故以短间隔轮询为准，
+     * 保证切完设置最多一个周期内反映到清单。cf/mkprep-live-1123z
      */
     private fun startWelcomeStatusPoller() {
         stopWelcomeStatusPoller()
+        var tick = 0
         val r = object : Runnable {
             override fun run() {
-                refreshModuleStatus()
+                // 键盘模式/手势线每 tick 都读；模块激活探测较重，每 MODULE_PROBE_EVERY 次读一次。
+                uiWelcomeMultiKeyboard.value = isMultiFunctionKeyboard()
+                uiWelcomeGestureLineHidden.value = isGestureLineHidden()
+                if (tick % MODULE_PROBE_EVERY == 0) refreshModuleStatus()
+                tick++
                 // 仅在引导仍展示时继续下一轮；覆盖层移除后自然停摆
                 if (welcomeOverlay != null) {
                     mStatusHandler.postDelayed(this, WELCOME_POLL_MS)
@@ -1290,6 +1335,7 @@ class AboutActivity : ComponentActivity() {
         mStatusHandler.removeCallbacksAndMessages(null)
         stopRootPoller()
         unregisterGestureLineObserver()
+        unregisterMultiKeyboardObserver()
         stopWelcomeStatusPoller()
         super.onDestroy()
     }
@@ -1410,7 +1456,10 @@ class AboutActivity : ComponentActivity() {
         /** 缩放起点：0.985 → 1。 */
         private const val PAGE_ANIM_SCALE = 0.985f
 
-        private const val WELCOME_POLL_MS = 2000L
+        // 引导期状态轮询间隔：缩短以保证系统设置切换后清单即时反映。cf/mkprep-live-1123z2
+        private const val WELCOME_POLL_MS = 600L
+        // 模块激活探测较重（跨进程 binder + 线程），按 tick 降频，约 2.4s 一次。cf/mkprep-live-1123z3
+        private const val MODULE_PROBE_EVERY = 4
 
         /** 引导当前页下标（0/1/2）。跨 Activity 重建保留。 */
         private var sWelcomePage = 0

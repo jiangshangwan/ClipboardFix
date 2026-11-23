@@ -84,7 +84,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 首次进入的欢迎引导（四页）：
  *
  * 1. 欢迎页 —— 品牌 + 一句话定位（HyperOS 高亮）+ 圆形「下一步」按钮；
- * 2. 模块准备工作 —— 环境自检清单（HyperOS / Android / LSPosed 激活 / 超级用户 / 关闭手势提示线(建议)）+ 语言；
+ * 2. 模块准备工作 —— 环境自检清单（HyperOS / Android / LSPosed 激活 / 超级用户 / 开启多功能键盘 / 关闭手势提示线(建议)）+ 语言；
  * 3. 协议与声明 —— 用户协议 / 免责声明 / 隐私政策 + 动态验证码闸门 + 同意勾选；
  * 4. 设置完成 —— 黑底彩带 + 品牌名（蓝）+「开始使用」按钮收尾。
  *
@@ -99,6 +99,7 @@ fun WelcomeFlow(
     moduleActive: Boolean,
     hasRoot: Boolean,
     gestureLineHidden: Boolean,
+    multiKeyboard: Boolean,
     langMode: Int,
     onLanguageSelect: (Int) -> Unit,
     onFinish: () -> Unit,
@@ -161,6 +162,7 @@ fun WelcomeFlow(
                         moduleActive = moduleActive,
                         hasRoot = hasRoot,
                         gestureLineHidden = gestureLineHidden,
+                        multiKeyboard = multiKeyboard,
                         langMode = langMode,
                         onLanguageSelect = onLanguageSelect,
                         onBack = { page.value = 0 },
@@ -295,6 +297,7 @@ private fun PrepPage(
     moduleActive: Boolean,
     hasRoot: Boolean,
     gestureLineHidden: Boolean,
+    multiKeyboard: Boolean,
     langMode: Int,
     onLanguageSelect: (Int) -> Unit,
     onBack: () -> Unit,
@@ -351,6 +354,14 @@ private fun PrepPage(
                         title = stringResource(R.string.prep_root),
                         summary = null,
                         ok = hasRoot,
+                        accent = accent,
+                    )
+                    // 多功能键盘前置自检：状态由 Activity 侧 ContentObserver 实时回填，
+                    // 与功能页开关同口径。cf/mkprep-live-1123v
+                    CheckRow(
+                        title = stringResource(R.string.prep_multi_keyboard),
+                        summary = stringResource(R.string.prep_multi_keyboard_sub),
+                        ok = multiKeyboard,
                         accent = accent,
                     )
                     // 读 global 设置 hide_gesture_line（1=已隐藏）判断小白条是否已关闭；读不到按未关闭处理
@@ -523,10 +534,12 @@ private data class ConfettiPiece(
 
 @Composable
 private fun DonePage(playKey: Int, onFinish: () -> Unit) {
+    // 背景与文字跟随主题深浅色，不再固定深色。cf/donetheme-1123w
+    val colors = MiuixTheme.colorScheme
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(pageBackgroundColor())
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
@@ -541,7 +554,7 @@ private fun DonePage(playKey: Int, onFinish: () -> Unit) {
                 text = stringResource(R.string.welcome_done_title),
                 fontSize = 36.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = colors.onSurface,
                 textAlign = TextAlign.Start,
             )
             Spacer(Modifier.height(54.dp))
@@ -549,7 +562,7 @@ private fun DonePage(playKey: Int, onFinish: () -> Unit) {
                 text = stringResource(R.string.welcome_done_welcome),
                 fontSize = 36.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = colors.onSurface,
                 textAlign = TextAlign.Start,
             )
             Text(
