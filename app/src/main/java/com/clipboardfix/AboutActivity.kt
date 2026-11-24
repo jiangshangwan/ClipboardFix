@@ -54,6 +54,7 @@ import com.clipboardfix.ui.installWelcome
 import com.clipboardfix.ui.showSnack
 import com.clipboardfix.ui.showSnackLong
 import com.clipboardfix.ui.stateOf
+import com.clipboardfix.ui.WelcomeNavigationBridge // cf/welcome-native-backbridge-1125d
 import io.github.libxposed.service.XposedService
 import io.github.libxposed.service.XposedServiceHelper
 import java.io.DataOutputStream
@@ -152,6 +153,8 @@ class AboutActivity : ComponentActivity() {
     private var moduleStatusPoller: Runnable? = null
     /** 上次离开前台的时刻；回到前台时据此判断是否需要重新握手。 */
     private var mLastPauseAt = 0L
+    /** 进入本模块内部二级页标记：返回时跳过硬重握手，避免重建 Activity 造成白屏。cf/legalhub-reentry-1124u */
+    private var mInternalSubPage = false
     /** 延迟判定「未启用」的回调引用，避免误清同队列里的其它轮询。 */
     private var statusFallback: Runnable? = null
     /** 跨进程探测串行化，避免框架无响应时探测线程堆积。 */
@@ -234,8 +237,10 @@ class AboutActivity : ComponentActivity() {
             Runnable { openUrl("https://github.com/jiangshangwan/ClipboardFix") },
             Runnable { showChangelog() },
             Runnable { showDonateSheet() },
-            Runnable { openUrl(TELEGRAM_URL) },
+            Runnable { openUrl(QQ_GROUP_URL) }, // cf/qqname-1124j
             Runnable { openLicenses() },
+            Runnable { openLegal() }, // cf/legalhub-call-1124n
+            Runnable { openUrl(TG_CHANNEL_URL) }, // cf/tgchan-1124h
             uiThemeMode, AppConfig.getLangMode(this), uiUpdateDisabled, uiSettingsIconMode,
             IntAction { selectTheme(it) },
             IntAction { selectLanguage(it) },
@@ -1010,9 +1015,11 @@ class AboutActivity : ComponentActivity() {
             Runnable { finishWelcome() }
         )
 
-        // 返回键：逐页回退，首页再按则退出
+        // 返回键：覆盖层优先消费，随后逐页回退，首页再按则退出。cf/welcome-native-backbridge-1125e
         val cb = object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                // 协议阅读器 / 验证码弹卡先响应系统返回。cf/welcome-native-backbridge-1125f
+                if (WelcomeNavigationBridge.consumeBack?.invoke() == true) return
                 val p = uiWelcomePage.value
                 if (p > 0) {
                     uiWelcomePage.value = p - 1
@@ -1278,9 +1285,23 @@ class AboutActivity : ComponentActivity() {
 
     // ---------------- 二级页面：开源许可证 ----------------
     private fun openLicenses() {
+        mInternalSubPage = true // cf/legalhub-reentry-1124w
         try {
             startActivity(Intent(this, LicensesActivity::class.java))
         } catch (e: Exception) {
+            mInternalSubPage = false
+            showSnack(getString(R.string.open_failed))
+        }
+    }
+
+    // ---------------- 二级页面：用户协议与声明 ----------------
+    // 关于页「协议与声明」入口，引导页勾选后可从此处重新查阅三份协议。cf/legalhub-open-1124p
+    private fun openLegal() {
+        mInternalSubPage = true // cf/legalhub-reentry-1124x
+        try {
+            startActivity(Intent(this, LegalActivity::class.java))
+        } catch (e: Exception) {
+            mInternalSubPage = false
             showSnack(getString(R.string.open_failed))
         }
     }
@@ -1292,7 +1313,10 @@ class AboutActivity : ComponentActivity() {
         // 旧进程里缓存的连接无法反映管理器刚做过的开关变更。
         val awayMs = if (mLastPauseAt > 0L) SystemClock.elapsedRealtime() - mLastPauseAt else 0L
         mLastPauseAt = 0L
-        if (shouldRehandshake(awayMs)) {
+        // 内部二级页往返期间框架配置未变，跳过重建式握手，避免返回瞬间白屏。cf/legalhub-reentry-1124v
+        val fromSubPage = mInternalSubPage
+        mInternalSubPage = false
+        if (!fromSubPage && shouldRehandshake(awayMs)) {
             rehandshakeModuleStatus()
             return
         }
@@ -1445,8 +1469,11 @@ class AboutActivity : ComponentActivity() {
         private const val KEY_WELCOME_DONE = "welcome_done"
         /** 状态卡「标识」显隐；默认显示。 */
         private const val KEY_BADGES_VISIBLE = "status_badges_visible"
-        private const val TELEGRAM_URL =
+        /** 社群讨论的 QQ 群链接；常量名与回调名按实际用途校正。cf/qqname-1124i */
+        private const val QQ_GROUP_URL =
             "https://qun.qq.com/universal-share/share?ac=1&authKey=n9wFDXy4i20n15nDlUwLTGqI8AnQ%2BiyzC2XPQxpeOs2MxMYDsqRw0MNRPXYvx9WS&busi_data=eyJncm91cENvZGUiOiIxMTI0MTgwNjM1IiwidG9rZW4iOiJTSVhYbUhsYUNnWVYvb2wzVUlRb0J6SDRQMTNCdUxBMUNocUMzeU9taFpvakJRRHhZNDFBeDJIdFVQeTNZVnRmIiwidWluIjoiOTAzNzU1MzQ1In0%3D&data=qWsg9TN3ydud1Rb7MCThG73KtRkUY7UumTdXIsBBKS2W9kcpZ-W8kSgWfZFjkdqqGSxXGkUmeL9Dmb5VYsXf3A&svctype=4&tempid=h5_group_info"
+        /** 社群讨论新增的 Telegram 频道。cf/tgchan-1124g */
+        private const val TG_CHANNEL_URL = "https://t.me/HyperClipFix"
 
         // ---- 页面切换动画参数（淡入淡出 + 方向性横移 + 轻微缩放）----
         /** 新页入场时长（略长，收尾有减速，观感更「软」）。 */

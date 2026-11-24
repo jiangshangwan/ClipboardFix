@@ -107,9 +107,16 @@
     <string name="changelog">Changelog</string>
     <string name="sec_community">Community</string>
     <string name="qq">Tencent QQ</string>
+    <!-- Telegram channel entry in community section. cf/tgchan-1124b -->
+    <string name="tg_channel">Telegram</string>
     <string name="sec_check_update">Check Update</string>
     <string name="check_update">Check Update</string>
     <string name="check_update_sub">Check GitHub for new versions</string>
+    <!-- About-page legal entry section and reader title. cf/legalhub-1124b -->
+    <string name="sec_legal">Agreements &amp; Notices</string>
+    <string name="legal_entry">User Agreement</string>
+    <string name="legal_page_title">Agreements &amp; Notices</string>
+    <string name="legal_intro">Read the full user agreement, disclaimer and privacy policy here.</string>
     <string name="sec_thanks">Project References</string>
     <string name="ref_solution">Open Source Licenses</string>
     <string name="author_name1">江上晚</string>
@@ -202,7 +209,8 @@
     <!-- ============ First-run welcome (3 pages) ============ -->
     <string name="welcome_title">Welcome to</string>
     <string name="welcome_brand">HyperClipFix</string>
-    <string name="welcome_desc">Fixes the problem that third-party\ninput methods cannot use the\nsystem clipboard on HyperOS</string>
+    <!-- Welcome body copy follows the revised editorial layout. cf/eddesc-en-1124j -->
+    <string name="welcome_desc">Unlocking third-party input methods on\nHyperOS: clipboard access and fullscreen\nkeyboard optimization, plus more.</string>
     <string name="welcome_done_title">Setup Complete!</string>
     <string name="welcome_done_welcome">Welcome to</string>
     <string name="welcome_start">Get Started</string>
@@ -237,4 +245,50 @@
     <string name="agreement_code_confirm">Confirm</string>
     <string name="agreement_code_cancel">Cancel</string>
     <string name="agreement_read">I have read and agree to the User Agreement, Disclaimer and Privacy Policy. I understand this module only supports HyperOS 3.0+ and accept the risk of crashes or boot failures on unsupported systems.</string>
+
+    <!-- Native card welcome flow copy. cf/welcome-native-en-1124a -->
+    <string name="wn_subtitle">Make third-party keyboards work with copy, paste and clipboard sync on HyperOS.</string>
+    <string name="wn_section_features">KEY FEATURES</string>
+    <string name="wn_feature_clipboard">Clipboard fixes</string>
+    <string name="wn_feature_clipboard_sub">Copy, paste, grouping and item limits for third-party keyboards</string>
+    <string name="wn_feature_sync">Cross-device sync</string>
+    <string name="wn_feature_sync_sub">Clipboard content shared between phone and computer</string>
+    <string name="wn_feature_fullscreen">Fullscreen keyboard optimization</string>
+    <string name="wn_feature_fullscreen_sub">Immersive layout and materials in multi-function keyboard mode</string>
+    <string name="wn_privacy_note">Next we will check the environment and show the notices. Clipboard content is never uploaded.</string>
+    <string name="wn_begin">Get started</string>
+    <string name="wn_prep_subtitle">Complete these checks for stable clipboard behavior.</string>
+    <string name="wn_section_checks">ENVIRONMENT</string>
+    <string name="wn_check_done">Done</string>
+    <string name="wn_check_pending">Pending</string>
+    <string name="wn_check_verified">Verified</string>
+    <string name="wn_check_verify">Unverified</string>
+    <string name="wn_activate_title">Module enabled</string>
+    <string name="wn_activate_sub">Select HyperClipFix in LSPosed</string>
+    <string name="wn_root_title">Root access</string>
+    <string name="wn_root_sub">For silent updates and process reload</string>
+    <string name="wn_prep_note">If an item is pending, complete it in system settings first. This page refreshes when you return.</string>
+    <string name="wn_back">Back</string>
+    <string name="wn_agreement_subtitle">Review permissions and feature boundaries before continuing.</string>
+    <string name="wn_section_notice">NOTICES</string>
+    <string name="wn_notice_1">Clipboard content stays on this device and authorized system sync channels. The module does not upload it.</string>
+    <string name="wn_notice_2">Silent install, process reload and some setting reads need root. Without root the module falls back to the system installer or prompts for manual action.</string>
+    <string name="wn_notice_3">After toggling module features you may need to reopen the module and reload processes.</string>
+    <string name="wn_license">Open-source licenses</string>
+    <string name="wn_license_sub">View dependency license information</string>
+    <string name="wn_agree_simple">I have read and understand the notices above</string>
+    <!-- Checkbox sub-label now points to the About-page legal entry. cf/legalhub-redirect-1124s -->
+    <string name="wn_agree_sub">Available again on the About page</string>
+    <string name="wn_agree_continue">Agree and continue</string>
+    <string name="wn_done_subtitle">Clipboard features are ready to use.</string>
+    <string name="wn_section_status">CURRENT STATUS</string>
+    <string name="wn_status_clipboard_sub">Copy and paste for third-party keyboards</string>
+    <string name="wn_status_clipboard">Enabled</string>
+    <string name="wn_status_fullscreen_sub">Multi-function keyboard mode</string>
+    <string name="wn_status_fullscreen">Ready</string>
+    <string name="wn_status_sync_sub">Clipboard content under the same account</string>
+    <string name="wn_status_sync">Available</string>
+    <string name="wn_status_gesture_sub">Hidden to avoid a bottom gap in the clipboard panel</string>
+    <string name="wn_status_gesture">Hidden</string>
+    <string name="wn_enter">Open module</string>
 </resources>

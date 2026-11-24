@@ -118,9 +118,11 @@ fun AboutPage(
     onOpenGithub: () -> Unit,
     onReleases: () -> Unit,
     onDonate: () -> Unit,
-    onOpenTelegram: () -> Unit,
+    onOpenQQGroup: () -> Unit, // cf/qqname-1124k
     onUpstream: () -> Unit,
     onCheckUpdate: () -> Unit,
+    onLegal: () -> Unit, // cf/legalhub-page-1124i
+    onOpenTgChannel: () -> Unit, // cf/tgchan-1124c
 ) {
     val density = LocalDensity.current
     val listState = rememberLazyListState()
@@ -272,7 +274,9 @@ fun AboutPage(
                 Column {
                     SectionLabel(stringResource(R.string.sec_community))
                     GlassCard(backdrop = backdrop, night = night, scrollYProvider = { scrollY }) {
-                        LinkRow(R.drawable.ic_qq, stringResource(R.string.qq), onOpenTelegram)
+                        LinkRow(R.drawable.ic_qq, stringResource(R.string.qq), onOpenQQGroup) // cf/qqname-1124m
+                        // 纸飞机图标对应 Telegram 频道。cf/tgchan-1124d
+                        LinkRow(R.drawable.ic_send, stringResource(R.string.tg_channel), onOpenTgChannel)
                     }
                 }
             }
@@ -283,6 +287,16 @@ fun AboutPage(
                     GlassCard(backdrop = backdrop, night = night, scrollYProvider = { scrollY }) {
                         LinkRow(R.drawable.ic_check, stringResource(R.string.check_update), onCheckUpdate,
                                 summary = stringResource(R.string.check_update_sub))
+                    }
+                }
+            }
+
+            // 协议入口独立成区，紧邻项目引用上方，便于引导页勾选后回到此处复查。cf/legalhub-section-1124j
+            item {
+                Column {
+                    SectionLabel(stringResource(R.string.sec_legal))
+                    GlassCard(backdrop = backdrop, night = night, scrollYProvider = { scrollY }) {
+                        LinkRow(R.drawable.ic_books, stringResource(R.string.legal_entry), onLegal)
                     }
                 }
             }

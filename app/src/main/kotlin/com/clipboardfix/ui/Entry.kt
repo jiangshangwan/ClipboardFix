@@ -88,8 +88,10 @@ fun installPages(
     onOpenGithub: Runnable,
     onReleases: Runnable,
     onDonate: Runnable,
-    onOpenTelegram: Runnable,
+    onOpenQQGroup: Runnable, // cf/qqname-1124n
     onUpstream: Runnable,
+    onLegal: Runnable, // cf/legalhub-entry-1124k
+    onOpenTgChannel: Runnable, // cf/tgchan-1124e
     themeMode: State<Int>,
     langMode: Int,
     updateDisabled: State<Boolean>,
@@ -157,9 +159,11 @@ fun installPages(
                 onOpenGithub = { onOpenGithub.run() },
                 onReleases = { onReleases.run() },
                 onDonate = { onDonate.run() },
-                onOpenTelegram = { onOpenTelegram.run() },
+                onOpenQQGroup = { onOpenQQGroup.run() }, // cf/qqname-1124p
                 onUpstream = { onUpstream.run() },
                 onCheckUpdate = { onCheckUpdate.run() },
+                onLegal = { onLegal.run() }, // cf/legalhub-wire-1124m
+                onOpenTgChannel = { onOpenTgChannel.run() }, // cf/tgchan-1124f
             )
         }
     }

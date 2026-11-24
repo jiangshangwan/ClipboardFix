@@ -107,9 +107,16 @@
     <string name="changelog">更新日志</string>
     <string name="sec_community">社群讨论</string>
     <string name="qq">腾讯QQ</string>
+    <!-- 社群讨论新增 Telegram 频道入口。cf/tgchan-1124a -->
+    <string name="tg_channel">Telegram</string>
     <string name="sec_check_update">检查更新</string>
     <string name="check_update">检查更新</string>
     <string name="check_update_sub">检查 GitHub 上的新版本</string>
+    <!-- 关于页协议入口分区与二级页标题。cf/legalhub-1124a -->
+    <string name="sec_legal">协议与声明</string>
+    <string name="legal_entry">用户协议</string>
+    <string name="legal_page_title">协议与声明</string>
+    <string name="legal_intro">在此查看用户协议、免责声明与隐私政策全文。</string>
     <string name="sec_thanks">项目引用</string>
     <string name="ref_solution">开源许可证</string>
     <string name="author_name1">江上晚</string>
@@ -202,7 +209,8 @@
     <!-- ============ 首次进入欢迎引导（三页） ============ -->
     <string name="welcome_title">欢迎使用</string>
     <string name="welcome_brand">HyperClipFix</string>
-    <string name="welcome_desc">主要解决第三方输入法\n无法在HyperOS\n使用系统剪贴板的问题</string>
+    <!-- 欢迎页正文按新版排版改写，保留 HyperOS 强调锚点。cf/eddesc-zh-1124j -->
+    <string name="welcome_desc">解锁第三方输入法在 HyperOS 的\n剪贴板与全面屏键盘优化限制，\n并带来更完善的剪贴板增强功能。</string>
     <string name="welcome_done_title">设置完成！</string>
     <string name="welcome_done_welcome">欢迎使用</string>
     <string name="welcome_start">开始使用</string>
@@ -237,4 +245,50 @@
     <string name="agreement_code_confirm">确认</string>
     <string name="agreement_code_cancel">取消</string>
     <string name="agreement_read">我已阅读并同意《用户协议》《免责声明》及《隐私政策》，知晓本模块仅适用于 HyperOS 3.0+，了解在非目标系统运行引发的崩溃与无法开机等风险，自愿承担相应责任。</string>
+
+    <!-- 欢迎引导原生卡片版文案。cf/welcome-native-zh-1124a -->
+    <string name="wn_subtitle">让第三方输入法在 HyperOS 上正常复制、粘贴与同步剪贴板。</string>
+    <string name="wn_section_features">主要功能</string>
+    <string name="wn_feature_clipboard">剪贴板修复</string>
+    <string name="wn_feature_clipboard_sub">第三方输入法的复制、粘贴、分组与数量限制</string>
+    <string name="wn_feature_sync">跨设备同步</string>
+    <string name="wn_feature_sync_sub">手机与电脑之间的剪贴板内容互通</string>
+    <string name="wn_feature_fullscreen">全面屏键盘优化</string>
+    <string name="wn_feature_fullscreen_sub">多功能键盘模式下的沉浸布局与材质</string>
+    <string name="wn_privacy_note">接下来会检查运行环境并确认使用须知，整个过程不会上传剪贴板内容。</string>
+    <string name="wn_begin">开始配置</string>
+    <string name="wn_prep_subtitle">完成下面的检查后，剪贴板功能才能稳定生效。</string>
+    <string name="wn_section_checks">环境检查</string>
+    <string name="wn_check_done">已完成</string>
+    <string name="wn_check_pending">待确认</string>
+    <string name="wn_check_verified">已通过</string>
+    <string name="wn_check_verify">待验证</string>
+    <string name="wn_activate_title">激活模块</string>
+    <string name="wn_activate_sub">在 LSPosed 中勾选 HyperClipFix</string>
+    <string name="wn_root_title">获取 Root 权限</string>
+    <string name="wn_root_sub">用于新版本静默安装与进程重载</string>
+    <string name="wn_prep_note">如果某一项显示为待确认，可先去系统设置完成对应操作。返回本页后状态会自动刷新。</string>
+    <string name="wn_back">上一步</string>
+    <string name="wn_agreement_subtitle">开始前请了解权限范围与功能边界。</string>
+    <string name="wn_section_notice">功能说明</string>
+    <string name="wn_notice_1">剪贴板内容仅在本机与已授权的系统互联通道中处理，模块不会把内容上传到外部服务。</string>
+    <string name="wn_notice_2">静默安装、进程重载和部分系统设置读取需要 Root 权限；未获取时会回退到系统安装器或提示手动操作。</string>
+    <string name="wn_notice_3">模块内的功能开启或关闭后可能需要您打开模块重载进程才能生效。</string>
+    <string name="wn_license">开源许可</string>
+    <string name="wn_license_sub">查看依赖项目的授权信息</string>
+    <string name="wn_agree_simple">我已阅读并理解上述说明</string>
+    <!-- 勾选框副文案指向关于页协议入口。cf/legalhub-redirect-1124r -->
+    <string name="wn_agree_sub">可随时在关于页重新查看</string>
+    <string name="wn_agree_continue">同意并继续</string>
+    <string name="wn_done_subtitle">现在可以正常使用剪贴板功能了。</string>
+    <string name="wn_section_status">当前状态</string>
+    <string name="wn_status_clipboard_sub">第三方输入法复制与粘贴</string>
+    <string name="wn_status_clipboard">已启用</string>
+    <string name="wn_status_fullscreen_sub">多功能键盘模式</string>
+    <string name="wn_status_fullscreen">已就绪</string>
+    <string name="wn_status_sync_sub">同一账号下的剪贴板内容</string>
+    <string name="wn_status_sync">可接收</string>
+    <string name="wn_status_gesture_sub">已隐藏，避免剪贴板面板底部留白</string>
+    <string name="wn_status_gesture">已隐藏</string>
+    <string name="wn_enter">进入模块</string>
 </resources>

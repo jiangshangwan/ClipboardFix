@@ -47,6 +47,13 @@
             android:exported="false"
             android:theme="@style/AppTheme" />
 
+        <!-- 二级页面：用户协议与声明（由关于页「协议与声明」进入，不对外暴露）cf/legalhub-manifest-1124q -->
+        <activity
+            android:name=".LegalActivity"
+            android:label="@string/legal_page_title"
+            android:exported="false"
+            android:theme="@style/AppTheme" />
+
         <!-- 桌面图标别名：禁用后桌面图标消失，但 AboutActivity 仍可通过 LSPosed 访问 -->
         <activity-alias
             android:name=".LauncherAlias"
