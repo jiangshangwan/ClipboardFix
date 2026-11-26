@@ -156,7 +156,8 @@ private fun GlassSnackbar(data: SnackbarData, backdrop: LayerBackdrop) {
                             chromaticAberration = true,
                         )
                     },
-                    highlight = { Highlight.Default.copy(alpha = GLASS_HIGHLIGHT_ALPHA) },
+                    // Snackbar 同用环境光高光，与下拉弹卡四角表现一致。cf/glassedge-1126b
+                    highlight = { Highlight.Ambient.copy(alpha = GLASS_HIGHLIGHT_ALPHA) },
                     shadow = {
                         Shadow.Default.copy(
                             radius = GLASS_SHADOW_RADIUS_DP,

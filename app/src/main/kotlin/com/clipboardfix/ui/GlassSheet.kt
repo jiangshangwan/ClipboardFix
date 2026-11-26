@@ -71,7 +71,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 /**
  * 居中「柔光玻璃」弹卡：材质与动画配方完全沿用功能页语言 / 主题下拉弹卡
  * （[GlassDropdownOverlay]）——`drawBackdrop` 效果链里依次做
- * **vibrancy → blur(4dp) → lens(10dp, 28dp, chromaticAberration)**，再叠 70% 高光描边与
+ * **vibrancy → blur(4dp) → lens(10dp, 28dp, chromaticAberration)**，再叠 70% 环境光高光（四边均匀）与 cf/glassedge-1126e
  * 12dp 柔和投影，表面铺 80% 主题容器色；出场用同一条弹簧曲线。
  *
  * 与下拉弹卡的差异只有形态：下拉卡是锚定在触发行下方的小卡，这里换成**居中大卡**
@@ -290,7 +290,8 @@ private fun GlassSheetCard(
                             chromaticAberration = true,
                         )
                     },
-                    highlight = { Highlight.Default.copy(alpha = GLASS_HIGHLIGHT_ALPHA) },
+                    // 二次确认弹卡沿用环境光高光，四角与其余玻璃组件一致。cf/glassedge-1126c
+                    highlight = { Highlight.Ambient.copy(alpha = GLASS_HIGHLIGHT_ALPHA) },
                     shadow = {
                         Shadow.Default.copy(
                             radius = GLASS_SHADOW_RADIUS_DP,

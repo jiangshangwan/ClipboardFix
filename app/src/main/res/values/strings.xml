@@ -53,8 +53,10 @@
     <string name="sw_unlimit_time_sub">解除官方72小时保存上限</string>
     <string name="sw_panel">优化剪贴板面板背景</string>
     <string name="sw_panel_sub">使剪贴板面板与下方功能区统一色调</string>
-    <string name="sw_panel_material">启用高级材质背景</string>
-    <string name="sw_panel_material_sub">使剪贴板面板呈现连续磨砂背景与收起标记</string>
+    <!-- 柔光玻璃背景：名称与描述按系统观感统一，前置条件交给 toast 提示。cf/matglass-1126a -->
+    <string name="sw_panel_material">启用柔光玻璃背景</string>
+    <!-- 描述不再内嵌前置条件文案，避免与 toast 重复。cf/matglass-1126i -->
+    <string name="sw_panel_material_sub">使剪贴板面板呈现柔光玻璃效果</string>
     <string name="sw_clipboard_pin">开启剪贴板条目置顶</string>
     <string name="sw_clipboard_pin_sub">面板内右滑可对内容置顶</string>
     <string name="sw_sink_layout">关闭输入法布局下沉</string>
@@ -77,6 +79,8 @@
     <string name="toast_enabled_reboot">已启用，请重启设备</string>
     <!-- 开启前置校验：系统键盘模式未就绪时的引导文案。cf/multikb-zh-1123d -->
     <string name="toast_need_multi_keyboard">请先在系统「全面屏键盘优化」中选择【多功能键盘】</string>
+    <!-- 柔光玻璃开启前的前置提示。cf/matglass-1126g -->
+    <string name="toast_need_gesture_line_off">请先关闭系统手势提示线</string>
 
     <!-- 设置页 -->
     <string name="settings_title">设置</string>

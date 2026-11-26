@@ -69,7 +69,7 @@ import kotlin.math.roundToInt
  * 玻璃材质与动画节奏完全对齐 HyperOS 系统级柔光玻璃观感：
  * 在 `drawBackdrop` 的效果链里依次做
  * **vibrancy（提饱和/提亮）→ blur(4dp) 基础模糊 → lens(10dp, 28dp, chromaticAberration)
- * 边缘透镜折射（带色散）**，再叠一层 70% 白色高光描边（Highlight）与 12dp 柔和投影（Shadow），
+ * 边缘透镜折射（带色散）**，再叠一层 70% 白色环境光高光（Highlight.Ambient，四边均匀受光）与 12dp 柔和投影（Shadow），cf/glassedge-1126d
  * 表面铺 80% 不透明度的主题容器色；弹出 / 收起用同一条
  * `scale = 0.24 + 0.76 * fraction`（origin 顶部中心）的弹簧曲线。
  *
@@ -101,7 +101,7 @@ internal val GLASS_BLUR_DP = 4.dp
 /** 边缘透镜：折射高度 / 折射强度。 */
 internal val GLASS_LENS_HEIGHT_DP = 10.dp
 internal val GLASS_LENS_AMOUNT_DP = 28.dp
-/** 高光描边不透明度。 */
+/** 环境光高光不透明度。cf/glassedge-1126f */
 internal const val GLASS_HIGHLIGHT_ALPHA = 0.70f
 /** 投影半径 / 不透明度。 */
 internal val GLASS_SHADOW_RADIUS_DP = 12.dp
@@ -344,7 +344,8 @@ private fun GlassCard(
                             chromaticAberration = true,
                         )
                     },
-                    highlight = { Highlight.Default.copy(alpha = GLASS_HIGHLIGHT_ALPHA) },
+                    // 环境光高光：四边均匀受光，避免定向光在对角缺角。cf/glassedge-1126a
+                    highlight = { Highlight.Ambient.copy(alpha = GLASS_HIGHLIGHT_ALPHA) },
                     shadow = {
                         Shadow.Default.copy(
                             radius = GLASS_SHADOW_RADIUS_DP,

@@ -58,6 +58,13 @@ class XposedInit : XposedModule() {
         val pkg: String? = param.getPackageName()
         if (pkg == null) return
 
+        // 输入法切换面板毛玻璃：装在任意能加载到该面板类的进程，类不存在时空转。
+        // 放最前是因为切换面板类由动态 dex 提供，需尽早挂 loadDex 回调。spglass/2611k
+        try {
+            SwitchPanelGlassHook.init(param.getDefaultClassLoader())
+        } catch (ignored: Throwable) {
+        }
+
         // 互联跨设备剪贴板文件提供方：放行作用域内第三方输入法作为调用方，
         // 使面板点击云端图片时 Continuity provider 不再以「不支持超级剪贴板」拒绝。
         if (PKG_MILINK == pkg) {

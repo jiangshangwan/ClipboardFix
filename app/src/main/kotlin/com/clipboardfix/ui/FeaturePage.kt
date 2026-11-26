@@ -57,6 +57,14 @@ private fun isMultiFunctionKeyboardSelected(context: Context): Boolean = runCatc
     Settings.Secure.getInt(context.contentResolver, "enable_miui_ime_bottom_view", 0) == 1
 }.getOrDefault(false)
 
+/**
+ * 读取系统手势提示线是否已关闭。系统键 hide_gesture_line=1 表示已隐藏（底层可直接绘制柔光，
+ * 提示线区域不再抢占底部空间），0 或缺省表示仍显示；读取异常一律按未关闭处理。cf/matglass-1126c
+ */
+private fun isGestureLineHidden(context: Context): Boolean = runCatching {
+    Settings.Global.getInt(context.contentResolver, "hide_gesture_line", 0) == 1
+}.getOrDefault(false)
+
 @Composable
 fun FeaturePage(
     moduleEnabled: Boolean,
@@ -86,10 +94,13 @@ fun FeaturePage(
     // 系统键盘模式记忆：默认键盘下主开关强制显示关闭且不可开启；切回多功能键盘后自动恢复。
     // 每次页面回到前台重新读取——用户去系统设置切换后返回即可即时反映。cf/mkbgate-1123f
     var multiKeyboardOk by remember { mutableStateOf(isMultiFunctionKeyboardSelected(context)) }
+    // 手势提示线状态：提示线仍显示时柔光玻璃无法开启，返回前台即时刷新。cf/matglass-1126d
+    var gestureLineHidden by remember { mutableStateOf(isGestureLineHidden(context)) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 multiKeyboardOk = isMultiFunctionKeyboardSelected(context)
+                gestureLineHidden = isGestureLineHidden(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -97,6 +108,8 @@ fun FeaturePage(
     }
     // 生效开关值：持久开关与系统键盘模式取交集，仅影响本页显示，不改写持久化配置。cf/mkbgate-1123g
     val imeUnlockVisible = swImeUnlock && multiKeyboardOk
+    // 柔光玻璃生效值：持久开关与手势提示线状态取交集，持久值不动，关闭提示线后自动恢复。cf/matglass-1126e
+    val panelMaterialVisible = swPanelMaterial && gestureLineHidden
     // 玻璃折射源：整页内容登记进 layerBackdrop，供 Snackbar 的柔光玻璃面板实时折射
     val snackbarBackdrop = rememberLayerBackdrop()
     // 页面底色预取（顶栏磨砂叠加用）+ Haze 状态：滚动内容作模糊源，顶栏条消费
@@ -116,6 +129,7 @@ fun FeaturePage(
     val strModuleInactive = stringResource(R.string.toast_module_inactive)
     val strEnabledReboot = stringResource(R.string.toast_enabled_reboot)
     val strNeedMultiKeyboard = stringResource(R.string.toast_need_multi_keyboard)
+    val strNeedGestureLineOff = stringResource(R.string.toast_need_gesture_line_off)
 
     // 两级只读：模块未激活时整页置灰；主开关未开启（含系统非多功能键盘）时子项置灰。
     // 提示按实际阻塞原因分流：系统键盘模式不符时给出专门引导，否则沿用通用文案。cf/mkbgate-1123h
@@ -221,8 +235,15 @@ fun FeaturePage(
                     // 连续磨砂背景：仅当「优化剪贴板面板背景」打开时才显示（子选项），默认关闭
                     if (imeUnlockVisible && swPanelColor) {
                         FeatureSwitch(
-                            checked = swPanelMaterial,
-                            onCheckedChange = onTogglePanelMaterial,
+                            checked = panelMaterialVisible,
+                            // 手势提示线仍显示时拦截开启并提示，持久值不动；关闭提示线后自动恢复。cf/matglass-1126f
+                            onCheckedChange = { checked ->
+                                if (checked && !gestureLineHidden) {
+                                    showSnack(strNeedGestureLineOff)
+                                } else {
+                                    onTogglePanelMaterial(checked)
+                                }
+                            },
                             title = stringResource(R.string.sw_panel_material),
                             summary = stringResource(R.string.sw_panel_material_sub),
                             enabled = switchesEnabled,
