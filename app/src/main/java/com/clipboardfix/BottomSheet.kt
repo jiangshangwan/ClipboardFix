@@ -6,14 +6,20 @@
 package com.clipboardfix
 
 import android.app.Activity
+import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -117,6 +123,9 @@ object BottomSheet {
         card.scaleX = 0.96f
         card.scaleY = 0.96f
         card.post {
+            // 柔光玻璃卡片：原生背景模糊 + 半透明叠色，观感对齐模块内玻璃弹卡。cf/sheetglass-1126a
+            applyGlassCard(card)
+
             // 内容超高时限制滚动区高度（卡片最多占屏 80%）
             val screenH = activity.resources.displayMetrics.heightPixels
             val maxCardH = (0.80f * screenH).toInt()
@@ -131,6 +140,78 @@ object BottomSheet {
             scrim.animate().alpha(1f).setDuration(200).start()
             card.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(220).start()
         }
+    }
+
+    /**
+     * 卡片改用柔光玻璃：系统真实背景模糊 + 半透明圆角叠色，保留 20dp 圆角裁切。
+     * 与日志弹卡同源观感（模糊透出背景、四角均匀），View 层无镜头色散故以叠色近似。cf/sheetglass-1126b
+     */
+    private fun applyGlassCard(card: View) {
+        try {
+            val density = card.resources.displayMetrics.density
+            val radius = 20f * density
+            val blur = createCardBlur(card, radius) ?: return
+            val night = (card.resources.configuration.uiMode and
+                    Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            val tint = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = radius
+                setColor(if (night) 0x521F2024.toInt() else 0x66F7F8FA.toInt())
+            }
+            card.background = LayerDrawable(arrayOf(blur, tint))
+            card.outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, radius)
+                }
+            }
+            card.clipToOutline = true
+            card.invalidate()
+        } catch (t: Throwable) {
+            // 玻璃套用失败时保留原纯色卡片背景
+        }
+    }
+
+    /** 通过 ViewRootImpl 创建真实背景模糊；失败返回 null。cf/sheetglass-1126c */
+    private fun createCardBlur(v: View, radius: Float): Drawable? {
+        val getVri = findMethod(View::class.java, "getViewRootImpl") ?: return null
+        getVri.isAccessible = true
+        val vri = getVri.invoke(v) ?: return null
+        val create = findMethod(vri.javaClass, "createBackgroundBlurDrawable") ?: return null
+        create.isAccessible = true
+        val d = create.invoke(vri) as? Drawable ?: return null
+        setInt(d, "setBlurRadius", 60)
+        setInt(d, "setColor", Color.TRANSPARENT)
+        val corners = findMethod(d.javaClass, "setCornerRadius",
+                Float::class.java, Float::class.java, Float::class.java, Float::class.java)
+        if (corners != null) {
+            corners.isAccessible = true
+            corners.invoke(d, radius, radius, radius, radius)
+        } else {
+            val one = findMethod(d.javaClass, "setCornerRadius", Float::class.java)
+            one?.let {
+                it.isAccessible = true
+                it.invoke(d, radius)
+            }
+        }
+        return d
+    }
+
+    private fun setInt(target: Any, name: String, value: Int) {
+        val m = findMethod(target.javaClass, name, Int::class.java) ?: return
+        m.isAccessible = true
+        m.invoke(target, value)
+    }
+
+    private fun findMethod(clazz: Class<*>, name: String, vararg types: Class<*>): java.lang.reflect.Method? {
+        var c: Class<*>? = clazz
+        while (c != null) {
+            try {
+                return c.getDeclaredMethod(name, *types)
+            } catch (ignored: Throwable) {
+                c = c.superclass
+            }
+        }
+        return null
     }
 
     /** 单按钮（强调蓝填充，点按后自动关闭）。 */
