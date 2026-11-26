@@ -254,6 +254,9 @@ class AboutActivity : ComponentActivity() {
         // 初始落到上次所在 Tab（重建后保留，首次为 0=主页）
         selectTab(intent.getIntExtra(EXTRA_RESTORE_TAB, sLastTab))
 
+        // 协议修订更新后，所有用户重新走一遍欢迎引导确认新协议。cf/legalrev-1126a
+        migrateWelcomeForLegalRevision()
+
         // 首次进入：三页欢迎引导；已完成引导的旧版本升级用户走「您需了解」底部弹卡兜底。
         if (!welcomeDone()) {
             showWelcomeOverlay()
@@ -971,6 +974,24 @@ class AboutActivity : ComponentActivity() {
     }
 
     // ---------------- 欢迎引导（首次进入的三页覆盖层） ----------------
+    /**
+     * 协议内容发生修订时强制重走欢迎引导：把完成标记清掉，让新装与老用户都从欢迎页
+     * 重新进入并在协议页重新完成动态验证码验证；标记写入后本次安装不再重复触发。
+     * cf/legalrev-1126b
+     */
+    private fun migrateWelcomeForLegalRevision() {
+        val sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (sp.getString(KEY_LEGAL_REVISION, null) != LEGAL_REVISION) {
+            sp.edit()
+                .putString(KEY_LEGAL_REVISION, LEGAL_REVISION)
+                .putBoolean(KEY_WELCOME_DONE, false)
+                .putBoolean(KEY_MUST_KNOW, false)
+                .apply()
+            sWelcomePage = 0
+            uiWelcomePage.value = 0
+        }
+    }
+
     private fun welcomeDone(): Boolean {
         return getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(KEY_WELCOME_DONE, false)
@@ -1467,6 +1488,10 @@ class AboutActivity : ComponentActivity() {
         private const val KEY_MUST_KNOW = "must_know_agreed"
         /** 首次进入欢迎引导（三页）是否已完成。 */
         private const val KEY_WELCOME_DONE = "welcome_done"
+        /** 协议修订标记：与当前内置协议正文对应，变更即强制重走欢迎引导。cf/legalrev-1126c */
+        private const val KEY_LEGAL_REVISION = "legal_revision"
+        /** 本版本协议修订号，对齐三份协议正文的「最近修订」日期。cf/legalrev-1126d */
+        private const val LEGAL_REVISION = "2026-11-24"
         /** 状态卡「标识」显隐；默认显示。 */
         private const val KEY_BADGES_VISIBLE = "status_badges_visible"
         /** 社群讨论的 QQ 群链接；常量名与回调名按实际用途校正。cf/qqname-1124i */
