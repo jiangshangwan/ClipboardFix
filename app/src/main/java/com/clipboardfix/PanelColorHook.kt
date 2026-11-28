@@ -384,6 +384,10 @@ object PanelColorHook {
     @Volatile
     private var sHostPkg: String? = null
 
+    /** 宿主是否为系统预装输入法：系统应用走原生材质，不接管柔光玻璃。cf/pc-sysime-1128 */
+    @Volatile
+    private var sHostIsSystemApp = false
+
     /** 进程默认 classloader（进程启动时 MIUI 输入法类还没加载，只能作为兜底）。 */
     @Volatile
     private var sDefaultCl: ClassLoader? = null
@@ -580,7 +584,13 @@ object PanelColorHook {
         sInitDone = true
         sDefaultCl = cl
         sHostPkg = param.packageName
-        log("init enter: pkg=$sHostPkg")
+        // 系统预装输入法(超级小爱/定制搜狗/定制百度等)带 FLAG_SYSTEM：其键盘由系统原生材质负责，
+        // 模块柔光玻璃不接管，避免覆盖键盘导致配色异常。取不到 ApplicationInfo 时按第三方处理。cf/pc-sysime-1128
+        sHostIsSystemApp = runCatching {
+            val info = param.applicationInfo
+            info != null && (info.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+        }.getOrDefault(false)
+        log("init enter: pkg=$sHostPkg sysApp=$sHostIsSystemApp")
         ensurePassWindowBlur()
         ensureMaterialTintHook()
         // 进程启动即解析一次，日志缓冲被淘汰后仍可据此判断材质链路是否可用
@@ -1636,7 +1646,9 @@ object PanelColorHook {
 
     private fun applyPanelBackground(body: View, bottomColor: Int) {
         val root = unifiedPanelRoot(body)
-        val materialLike = ModulePrefs.isPanelMaterialEnabled()
+        // 系统预装输入法保持系统原生材质：柔光玻璃磨砂仅对第三方输入法生效；
+        // 纯色背景优化(!materialLike)分支不受影响，仍照常执行。cf/pc-sysime-1128
+        val materialLike = ModulePrefs.isPanelMaterialEnabled() && !sHostIsSystemApp
         suppressNativeBack(root, body, materialLike)
         if (!materialLike) {
             clearCollapseHint(root)
