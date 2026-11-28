@@ -17,6 +17,11 @@
     <string name="status_root">已Root</string>
     <string name="status_no_root">未Root</string>
     <string name="enabled_features">已启用的功能：%1$d</string>
+    <!-- 模块状态卡的动态文本：走资源以跟随语言切换，避免残留中文。cf/i18n-1128a -->
+    <string name="status_enabled">已启用</string>
+    <string name="status_disabled">未启用</string>
+    <string name="ime_count_format">已启用输入法：%1$s</string>
+    <string name="ime_count_unknown">—</string>
     <string name="tap_hide_hint">连续点击10次隐藏标识</string>
     <string name="tap_show_hint">连续点击10次显示标识</string>
     <string name="badges_hidden">标识已隐藏</string>

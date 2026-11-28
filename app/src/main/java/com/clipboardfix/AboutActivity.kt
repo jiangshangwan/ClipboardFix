@@ -83,7 +83,8 @@ class AboutActivity : ComponentActivity() {
     val uiEnabledFeatures: MutableState<Int> = stateOf(0)
     /** 标识显隐开关：控制 Root 标识与「已启用的功能：X」行的可见性，默认显示。 */
     val uiBadgesVisible: MutableState<Boolean> = stateOf(true)
-    val uiImeCountText: MutableState<String> = stateOf("已启用输入法：—")
+    // 字段初始化早于 attachBaseContext，此处不可调 getString；占位值在 onCreate 内填充。cf/i18n-1128g2
+    val uiImeCountText: MutableState<String> = stateOf("-")
     val uiStatusEnabled: MutableState<Boolean> = stateOf(false)
     val uiSwImeUnlock: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_IME_UNLOCK)
     val uiSwUnlimitCount: MutableState<Boolean> = stateOf(ModulePrefs.DEFAULT_UNLIMIT_COUNT)
@@ -175,6 +176,9 @@ class AboutActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Context 已就绪，填充输入法计数的初始值；随后状态探测会异步覆盖。cf/i18n-1128g3
+        uiImeCountText.value = getString(R.string.ime_count_format,
+                getString(R.string.ime_count_unknown))
 
         // 沉浸式（对齐参考项目）：系统栏全透明且禁用系统自动加的对比度蒙层。
         window.statusBarColor = Color.TRANSPARENT
@@ -517,7 +521,7 @@ class AboutActivity : ComponentActivity() {
     private fun scheduleStatusFallback() {
         statusFallback?.let { mStatusHandler.removeCallbacks(it) }
         val r = Runnable {
-            if (!sModuleBound) applyModuleDisabled("未启用")
+            if (!sModuleBound) applyModuleDisabled()
         }
         statusFallback = r
         mStatusHandler.postDelayed(r, 2500)
@@ -530,7 +534,7 @@ class AboutActivity : ComponentActivity() {
     private fun refreshModuleStatus() {
         val svc = sXposedService
         if (svc == null) {
-            mStatusHandler.post { applyModuleDisabled("未启用") }
+            mStatusHandler.post { applyModuleDisabled() }
             return
         }
         if (probeRunning) return
@@ -554,7 +558,7 @@ class AboutActivity : ComponentActivity() {
             val finalCount = imeCount
             val enabled = online
             mStatusHandler.post {
-                if (enabled) applyModuleEnabled(finalCount) else applyModuleDisabled("未启用")
+                if (enabled) applyModuleEnabled(finalCount) else applyModuleDisabled()
             }
         }, "cf-status-probe").start()
     }
@@ -621,15 +625,17 @@ class AboutActivity : ComponentActivity() {
     }
 
     private fun applyModuleEnabled(imeCount: Int) {
-        uiStatusText.value = "已启用"
+        uiStatusText.value = getString(R.string.status_enabled) // cf/i18n-1128c
         uiStatusEnabled.value = true
-        uiImeCountText.value = "已启用输入法：" + (if (imeCount < 0) "—" else imeCount)
+        val count = if (imeCount < 0) getString(R.string.ime_count_unknown) else imeCount.toString()
+        uiImeCountText.value = getString(R.string.ime_count_format, count) // cf/i18n-1128d
     }
 
-    private fun applyModuleDisabled(text: String) {
-        uiStatusText.value = text
+    private fun applyModuleDisabled() {
+        uiStatusText.value = getString(R.string.status_disabled) // cf/i18n-1128e
         uiStatusEnabled.value = false
-        uiImeCountText.value = "已启用输入法：—"
+        uiImeCountText.value = getString(R.string.ime_count_format,
+                getString(R.string.ime_count_unknown)) // cf/i18n-1128f
     }
 
     // ---------------- 功能开关 ----------------
@@ -1562,7 +1568,7 @@ class AboutActivity : ComponentActivity() {
                 sModuleBound = false
                 val a = sCurrent.get()
                 if (a != null) {
-                    a.mStatusHandler.post { a.applyModuleDisabled("未启用") }
+                    a.mStatusHandler.post { a.applyModuleDisabled() }
                 }
             }
         }

@@ -11,6 +11,8 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
 import java.lang.reflect.Executable
 import java.lang.reflect.Method
 
@@ -24,7 +26,8 @@ import java.lang.reflect.Method
  * 取不到 ViewRootImpl，故毛玻璃必须延迟到 {@code onViewAttachedToWindow} 之后套。
  *
  * <p>材质只用系统 {@code createBackgroundBlurDrawable} 的真实背景模糊 + 一层半透明圆角底，
- * 明暗取自系统 uiMode；不改动列表文本与勾选图标，避免破坏原生可读性。
+ * 明暗取自系统 uiMode（与键盘背景同源）。输入法面板文字色跟随自身皮肤、切换主题时可能滞后，
+ * 故在弹出后核对文字方向，与底色冲突时翻正，选中态强调色保留。spglass/2611s
  */
 object SwitchPanelGlassHook {
 
@@ -120,11 +123,13 @@ object SwitchPanelGlassHook {
         log("setContentView hook installed on " + cls.name)
     }
 
-    /** attach 后再套材质：此时 ViewRootImpl 可用，才能创建真实背景模糊。spglass/2611h */
+    /**
+     * attach 后再套材质：此时 ViewRootImpl 可用，才能创建真实背景模糊。
+     * 保留监听以便每次弹出都重新取样文字色校正叠色明暗（面板单例复用，主题可变）。spglass/2611h
+     */
     private fun attachGlass(content: View) {
         content.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
-                v.removeOnAttachStateChangeListener(this)
                 applyGlass(v)
             }
 
@@ -132,26 +137,128 @@ object SwitchPanelGlassHook {
         })
     }
 
-    /** 生成背景模糊 + 半透明圆角底，替换内容根背景；失败时保持原样。spglass/2611i */
+    /**
+     * 背景模糊 + 半透明圆角底。底色明暗锁定系统 uiMode（与键盘背景同源，切换即时），
+     * 不再让滞后的输入法文字色反向决定底色；文字方向不符时另行翻正。spglass/2611i
+     */
     private fun applyGlass(v: View) {
         try {
             val radius = CARD_RADIUS_DP * v.resources.displayMetrics.density
-            val blur = createBlur(v, radius) ?: run {
-                log("blur unavailable, keep original")
-                return
+            val existing = v.background as? LayerDrawable
+            val blur: Drawable
+            val tint: GradientDrawable
+            if (existing != null && existing.numberOfLayers == 2 &&
+                    existing.getDrawable(1) is GradientDrawable) {
+                blur = existing.getDrawable(0)
+                tint = existing.getDrawable(1) as GradientDrawable
+            } else {
+                blur = createBlur(v, radius) ?: run {
+                    log("blur unavailable, keep original")
+                    return
+                }
+                tint = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = radius
+                }
+                v.background = LayerDrawable(arrayOf(blur, tint))
             }
-            val night = (v.resources.configuration.uiMode and
+            // 以 Resources.getSystem() 为准：视图 Resources 在进程缓存未刷新时可能滞后于系统主题。
+            val sysNight = (android.content.res.Resources.getSystem().configuration.uiMode and
                     Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-            val tint = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = radius
-                setColor(if (night) TINT_DARK else TINT_LIGHT)
-            }
-            v.background = LayerDrawable(arrayOf(blur, tint))
+            val night = sysNight
+            tint.setColor(if (night) TINT_DARK else TINT_LIGHT)
             v.invalidate()
-            log("glass applied night=$night radius=${radius.toInt()}")
+            // 列表项在 attach 后才填充，下一帧核对文字方向并与底色对齐
+            v.post {
+                if (!v.isAttachedToWindow) return@post
+                try {
+                    val sample = textSample(v)
+                    // 深底需浅字、浅底需深字；方向相反时翻正文字色（跳过选中态强调色）
+                    val flipped = when {
+                        sample.light > sample.dark && !night -> retintText(v, true)
+                        sample.dark > sample.light && night -> retintText(v, false)
+                        else -> false
+                    }
+                    v.invalidate()
+                    // 明暗判定全量落日志：主题切换后若仍错配，据此还原 uiMode 与文字采样。cf/spdiag-1127c
+                    log("tint fixed night=$night txtLight=${sample.light} txtDark=${sample.dark} " +
+                            "head=${sample.head} flipped=$flipped")
+                } catch (t: Throwable) {
+                    log("tint fix err - $t")
+                }
+            }
+            log("glass applied radius=${radius.toInt()}")
         } catch (t: Throwable) {
             log("applyGlass err - $t")
+        }
+    }
+
+    /**
+     * 翻正列表文字色以匹配底色：toDark=true 改深色字（配浅底），false 改浅色字（配深底）。
+     * 只改普通文字 TextView，选中态强调蓝与透明色保留。返回是否实际改动。spglass/2611t
+     */
+    private fun retintText(root: View, toDark: Boolean): Boolean {
+        val target = if (toDark) 0xFF1F2024.toInt() else 0xFFF2F3F5.toInt()
+        var changed = false
+        fun apply(v: View) {
+            if (v is TextView && v.currentTextColor != 0) {
+                val c = v.currentTextColor
+                val r = Color.red(c)
+                val g = Color.green(c)
+                val b = Color.blue(c)
+                // 选中态强调蓝保留
+                if (!(b > r + 30 && b > g + 10) && c != target) {
+                    v.setTextColor(target)
+                    changed = true
+                }
+            }
+            if (v is ViewGroup) {
+                for (i in 0 until v.childCount) apply(v.getChildAt(i))
+            }
+        }
+        apply(root)
+        return changed
+    }
+
+    /** 文字采样结果：明暗倾向与明细，供判定与诊断日志共用。cf/spdiag-1127b */
+    private class TextSample(
+        val preferDark: Boolean?,
+        val light: Int,
+        val dark: Int,
+        val head: String,
+    )
+
+    /**
+     * 采样面板内普通文字色亮度：浅字多则 preferDark=true，深字多则 false，无样本为 null。
+     * 跳过选中态强调蓝与透明色，避免个别高亮项干扰整体判定。spglass/2611r
+     */
+    private fun textSample(root: View): TextSample {
+        var light = 0
+        var dark = 0
+        var head = "-"
+        val sample: (Int) -> Unit = sample@{ c ->
+            if (Color.alpha(c) < 0x40) return@sample
+            val r = Color.red(c)
+            val g = Color.green(c)
+            val b = Color.blue(c)
+            if (b > r + 30 && b > g + 10) return@sample
+            val lum = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+            if (head == "-") head = String.format(java.util.Locale.US, "%06X", c and 0xFFFFFF)
+            if (lum > 0.5f) light++ else dark++
+        }
+        collectTextColors(root, sample)
+        val prefer = when {
+            light > dark -> true
+            dark > light -> false
+            else -> null
+        }
+        return TextSample(prefer, light, dark, head)
+    }
+
+    private fun collectTextColors(v: View, out: (Int) -> Unit) {
+        if (v is TextView && v.currentTextColor != 0) out(v.currentTextColor)
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) collectTextColors(v.getChildAt(i), out)
         }
     }
 

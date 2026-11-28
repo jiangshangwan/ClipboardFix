@@ -17,6 +17,11 @@
     <string name="status_root">Rooted</string>
     <string name="status_no_root">Not Rooted</string>
     <string name="enabled_features">Enabled features: %1$d</string>
+    <!-- Dynamic texts on the module status card, localized to follow language switch. cf/i18n-1128b -->
+    <string name="status_enabled">Enabled</string>
+    <string name="status_disabled">Disabled</string>
+    <string name="ime_count_format">Enabled IMEs: %1$s</string>
+    <string name="ime_count_unknown">—</string>
     <string name="tap_hide_hint">Tap 10 times in a row to hide the badge</string>
     <string name="tap_show_hint">Tap 10 times in a row to show the badge</string>
     <string name="badges_hidden">Badge hidden</string>
